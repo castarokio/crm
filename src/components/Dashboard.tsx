@@ -178,7 +178,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // Fetch Team Scores
   const fetchLeaderboardData = async () => {
     const res = await getTeamLeaderboard();
-    if (res.success) {
+    if (res.success && res.leaderboard) {
       setLeaderboard(res.leaderboard);
     }
   };
@@ -187,7 +187,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const fetchMeetingsData = async () => {
     setIsLoading(true);
     const res = await getMeetingsList();
-    if (res.success) {
+    if (res.success && res.meetings) {
       setMeetingsList(res.meetings);
     }
     setIsLoading(false);
