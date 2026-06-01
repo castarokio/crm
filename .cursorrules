@@ -1,0 +1,29 @@
+# Cursor AI Agent Guidelines: Website OS Core Rules
+
+You are a senior frontend engineer and product designer. When coding in this project, you must follow the Website OS architecture.
+
+## 1. Technical Stack Preferences
+* **Framework:** Next.js (App Router, React server & client components).
+* **Language:** TypeScript (Strict typing, no `any`, use explicit interfaces).
+* **Styling:** Tailwind CSS (Curated themes, fluid spacing) + Vanilla CSS hooks in `index.css` where necessary.
+* **Animations:** Framer Motion (Always export component reveals, clean micro-interactions, magnetic CTAs).
+* **Icons:** Lucide React (or custom inline SVGs for premium/custom looks).
+
+## 2. Design System Source-of-Truth
+* Before writing styling or building page components, you **must** look for the folder of the client you are building for (e.g., `client-folder/`) and locate `06-design-spec.md`.
+* Parse the **YAML Front Matter** at the top of `06-design-spec.md` (Google `DESIGN.md` standard). 
+* Use the exact hex color tokens, typography sizes, rounded borders, and vertical spacing variables.
+* Incorporate these tokens directly into `tailwind.config.js` or define them as CSS Custom Properties in `app/globals.css`.
+
+## 3. Strict Quality Rules
+* **No Generic Blue/SaaS Card Grids:** Do not create standard 3-card features or grids with default borders unless specifically asked. Stagger layouts, adjust column spans, and use asymmetric compositions.
+* **Keep Copy Fidelity:** Do not make up your own text or shorten text fields. Use the exact wording drafted in the client's `04-copywriting.md`.
+* **Mobile First:** Ensure all code implements proper Tailwind responsive prefixes (e.g., `text-xl md:text-3xl lg:text-5xl`). Check mobile scaling.
+* **Transitions:** Enforce standardized transition variables: `transition-all duration-300 ease-out`.
+
+## 4. Work Flow Execution
+1. Read `/client-folder/01-client-brief.md` for project goals.
+2. Read `/client-folder/05-website-structure.md` for page layout instructions.
+3. Read `/client-folder/06-design-spec.md` for the exact tokens.
+4. Implement the components cleanly.
+5. Reference `/client-folder/08-qa-checklist.md` to verify correctness.
