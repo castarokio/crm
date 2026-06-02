@@ -4,6 +4,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Phone,
+  Mail,
+  MessageCircle,
+  ExternalLink,
   Globe,
   MapPin,
   Star,
@@ -45,6 +48,7 @@ import {
   updateCallStatusWithAI,
   getTeamLeaderboard,
   getMeetingsList,
+  getLeadAreas,
   updateCallStatus,
   assignLeadsByRegion,
   assignLeadsByPriority,
@@ -162,7 +166,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients'>('dialer');
+  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients' | 'treated'>('dialer');
   const [dbConfigured, setDbConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [assignmentStats, setAssignmentStats] = useState<{ stats: any[]; unassigned: number }>({ stats: [], unassigned: 0 });
@@ -190,6 +194,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [inventoryCountsReady, setInventoryCountsReady] = useState<boolean>(false);
   const [totalLeadsCount, setTotalLeadsCount] = useState<number>(0);
   const [totalLostCount, setTotalLostCount] = useState<number>(0);
+  const [totalTreatedCount, setTotalTreatedCount] = useState<number>(0);
   const [totalFollowupsCount, setTotalFollowupsCount] = useState<number>(0);
   const [totalWarmCount, setTotalWarmCount] = useState<number>(0);
   const [totalGoodClientsCount, setTotalGoodClientsCount] = useState<number>(0);
@@ -198,6 +203,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterArea, setFilterArea] = useState<string>('');
+  const [areaOptions, setAreaOptions] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [initialLoadDone, setInitialLoadDone] = useState<boolean>(false);
 
@@ -400,6 +406,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setTotalFollowupsCount(prev => Math.max(0, prev + direction));
     } else if (['Not Interested', 'Wrong Number'].includes(status)) {
       setTotalLostCount(prev => Math.max(0, prev + direction));
+    } else if (status === 'Treated') {
+      setTotalTreatedCount(prev => Math.max(0, prev + direction));
     }
   }, []);
 
@@ -411,7 +419,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setTotalGoodClientsCount(res.counts.converted);
       setTotalFollowupsCount(res.counts.followups);
       setTotalLostCount(res.counts.lost);
+      setTotalTreatedCount(res.counts.treated || 0);
       setInventoryCountsReady(true);
+    }
+  }, []);
+
+  const refreshAreaOptions = useCallback(async () => {
+    const res = await getLeadAreas();
+    if (res.success && res.areas) {
+      setAreaOptions(res.areas);
     }
   }, []);
 
@@ -422,6 +438,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       getTeamLeaderboard(),
       getMeetingsList(),
       getAnalytics(),
+      getLeadAreas(),
     ] as any[];
 
     if (callerName === 'Hamid') {
@@ -432,6 +449,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     const leaderboardRes = results[0];
     const meetingsRes = results[1];
     const analyticsRes = results[2];
+    const areasRes = results[3];
 
     if (leaderboardRes.success && leaderboardRes.leaderboard) {
       setLeaderboard(leaderboardRes.leaderboard);
@@ -443,10 +461,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       const stats = analyticsRes.stats;
       setAnalyticsData(stats);
     }
+    if (areasRes?.success && areasRes.areas) {
+      setAreaOptions(areasRes.areas);
+    }
 
     if (callerName === 'Hamid') {
-      const assignmentRes = results[3];
-      const schemaRes = results[4];
+      const assignmentRes = results[4];
+      const schemaRes = results[5];
       if (assignmentRes?.success) {
         setAssignmentStats({ stats: assignmentRes.stats || [], unassigned: assignmentRes.unassigned || 0 });
       }
@@ -476,6 +497,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setTotalLeadsCount(total);
     } else if (tab === 'lost') {
       setTotalLostCount(total);
+    } else if (tab === 'treated') {
+      setTotalTreatedCount(total);
     } else if (tab === 'followups') {
       setTotalFollowupsCount(total);
     } else if (tab === 'warm_leads') {
@@ -553,6 +576,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       fetchDatabaseLeads('warm_leads', false, 'WarmLeads', overrides);
     } else if (tabId === 'good_clients') {
       fetchDatabaseLeads('good_clients', false, 'GoodClients', overrides);
+    } else if (tabId === 'treated') {
+      fetchDatabaseLeads('treated', false, 'Treated', overrides);
     }
   }, [fetchDatabaseLeads]);
 
@@ -560,6 +585,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const fetchAllData = useCallback(async (showBlockingLoader = true) => {
     if (showBlockingLoader) setIsLoading(true);
     try {
+      refreshAreaOptions().catch(err => console.error('[refreshAreaOptions]', err));
       const queueRes = await getDialerQueue(callerName);
       if (queueRes.success) {
         setDbConfigured(true);
@@ -578,7 +604,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setIsLoading(false);
       setInitialLoadDone(true);
     }
-  }, [callerName, refreshDashboardMetrics]);
+  }, [callerName, refreshAreaOptions, refreshDashboardMetrics]);
 
   // Run initial fetch
   useEffect(() => {
@@ -600,7 +626,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // Trigger directory search on params change (background transition)
   useEffect(() => {
     if (!initialLoadDone) return;
-    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients'].includes(activeTab)) {
+    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients', 'treated'].includes(activeTab)) {
       if (skipNextListEffectRef.current) {
         skipNextListEffectRef.current = false;
         return;
@@ -620,7 +646,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else if (activeTab === 'admin') {
       fetchAssignmentStats();
     } else if (activeTab === 'database') {
-      if (['Lost', 'Followups', 'WarmLeads', 'GoodClients'].includes(filterStatus)) {
+      if (['Lost', 'Followups', 'WarmLeads', 'GoodClients', 'Treated'].includes(filterStatus)) {
         setFilterStatus('');
       }
     }
@@ -632,7 +658,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const handleMainTabChange = (tabId: typeof activeTab) => {
     activeTabRef.current = tabId;
     setActiveTab(tabId);
-    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients'].includes(tabId)) {
+    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients', 'treated'].includes(tabId)) {
       skipNextListEffectRef.current = true;
       setCurrentPage(1);
       setSearchQuery('');
@@ -670,6 +696,86 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     const res = await updateLeadDetails(leadId, { [field]: value });
     if (!res.success && dbConfigured) {
       console.error('Failed to auto-save field:', field, res.error);
+    }
+  };
+
+  const splitMultiValue = (value?: string | null) =>
+    (value || '')
+      .split(/\r?\n|[,;]/)
+      .map(item => item.trim())
+      .filter(item => item && !['not found', 'none', 'n/a'].includes(item.toLowerCase()));
+
+  const joinMultiValue = (items: string[]) =>
+    items.map(item => item.trim()).filter(Boolean).join('\n');
+
+  const updateMultiValueField = (leadId: number, field: string, index: number, value: string) => {
+    const lead = dialerQueue.find(item => item.id === leadId) || leadsList.find(item => item.id === leadId) || editingLead;
+    const values = splitMultiValue(lead?.[field]);
+    values[index] = value;
+    updateLeadFieldInQueue(leadId, field, joinMultiValue(values));
+  };
+
+  const saveMultiValueField = async (leadId: number, field: string) => {
+    const lead = dialerQueue.find(item => item.id === leadId) || leadsList.find(item => item.id === leadId) || editingLead;
+    await saveLeadFieldToServer(leadId, field, joinMultiValue(splitMultiValue(lead?.[field])));
+  };
+
+  const addMultiValueField = async (leadId: number, field: string, placeholder = '') => {
+    const lead = dialerQueue.find(item => item.id === leadId) || leadsList.find(item => item.id === leadId) || editingLead;
+    const values = splitMultiValue(lead?.[field]);
+    values.push(placeholder);
+    updateLeadFieldInQueue(leadId, field, values.join('\n'));
+  };
+
+  const promptAddMultiValue = async (lead: any, field: string, label: string) => {
+    const value = window.prompt(`Add ${label}`);
+    if (!value?.trim()) return;
+    const values = [...splitMultiValue(lead?.[field]), value.trim()];
+    const nextValue = joinMultiValue(values);
+    updateLeadFieldInQueue(lead.id, field, nextValue);
+    await saveLeadFieldToServer(lead.id, field, nextValue);
+  };
+
+  const removeMultiValueField = async (leadId: number, field: string, index: number) => {
+    const lead = dialerQueue.find(item => item.id === leadId) || leadsList.find(item => item.id === leadId) || editingLead;
+    const values = splitMultiValue(lead?.[field]).filter((_, itemIndex) => itemIndex !== index);
+    const nextValue = joinMultiValue(values);
+    updateLeadFieldInQueue(leadId, field, nextValue);
+    await saveLeadFieldToServer(leadId, field, nextValue);
+  };
+
+  const setLeadTreated = async (lead: any, checked: boolean, meetingDate?: string) => {
+    const nextStatus = checked ? 'Treated' : 'Not Called';
+    const nextLead = {
+      ...lead,
+      call_status: nextStatus,
+      caller_name: checked ? callerName : lead.caller_name,
+      assigned_to: checked ? callerName : lead.assigned_to,
+      meeting_date: meetingDate !== undefined ? meetingDate : lead.meeting_date,
+    };
+    updateLeadFieldInQueue(lead.id, 'call_status', nextStatus);
+    if (meetingDate !== undefined) updateLeadFieldInQueue(lead.id, 'meeting_date', meetingDate);
+    setDialerQueue(prev => checked ? prev.filter(item => item.id !== lead.id) : prev);
+    setLeadsList(prev => prev.map(item => item.id === lead.id ? nextLead : item));
+    setMeetingsList(prev => {
+      const withoutLead = prev.filter(item => item.id !== lead.id);
+      return nextLead.meeting_date ? [nextLead, ...withoutLead] : withoutLead;
+    });
+    applyOutcomeToLocalCounts(nextStatus, checked ? 1 : -1);
+
+    const res = await updateLeadDetails(lead.id, {
+      call_status: nextStatus,
+      caller_name: checked ? callerName : lead.caller_name,
+      assigned_to: checked ? callerName : lead.assigned_to,
+      meeting_date: nextLead.meeting_date || '',
+    });
+
+    if (!res.success) {
+      alert('Failed to mark treated: ' + res.error);
+      refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
+      if (['database', 'treated'].includes(activeTab)) fetchListTab(activeTab);
+    } else {
+      refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     }
   };
 
@@ -995,6 +1101,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       notes: editingLead.notes,
       contact_person: editingLead.contact_person,
       meeting_date: editingLead.meeting_date,
+      call_status: editingLead.call_status,
     }).then(res => {
       if (!res.success && dbConfigured) {
         // Rollback on failure
@@ -1040,7 +1147,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeExternalUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     if (/^https?:\/\//i.test(raw)) return raw;
     if (raw.startsWith('//')) return `https:${raw}`;
@@ -1048,7 +1155,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeInstagramUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) {
       return 'https://instagram.com/direct/inbox/';
     }
@@ -1058,7 +1165,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeInstagramProfileUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     const handle = extractSocialHandle(raw, /(^|\.)instagram\.com$/i);
     if (handle) return `https://instagram.com/${encodeURIComponent(handle)}`;
@@ -1066,7 +1173,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const extractSocialHandle = (value?: string | null, hostPattern?: RegExp) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     const clean = raw.replace(/^@/, '');
     if (!/^https?:\/\//i.test(clean) && !clean.includes('/') && /^[A-Za-z0-9._]+$/.test(clean)) return clean;
@@ -1090,7 +1197,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeFacebookProfileUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     const handle = extractSocialHandle(raw, /(^|\.)facebook\.com$/i);
     if (handle) return `https://facebook.com/${encodeURIComponent(handle)}`;
@@ -1098,7 +1205,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeMessengerUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return 'https://m.me/';
     const facebookHandle = extractSocialHandle(raw, /(^|\.)facebook\.com$/i);
     if (facebookHandle) return `https://m.me/${encodeURIComponent(facebookHandle)}`;
@@ -1108,7 +1215,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeTikTokUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     const handle = extractSocialHandle(raw, /(^|\.)tiktok\.com$/i).replace(/^@/, '');
     if (handle) return `https://www.tiktok.com/@${encodeURIComponent(handle)}`;
@@ -1116,7 +1223,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const normalizeLinkedInUrl = (value?: string | null) => {
-    const raw = value?.trim();
+    const raw = splitMultiValue(value)[0] || value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     if (/linkedin\.com/i.test(raw)) return normalizeExternalUrl(raw);
     const handle = raw.replace(/^@/, '');
@@ -1126,48 +1233,48 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   const SocialProfileBadges = ({ lead, compact = false }: { lead?: Record<string, any> | null; compact?: boolean }) => {
     const links = [
-      {
-        key: 'website',
-        label: 'Website',
-        href: normalizeExternalUrl(lead?.website),
+      ...splitMultiValue(lead?.website).map((value, index) => ({
+        key: `website-${index}`,
+        label: index ? `Website ${index + 1}` : 'Website',
+        href: normalizeExternalUrl(value),
         icon: <Globe className="w-3.5 h-3.5" />,
         className: 'hover:bg-slate-900 hover:text-white',
-      },
-      {
-        key: 'facebook',
-        label: 'Facebook',
-        href: normalizeFacebookProfileUrl(lead?.facebook),
+      })),
+      ...splitMultiValue(lead?.facebook).map((value, index) => ({
+        key: `facebook-${index}`,
+        label: index ? `Facebook ${index + 1}` : 'Facebook',
+        href: normalizeFacebookProfileUrl(value),
         icon: <FacebookIcon className="w-3.5 h-3.5" />,
         className: 'hover:bg-blue-600 hover:text-white',
-      },
-      {
-        key: 'instagram',
-        label: 'Instagram',
-        href: normalizeInstagramProfileUrl(lead?.instagram),
+      })),
+      ...splitMultiValue(lead?.instagram).map((value, index) => ({
+        key: `instagram-${index}`,
+        label: index ? `Instagram ${index + 1}` : 'Instagram',
+        href: normalizeInstagramProfileUrl(value),
         icon: <InstagramIcon className="w-3.5 h-3.5" />,
         className: 'hover:bg-pink-600 hover:text-white',
-      },
-      {
-        key: 'tiktok',
-        label: 'TikTok',
-        href: normalizeTikTokUrl(lead?.tiktok),
+      })),
+      ...splitMultiValue(lead?.tiktok).map((value, index) => ({
+        key: `tiktok-${index}`,
+        label: index ? `TikTok ${index + 1}` : 'TikTok',
+        href: normalizeTikTokUrl(value),
         icon: <TikTokIcon className="w-3.5 h-3.5" />,
         className: 'hover:bg-black hover:text-white',
-      },
-      {
-        key: 'linkedin',
-        label: 'LinkedIn',
-        href: normalizeLinkedInUrl(lead?.linkedin),
+      })),
+      ...splitMultiValue(lead?.linkedin).map((value, index) => ({
+        key: `linkedin-${index}`,
+        label: index ? `LinkedIn ${index + 1}` : 'LinkedIn',
+        href: normalizeLinkedInUrl(value),
         icon: <LinkedinIcon className="w-3.5 h-3.5" />,
         className: 'hover:bg-sky-700 hover:text-white',
-      },
-      {
-        key: 'social_link',
-        label: 'Other Link',
-        href: normalizeExternalUrl(lead?.social_link),
+      })),
+      ...splitMultiValue(lead?.social_link).map((value, index) => ({
+        key: `social-${index}`,
+        label: index ? `Other Link ${index + 1}` : 'Other Link',
+        href: normalizeExternalUrl(value),
         icon: <Globe className="w-3.5 h-3.5" />,
         className: 'hover:bg-violet-600 hover:text-white',
-      },
+      })),
     ].filter((link) => Boolean(link.href));
 
     if (!links.length) return null;
@@ -1201,12 +1308,19 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   const getWebQualityStyles = (quality: string) => {
     switch (quality?.toLowerCase()) {
+      case 'working':
       case 'high':
         return 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+      case 'beautiful':
+        return 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-100';
       case 'medium':
         return 'bg-blue-50 text-blue-700 border border-blue-100';
+      case 'outdated':
       case 'low':
         return 'bg-amber-50 text-amber-700 border border-amber-100';
+      case 'not working':
+      case 'broken':
+        return 'bg-rose-50 text-rose-700 border border-rose-100';
       default:
         return 'bg-rose-50 text-rose-700 border border-rose-100';
     }
@@ -1229,6 +1343,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         return 'bg-slate-100 text-slate-600 border border-slate-200';
       case 'Dormant':
         return 'bg-zinc-100 text-zinc-500 border border-zinc-200';
+      case 'Treated':
+        return 'bg-indigo-100 text-indigo-800 border border-indigo-200';
       default:
         return 'bg-slate-50 text-slate-400 border border-slate-100';
     }
@@ -1237,7 +1353,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const fols = currentLead?.followers_if_visible || currentLead?.facebook_followers || currentLead?.instagram_followers || 'Not visible';
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 md:px-6 py-8 flex flex-col gap-6 select-none text-slate-800 bg-slate-50">
+    <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 md:px-6 py-4 md:py-8 flex flex-col gap-4 md:gap-6 select-none text-slate-800 bg-slate-50">
       
       {/* Celebration Confetti Overlay */}
       {showConfetti && (
@@ -1296,8 +1412,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       )}
 
       {/* Header Bar */}
-      <div className="w-full bg-white border border-slate-200/80 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
-        <div className="flex items-center gap-4">
+      <div className="w-full bg-white border border-slate-200/80 rounded-3xl p-4 md:p-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 md:gap-6 shadow-sm">
+        <div className="flex items-center gap-3 md:gap-4">
           <div className="w-12 h-12 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-center text-blue-600">
             <Briefcase className="w-6 h-6" />
           </div>
@@ -1313,7 +1429,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         </div>
 
         {/* Navigation Selector Tabs */}
-        <div className="flex bg-slate-100 border border-slate-200/50 p-1 rounded-2xl flex-wrap justify-center md:justify-start gap-1">
+        <div className="w-full md:w-auto flex bg-slate-100 border border-slate-200/50 p-1 rounded-2xl flex-wrap justify-start gap-1">
           {[
             { id: 'dialer', label: 'Call Queue', count: freshTargetCount || dialerQueue.length },
             { id: 'deadlines', label: 'Meetings', count: meetingsList.length },
@@ -1321,13 +1437,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
             { id: 'followups', label: 'Followups', count: displayCount(totalFollowupsCount) },
             { id: 'warm_leads', label: 'Warm Leads', count: displayCount(totalWarmCount) },
             { id: 'good_clients', label: 'Converted', count: displayCount(totalGoodClientsCount) },
+            { id: 'treated', label: 'Treated', count: displayCount(totalTreatedCount) },
             { id: 'lost', label: 'Lost', count: displayCount(totalLostCount) },
             ...(callerName === 'Hamid' ? [{ id: 'admin', label: 'Admin Panel', count: null }] : [])
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => handleMainTabChange(tab.id as typeof activeTab)}
-              className={`px-3 py-2 rounded-xl font-display text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
+              className={`min-h-9 flex-1 sm:flex-none px-2.5 md:px-3 py-2 rounded-xl font-display text-[9px] md:text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 ${
                 activeTab === tab.id
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
                   : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
@@ -1346,7 +1463,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         </div>
 
         {/* Active Caller details */}
-        <div className="flex items-center gap-3 border-l border-slate-200 pl-6">
+        <div className="flex items-center gap-3 md:border-l border-slate-200 md:pl-6">
           <div className="w-9 h-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
             <User className="w-4 h-4" />
           </div>
@@ -1509,6 +1626,42 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
+                        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={currentLead?.call_status === 'Treated'}
+                              onChange={(e) => currentLead && setLeadTreated(currentLead, e.target.checked, currentLead.meeting_date)}
+                              className="h-5 w-5 appearance-none rounded-full border border-indigo-300 bg-white checked:bg-indigo-600 checked:border-indigo-600 focus:ring-2 focus:ring-indigo-200 cursor-pointer"
+                            />
+                            <span className="font-body text-xs font-bold text-indigo-900 tracking-wide uppercase">
+                              Mark agency as treated
+                            </span>
+                          </label>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1 md:max-w-xl">
+                            <div className="relative flex-1">
+                              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-indigo-400" />
+                              <input
+                                type="text"
+                                value={currentLead?.meeting_date || ''}
+                                onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'meeting_date', e.target.value)}
+                                onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'meeting_date', e.target.value)}
+                                placeholder="Meeting day/time if scheduled"
+                                className="w-full bg-white border border-indigo-100 focus:border-indigo-300 rounded-xl py-2.5 pl-9 pr-3 font-body text-xs text-slate-800 focus:outline-none"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              disabled={!currentLead?.meeting_date}
+                              onClick={() => currentLead && setLeadTreated(currentLead, true, currentLead.meeting_date)}
+                              className="px-3 py-2.5 rounded-xl bg-indigo-600 text-white disabled:opacity-40 font-body text-[10px] font-bold uppercase tracking-wide"
+                            >
+                              Save meeting
+                            </button>
+                          </div>
+                        </div>
+
                         {/* Internal tabs for info vs social vs history */}
                         <div className="flex bg-slate-100 border border-slate-200 p-1 rounded-xl gap-1 self-start">
                           <button
@@ -1549,18 +1702,28 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             
                             {/* Phones section */}
                             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col gap-4">
-                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Phones</span>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Phones</span>
+                                <button
+                                  type="button"
+                                  onClick={() => currentLead && promptAddMultiValue(currentLead, 'phone_2', 'phone number')}
+                                  className="h-8 px-3 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-200 font-body text-[10px] font-bold flex items-center gap-1.5"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Add phone
+                                </button>
+                              </div>
                               
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                                 {/* Primary Phone */}
-                                <div className={`bg-white border rounded-xl p-4 flex items-center justify-between shadow-sm transition-all ${dialedNumber === currentLead?.phone ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
+                                <div className={`bg-white border rounded-xl p-4 flex items-center justify-between gap-3 shadow-sm transition-all ${dialedNumber === currentLead?.phone ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
                                   <div className="flex flex-col gap-0.5">
                                     <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Primary Phone</span>
                                     <span className="font-display text-sm font-bold text-slate-800 tracking-wide font-mono">
                                       {currentLead?.phone || 'No phone number'}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap justify-end">
                                     <button
                                       disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
                                       onClick={() => copyToClipboard(currentLead?.phone)}
@@ -1584,52 +1747,74 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       <Phone className="w-3 h-3 fill-current" />
                                       Dial
                                     </button>
+                                    <button
+                                      disabled={!formatWhatsappPhone(currentLead?.phone)}
+                                      onClick={() => window.open(`https://wa.me/${formatWhatsappPhone(currentLead?.phone)}`, '_blank')}
+                                      className="p-2 bg-emerald-50 hover:bg-emerald-600 hover:text-white border border-emerald-100 text-emerald-700 rounded-lg cursor-pointer disabled:opacity-40"
+                                      title="Open WhatsApp"
+                                    >
+                                      <MessageCircle className="w-3.5 h-3.5" />
+                                    </button>
                                   </div>
                                 </div>
 
-                                {/* Alternative Phone */}
-                                {showSecondaryPhone || currentLead?.phone_2 ? (
-                                  <div className={`bg-white border rounded-xl p-4 flex items-center justify-between shadow-sm transition-all ${dialedNumber === currentLead?.phone_2 ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
+                                {splitMultiValue(currentLead?.phone_2).map((phoneValue, phoneIndex) => (
+                                  <div key={`phone-${phoneIndex}`} className={`bg-white border rounded-xl p-4 flex items-center justify-between gap-3 shadow-sm transition-all ${dialedNumber === phoneValue ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
                                     <div className="flex flex-col gap-1 flex-1 min-w-0">
-                                      <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Alternative Phone</span>
+                                      <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Phone {phoneIndex + 2}</span>
                                       <input
                                         type="text"
-                                        value={currentLead?.phone_2 || ''}
-                                        onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'phone_2', e.target.value)}
-                                        onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'phone_2', e.target.value)}
+                                        value={phoneValue}
+                                        onChange={(e) => updateMultiValueField(currentLead.id, 'phone_2', phoneIndex, e.target.value)}
+                                        onBlur={() => saveMultiValueField(currentLead.id, 'phone_2')}
                                         placeholder="Add alternative phone"
                                         className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-lg px-2 py-1 font-body text-xs text-slate-800 focus:outline-none font-mono"
                                       />
                                     </div>
-                                    <div className="flex items-center gap-2 ml-3">
+                                    <div className="flex items-center gap-2 ml-3 flex-wrap justify-end">
                                       <button
-                                        disabled={!currentLead?.phone_2}
-                                        onClick={() => copyToClipboard(currentLead.phone_2)}
+                                        onClick={() => copyToClipboard(phoneValue)}
                                         className="p-2 hover:bg-slate-50 border border-slate-100 text-slate-500 rounded-lg cursor-pointer disabled:opacity-40"
                                         title="Copy Phone 2"
                                       >
                                         <Copy className="w-3.5 h-3.5" />
                                       </button>
                                       <button
-                                        disabled={!currentLead?.phone_2}
                                         onClick={() => {
-                                          setDialedNumber(currentLead.phone_2);
-                                          window.open(`tel:${currentLead.phone_2}`, '_self');
+                                          setDialedNumber(phoneValue);
+                                          window.open(`tel:${phoneValue}`, '_self');
                                         }}
                                         className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all disabled:opacity-40"
                                       >
                                         <Phone className="w-3 h-3 fill-current" />
                                         Dial
                                       </button>
+                                      <button
+                                        disabled={!formatWhatsappPhone(phoneValue)}
+                                        onClick={() => window.open(`https://wa.me/${formatWhatsappPhone(phoneValue)}`, '_blank')}
+                                        className="p-2 bg-emerald-50 hover:bg-emerald-600 hover:text-white border border-emerald-100 text-emerald-700 rounded-lg cursor-pointer disabled:opacity-40"
+                                        title="Open WhatsApp"
+                                      >
+                                        <MessageCircle className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => removeMultiValueField(currentLead.id, 'phone_2', phoneIndex)}
+                                        className="p-2 hover:bg-rose-50 border border-rose-100 text-rose-500 rounded-lg cursor-pointer"
+                                        title="Remove phone"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   </div>
-                                ) : (
+                                ))}
+
+                                {!splitMultiValue(currentLead?.phone_2).length && (
                                   <button
-                                    onClick={() => setShowSecondaryPhone(true)}
+                                    onClick={() => currentLead && promptAddMultiValue(currentLead, 'phone_2', 'phone number')}
                                     className="bg-white border border-dashed border-slate-200 rounded-xl p-4 flex items-center justify-center gap-2 text-slate-500 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50/40 transition-all font-body text-xs font-bold cursor-pointer"
                                   >
                                     <Plus className="w-3.5 h-3.5" />
-                                    Add alternative phone
+                                    Add new phone
                                   </button>
                                 )}
                               </div>
@@ -1670,54 +1855,89 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   )}
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2.5">
-                                  <div className="flex flex-col gap-1">
-                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Primary Email</span>
+                                <div className="flex flex-col gap-2.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Emails</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => currentLead && promptAddMultiValue(currentLead, 'email_2', 'email')}
+                                      className="h-7 px-2.5 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-200 font-body text-[9px] font-bold flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Add email
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
                                     <input
                                       type="email"
                                       value={currentLead?.email || ''}
                                       onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email', e.target.value)}
                                       onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email', e.target.value)}
-                                      placeholder="Email"
-                                      className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                      placeholder="Primary email"
+                                      className="flex-1 min-w-0 bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
                                     />
+                                    {currentLead?.email && (
+                                      <a href={`mailto:${currentLead.email}`} className="h-9 w-9 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 inline-flex items-center justify-center" title="Send email">
+                                        <Mail className="w-3.5 h-3.5" />
+                                      </a>
+                                    )}
                                   </div>
-                                  {showSecondaryEmail || currentLead?.email_2 ? (
-                                    <div className="flex flex-col gap-1">
-                                      <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Alternative Email</span>
+
+                                  {splitMultiValue(currentLead?.email_2).map((emailValue, emailIndex) => (
+                                    <div key={`email-${emailIndex}`} className="flex items-center gap-2">
                                       <input
                                         type="email"
-                                        value={currentLead?.email_2 || ''}
-                                        onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email_2', e.target.value)}
-                                        onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email_2', e.target.value)}
-                                        placeholder="Alt Email"
-                                        className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                        value={emailValue}
+                                        onChange={(e) => updateMultiValueField(currentLead.id, 'email_2', emailIndex, e.target.value)}
+                                        onBlur={() => saveMultiValueField(currentLead.id, 'email_2')}
+                                        placeholder={`Email ${emailIndex + 2}`}
+                                        className="flex-1 min-w-0 bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
                                       />
+                                      <a href={`mailto:${emailValue}`} className="h-9 w-9 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 inline-flex items-center justify-center" title="Send email">
+                                        <Mail className="w-3.5 h-3.5" />
+                                      </a>
+                                      <button
+                                        onClick={() => removeMultiValueField(currentLead.id, 'email_2', emailIndex)}
+                                        className="h-9 w-9 rounded-xl bg-rose-50 text-rose-600 border border-rose-100 inline-flex items-center justify-center"
+                                        title="Remove email"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
-                                  ) : (
-                                    <button
-                                      onClick={() => setShowSecondaryEmail(true)}
-                                      className="mt-4.5 h-9 rounded-xl border border-dashed border-slate-200 text-slate-500 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50/40 font-body text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                                    >
-                                      <Plus className="w-3 h-3" />
-                                      Add email
-                                    </button>
-                                  )}
+                                  ))}
                                 </div>
                               </div>
 
                               <div className="flex flex-col gap-3.5">
                                 <div className="flex flex-col gap-1">
-                                  <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website Quality</span>
-                                  <div className="flex gap-2">
-                                    <input
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website links & status</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => currentLead && promptAddMultiValue(currentLead, 'website', 'website link')}
+                                      className="h-7 px-2.5 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-200 font-body text-[9px] font-bold flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Add website
+                                    </button>
+                                  </div>
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex gap-2">
+                                      <input
                                       type="text"
                                       value={currentLead?.website || ''}
                                       onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'website', e.target.value)}
                                       onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'website', e.target.value)}
-                                      placeholder="None"
+                                      placeholder="Website link, one per line"
                                       className="flex-1 bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-blue-600 focus:outline-none transition-colors font-semibold"
-                                    />
+                                      />
+                                      {normalizeExternalUrl(currentLead?.website) && (
+                                        <a href={normalizeExternalUrl(currentLead?.website)} target="_blank" rel="noreferrer" className="h-9 w-9 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 inline-flex items-center justify-center" title="Open website">
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                      )}
+                                    </div>
                                     <select
                                       value={currentLead?.website_quality || 'None'}
                                       onChange={(e) => {
@@ -1727,10 +1947,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       className="bg-slate-50 border border-slate-200/60 rounded-xl px-2 py-2 font-body text-xs text-slate-800 focus:outline-none cursor-pointer"
                                     >
                                       <option value="None">None</option>
+                                      <option value="Working">Working</option>
+                                      <option value="Beautiful">Beautiful</option>
+                                      <option value="Outdated">Outdated</option>
+                                      <option value="Not Working">Not Working</option>
                                       <option value="Low">Low</option>
                                       <option value="Medium">Medium</option>
                                       <option value="High">High</option>
-                                      {currentLead?.website_quality && !['None', 'Low', 'Medium', 'High'].includes(currentLead.website_quality) && (
+                                      {currentLead?.website_quality && !['None', 'Working', 'Beautiful', 'Outdated', 'Not Working', 'Low', 'Medium', 'High'].includes(currentLead.website_quality) && (
                                         <option value={currentLead.website_quality}>{currentLead.website_quality}</option>
                                       )}
                                     </select>
@@ -1778,6 +2002,40 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <span className="text-slate-300">|</span>
                                     <span>Reviews count: <strong>{currentLead?.review_count || 0}</strong></span>
                                   </div>
+                                </div>
+
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Profile links</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => currentLead && promptAddMultiValue(currentLead, 'social_link', 'profile link')}
+                                      className="h-7 px-2.5 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-200 font-body text-[9px] font-bold flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Add link
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                                    <SocialProfileBadges lead={currentLead} compact />
+                                    {![
+                                      ...splitMultiValue(currentLead?.website),
+                                      ...splitMultiValue(currentLead?.facebook),
+                                      ...splitMultiValue(currentLead?.instagram),
+                                      ...splitMultiValue(currentLead?.tiktok),
+                                      ...splitMultiValue(currentLead?.linkedin),
+                                      ...splitMultiValue(currentLead?.social_link),
+                                    ].length && (
+                                      <span className="text-[10px] text-slate-400 italic">No profile links</span>
+                                    )}
+                                  </div>
+                                  <textarea
+                                    value={currentLead?.social_link || ''}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'social_link', e.target.value)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'social_link', e.target.value)}
+                                    placeholder="Extra profile links, one per line"
+                                    className="w-full min-h-[64px] bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none resize-y"
+                                  />
                                 </div>
                               </div>
                             </div>
@@ -2395,6 +2653,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <option value="Client Configured">Configured Only</option>
                         <option value="Callback">Callbacks Only</option>
                         <option value="No Answer / Busy">No Answer / Busy</option>
+                        <option value="Treated">Treated Only</option>
                       </select>
                       <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                     </div>
@@ -2413,6 +2672,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <option value="1">Priority 1 (High Socials, No Web)</option>
                         <option value="2">Priority 2 (High Reviews, Low Web)</option>
                         <option value="3">Priority 3 (Default standard)</option>
+                        <option value="4">Priority 4 (Low)</option>
+                        <option value="5">Priority 5 (Minimal)</option>
                       </select>
                       <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                     </div>
@@ -2428,12 +2689,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         className="appearance-none bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl px-4 py-3 pr-10 font-body text-xs text-slate-700 focus:outline-none cursor-pointer hover:bg-slate-100 transition-colors"
                       >
                         <option value="">All Regions</option>
-                        <option value="Algiers">Algiers</option>
-                        <option value="Oran">Oran</option>
-                        <option value="Constantine">Constantine</option>
-                        <option value="Sétif">Sétif</option>
-                        <option value="Tlemcen">Tlemcen</option>
-                        <option value="Blida">Blida</option>
+                        {areaOptions.map((area) => (
+                          <option key={area} value={area}>{area}</option>
+                        ))}
                       </select>
                       <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                     </div>
@@ -2460,18 +2718,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     editingLead ? 'xl:col-span-8' : 'xl:col-span-12'
                   } transition-all duration-300 relative`}>
                     
-                    {/* Subtle Loading overlay instead of wiping table */}
-                    {isLeadsListLoading && (
-                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex items-center justify-center z-20 transition-all duration-300">
-                        <div className="flex flex-col items-center gap-2 bg-white/95 border border-slate-100 px-6 py-4 rounded-2xl shadow-md">
-                          <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
-                          <span className="font-body text-[10px] text-slate-400 tracking-wider uppercase font-bold">Refreshing data...</span>
-                        </div>
-                      </div>
-                    )}
-                    
                     <div className="w-full overflow-x-auto">
-                      <table className="w-full border-collapse text-left text-xs font-body">
+                      <table className="w-full min-w-[980px] border-collapse text-left text-xs font-body">
                         <thead>
                           <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
                             <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Agency Name</th>
@@ -2489,18 +2737,52 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               <td className="p-4">
                                 <div className="flex flex-col">
                                   <span className="font-semibold text-slate-900">{lead.agency_name}</span>
-                                  <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{lead.address}</span>
+                                  {normalizeExternalUrl(lead.maps_link) ? (
+                                    <a href={normalizeExternalUrl(lead.maps_link)} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:underline truncate max-w-[220px] inline-flex items-center gap-1">
+                                      {lead.address || 'Open map'}
+                                      <MapPin className="w-2.5 h-2.5" />
+                                    </a>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 truncate max-w-[220px]">{lead.address}</span>
+                                  )}
                                 </div>
                               </td>
                               <td className="p-4 font-semibold text-slate-600">{lead.area}</td>
-                              <td className="p-4 font-semibold text-slate-700 font-mono">{lead.phone}</td>
+                              <td className="p-4">
+                                <div className="flex flex-col gap-1">
+                                  {[lead.phone, ...splitMultiValue(lead.phone_2)].filter(Boolean).slice(0, 3).map((phoneValue: string, phoneIndex: number) => (
+                                    <div key={`${lead.id}-phone-${phoneIndex}`} className="flex items-center gap-1.5">
+                                      <a href={`tel:${phoneValue}`} className="font-semibold text-slate-700 font-mono hover:text-blue-700">{phoneValue}</a>
+                                      <button onClick={() => copyToClipboard(phoneValue)} className="h-6 w-6 rounded-lg bg-slate-50 border border-slate-100 text-slate-500 inline-flex items-center justify-center" title="Copy phone">
+                                        <Copy className="w-3 h-3" />
+                                      </button>
+                                      <a href={`https://wa.me/${formatWhatsappPhone(phoneValue)}`} target="_blank" rel="noreferrer" className="h-6 w-6 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-700 inline-flex items-center justify-center" title="Open WhatsApp">
+                                        <MessageCircle className="w-3 h-3" />
+                                      </a>
+                                    </div>
+                                  ))}
+                                  {[lead.email, ...splitMultiValue(lead.email_2)].filter(Boolean).slice(0, 2).map((emailValue: string, emailIndex: number) => (
+                                    <a key={`${lead.id}-email-${emailIndex}`} href={`mailto:${emailValue}`} className="text-[10px] text-blue-500 hover:underline truncate max-w-[180px] inline-flex items-center gap-1">
+                                      <Mail className="w-3 h-3" />
+                                      {emailValue}
+                                    </a>
+                                  ))}
+                                </div>
+                              </td>
                               <td className="p-4">
                                 {lead.website && lead.website !== 'Not found' ? (
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase inline-block ${getWebQualityStyles(lead.website_quality)}`}>
-                                    {lead.website_quality}
-                                  </span>
+                                  <div className="flex flex-col gap-2">
+                                    <a href={normalizeExternalUrl(lead.website)} target="_blank" rel="noreferrer" className={`px-2 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase inline-flex items-center gap-1 self-start ${getWebQualityStyles(lead.website_quality)}`}>
+                                      {lead.website_quality || 'Website'}
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                    <SocialProfileBadges lead={lead} compact />
+                                  </div>
                                 ) : (
-                                  <span className="text-[9px] text-slate-300">No Website</span>
+                                  <div className="flex flex-col gap-2">
+                                    <span className="text-[9px] text-slate-300">No Website</span>
+                                    <SocialProfileBadges lead={lead} compact />
+                                  </div>
                                 )}
                               </td>
                               <td className="p-4">
@@ -2528,9 +2810,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                 </select>
                               </td>
                               <td className="p-4">
-                                <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase ${getStatusStyle(lead.call_status)}`}>
-                                  {lead.call_status}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={lead.call_status === 'Treated'}
+                                    onChange={(e) => setLeadTreated(lead, e.target.checked, lead.meeting_date)}
+                                    className="h-4 w-4 appearance-none rounded-full border border-indigo-300 bg-white checked:bg-indigo-600 checked:border-indigo-600"
+                                    title="Mark treated"
+                                  />
+                                  <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase ${getStatusStyle(lead.call_status)}`}>
+                                    {lead.call_status}
+                                  </span>
+                                </div>
                               </td>
                               <td className="p-4 text-right">
                                 <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
@@ -2667,12 +2958,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             />
                           </div>
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Alternative Phone (2)</label>
-                            <input
-                              type="text"
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Additional Phones / WhatsApp</label>
+                            <textarea
                               value={editingLead.phone_2 || ''}
                               onChange={(e) => setEditingLead({ ...editingLead, phone_2: e.target.value })}
-                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-mono"
+                              placeholder="One number per line"
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-mono min-h-[72px] resize-y"
                             />
                           </div>
                         </div>
@@ -2731,6 +3022,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
+                        <label className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editingLead.call_status === 'Treated'}
+                            onChange={(e) => setEditingLead({ ...editingLead, call_status: e.target.checked ? 'Treated' : 'Not Called' })}
+                            className="h-5 w-5 appearance-none rounded-full border border-indigo-300 bg-white checked:bg-indigo-600 checked:border-indigo-600"
+                          />
+                          <span className="font-body text-xs font-bold text-indigo-900 uppercase tracking-wide">
+                            Mark as treated
+                          </span>
+                        </label>
+
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex flex-col gap-1">
                             <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Primary Email</label>
@@ -2742,24 +3045,24 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             />
                           </div>
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Alternative Email (2)</label>
-                            <input
-                              type="email"
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Additional Emails</label>
+                            <textarea
                               value={editingLead.email_2 || ''}
                               onChange={(e) => setEditingLead({ ...editingLead, email_2: e.target.value })}
-                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                              placeholder="One email per line"
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none min-h-[72px] resize-y"
                             />
                           </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Website Link</label>
-                            <input
-                              type="text"
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Website Links</label>
+                            <textarea
                               value={editingLead.website || ''}
                               onChange={(e) => setEditingLead({ ...editingLead, website: e.target.value })}
-                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-semibold text-blue-600"
+                              placeholder="One website per line"
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-semibold text-blue-600 min-h-[72px] resize-y"
                             />
                           </div>
 
@@ -2771,10 +3074,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none cursor-pointer font-semibold text-slate-700"
                             >
                               <option value="None">None</option>
+                              <option value="Working">Working</option>
+                              <option value="Beautiful">Beautiful</option>
+                              <option value="Outdated">Outdated</option>
+                              <option value="Not Working">Not Working</option>
                               <option value="Low">Low</option>
                               <option value="Medium">Medium</option>
                               <option value="High">High</option>
-                              {editingLead.website_quality && !['None', 'Low', 'Medium', 'High'].includes(editingLead.website_quality) && (
+                              {editingLead.website_quality && !['None', 'Working', 'Beautiful', 'Outdated', 'Not Working', 'Low', 'Medium', 'High'].includes(editingLead.website_quality) && (
                                 <option value={editingLead.website_quality}>{editingLead.website_quality}</option>
                               )}
                             </select>
@@ -2826,12 +3133,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Other Social Link</label>
-                          <input
-                            type="text"
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Other Social/Profile Links</label>
+                          <textarea
                             value={editingLead.social_link || ''}
                             onChange={(e) => setEditingLead({ ...editingLead, social_link: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                            placeholder="One link per line"
+                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none min-h-[72px] resize-y"
                           />
                         </div>
 
@@ -2892,6 +3199,122 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                 </div>
 
+              </motion.div>
+            )}
+
+            {activeTab === 'treated' && (
+              <motion.div
+                key="treated-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
+                className="w-full bg-white border border-slate-200 rounded-3xl p-4 md:p-6 shadow-sm flex flex-col gap-6"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-indigo-600" />
+                    <h3 className="font-display text-sm tracking-widest text-slate-800 uppercase font-black">
+                      Treated Agencies
+                    </h3>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => {
+                          setSearchQuery(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        placeholder="Search treated agency or caller..."
+                        className="w-full sm:w-72 bg-slate-50 border border-slate-200 focus:border-indigo-300 rounded-xl py-2.5 pl-9 pr-3 font-body text-xs text-slate-800 focus:outline-none"
+                      />
+                    </div>
+                    <span className="font-body text-xs text-indigo-700 font-bold bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-full">
+                      {displayCount(totalTreatedCount)} Treated
+                    </span>
+                  </div>
+                </div>
+
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs font-body min-w-[760px]">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Agency</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Caller</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Contact</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Meeting</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leadsList.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-slate-50/50">
+                          <td className="p-4">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-slate-900">{lead.agency_name}</span>
+                              <span className="text-[10px] text-slate-400">{lead.area || 'No region'}</span>
+                              <SocialProfileBadges lead={lead} compact />
+                            </div>
+                          </td>
+                          <td className="p-4 text-slate-600 font-bold">{lead.caller_name || lead.assigned_to || 'Unassigned'}</td>
+                          <td className="p-4">
+                            <div className="flex flex-col gap-1">
+                              {[lead.phone, ...splitMultiValue(lead.phone_2)].filter(Boolean).slice(0, 2).map((phoneValue: string, index: number) => (
+                                <a key={index} href={`tel:${phoneValue}`} className="font-mono font-semibold text-blue-700 hover:underline">{phoneValue}</a>
+                              ))}
+                              {[lead.email, ...splitMultiValue(lead.email_2)].filter(Boolean).slice(0, 1).map((emailValue: string, index: number) => (
+                                <a key={index} href={`mailto:${emailValue}`} className="text-[10px] text-blue-500 hover:underline">{emailValue}</a>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <input
+                              type="text"
+                              value={lead.meeting_date || ''}
+                              onChange={(e) => setLeadsList(prev => prev.map(item => item.id === lead.id ? { ...item, meeting_date: e.target.value } : item))}
+                              onBlur={(e) => saveLeadFieldToServer(lead.id, 'meeting_date', e.target.value)}
+                              placeholder="No meeting"
+                              className="w-full min-w-[180px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-300"
+                            />
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => setEditingLead({ ...lead })}
+                                className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
+                                title="Edit"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setLeadTreated(lead, false, '')}
+                                className="px-3 py-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-body text-[10px] font-bold uppercase"
+                              >
+                                Return fresh
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {isLeadsListLoading ? (
+                        <tr>
+                          <td colSpan={5} className="p-12 text-center text-slate-400 text-xs">
+                            <Loader2 className="w-5 h-5 animate-spin text-indigo-600 mx-auto mb-2" />
+                            Loading treated agencies...
+                          </td>
+                        </tr>
+                      ) : leadsList.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="p-12 text-center text-slate-300 text-xs">
+                            No treated agencies found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </motion.div>
             )}
 

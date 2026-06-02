@@ -11,6 +11,7 @@ function requireSupabase() {
 const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
 const WARM_STATUSES = ['Interested'];
 const FOLLOWUP_STATUSES = ['Callback', 'Busy', 'No Answer'];
+const TREATED_STATUSES = ['Treated'];
 const ACTIVE_ASSIGNMENT_FILTER = 'call_status.is.null,call_status.eq.Not Called';
 const IMPORTABLE_LEAD_FIELDS = [
   'agency_name', 'area', 'maps_link', 'address', 'phone', 'phone_2', 'email', 'email_2',
@@ -162,7 +163,23 @@ export async function getLeads(options: {
     let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'planned' });
 
     if (search) {
-      q = q.or(`agency_name.ilike.%${search}%,phone.ilike.%${search}%,area.ilike.%${search}%,website.ilike.%${search}%,contact_person.ilike.%${search}%`);
+      q = q.or([
+        `agency_name.ilike.%${search}%`,
+        `phone.ilike.%${search}%`,
+        `phone_2.ilike.%${search}%`,
+        `email.ilike.%${search}%`,
+        `email_2.ilike.%${search}%`,
+        `area.ilike.%${search}%`,
+        `address.ilike.%${search}%`,
+        `website.ilike.%${search}%`,
+        `maps_link.ilike.%${search}%`,
+        `facebook.ilike.%${search}%`,
+        `instagram.ilike.%${search}%`,
+        `tiktok.ilike.%${search}%`,
+        `linkedin.ilike.%${search}%`,
+        `social_link.ilike.%${search}%`,
+        `contact_person.ilike.%${search}%`,
+      ].join(','));
     }
     if (status === 'Followups') {
       q = q.in('call_status', FOLLOWUP_STATUSES);
@@ -174,6 +191,8 @@ export async function getLeads(options: {
       q = q.in('call_status', CONVERTED_STATUSES);
     } else if (status === 'Lost') {
       q = q.in('call_status', ['Not Interested', 'Wrong Number']);
+    } else if (status === 'Treated') {
+      q = q.in('call_status', TREATED_STATUSES);
     } else if (status) {
       q = q.eq('call_status', status);
     } else if (excludeLost) {
@@ -273,7 +292,7 @@ export async function updateLeadDetails(id: number, fields: {
   website_quality?: string;
   facebook?: string; instagram?: string; tiktok?: string; linkedin?: string; social_link?: string;
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
-  address?: string; maps_link?: string;
+  address?: string; maps_link?: string; call_status?: string; caller_name?: string; assigned_to?: string;
 }) {
   try {
     const supabase = requireSupabase();
@@ -355,15 +374,16 @@ export async function getAnalytics() {
 export async function getTargetInventoryCounts() {
   try {
     const supabase = requireSupabase();
-    const [totalRes, warmRes, convertedRes, followupRes, lostRes] = await Promise.all([
+    const [totalRes, warmRes, convertedRes, followupRes, lostRes, treatedRes] = await Promise.all([
       supabase.from('leads').select('id', { count: 'planned', head: true }),
       supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Interested'),
       supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Accepted', 'Client Configured']),
       supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']),
       supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Not Interested', 'Wrong Number']),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', TREATED_STATUSES),
     ]);
 
-    const error = totalRes.error || warmRes.error || convertedRes.error || followupRes.error || lostRes.error;
+    const error = totalRes.error || warmRes.error || convertedRes.error || followupRes.error || lostRes.error || treatedRes.error;
     if (error) throw new Error(error.message);
 
     return {
@@ -374,6 +394,7 @@ export async function getTargetInventoryCounts() {
         converted: convertedRes.count || 0,
         followups: followupRes.count || 0,
         lost: lostRes.count || 0,
+        treated: treatedRes.count || 0,
       },
     };
   } catch (error: any) {
@@ -566,7 +587,7 @@ export async function getMeetingsList() {
       .select(LEAD_LIST_COLUMNS)
       .not('meeting_date', 'is', null)
       .neq('meeting_date', '')
-      .in('call_status', ['Interested', 'Accepted', 'Callback'])
+      .in('call_status', ['Interested', 'Accepted', 'Callback', 'Treated'])
       .order('last_called_at', { ascending: false })
       .limit(50);
 
@@ -575,6 +596,31 @@ export async function getMeetingsList() {
   } catch (error: any) {
     console.error('[getMeetingsList]', error.message);
     return { success: false, error: error.message, meetings: [] };
+  }
+}
+
+export async function getLeadAreas() {
+  try {
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('leads')
+      .select('area')
+      .not('area', 'is', null)
+      .neq('area', '')
+      .order('area', { ascending: true })
+      .limit(5000);
+
+    if (error) throw new Error(error.message);
+
+    const areas = Array.from(new Set<string>((data || [])
+      .map((row: any) => String(row.area || '').trim())
+      .filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b));
+
+    return { success: true, areas };
+  } catch (error: any) {
+    console.error('[getLeadAreas]', error.message);
+    return { success: false, error: error.message, areas: [] };
   }
 }
 
