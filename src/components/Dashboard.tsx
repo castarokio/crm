@@ -33,6 +33,8 @@ import {
   Frown,
   CheckCircle,
   RefreshCw,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   getLeads,
@@ -50,6 +52,8 @@ import {
   getCallHistory,
   getAssignmentStats,
   assignLeadsByRange,
+  deleteLeadPermanently,
+  restoreLeadToQueue,
 } from '@/app/actions';
 
 // Custom SVG components for brand icons that are missing in newer lucide-react versions
@@ -194,6 +198,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // New States for Dialed Number Tracking & Admin Analytics
   const [dialedNumber, setDialedNumber] = useState<string>('');
   const [analyticsData, setAnalyticsData] = useState<any | null>(null);
+  const [showSecondaryPhone, setShowSecondaryPhone] = useState<boolean>(false);
+  const [showSecondaryEmail, setShowSecondaryEmail] = useState<boolean>(false);
 
   // Sync dialedNumber with active lead
   useEffect(() => {
@@ -438,8 +444,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (currentLead) {
       setRawNotesInput('');
       setExtractedData(null);
+      setShowSecondaryPhone(Boolean(currentLead.phone_2));
+      setShowSecondaryEmail(Boolean(currentLead.email_2));
     }
-  }, [currentLead]);
+  }, [currentLead?.id]);
 
   // Direct Inline Dialer editing handlers
   const updateLeadFieldInQueue = (leadId: number, field: string, value: any) => {
@@ -452,6 +460,47 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     const res = await updateLeadDetails(leadId, { [field]: value });
     if (!res.success && dbConfigured) {
       console.error('Failed to auto-save field:', field, res.error);
+    }
+  };
+
+  const handleSkipLead = () => {
+    if (dialerQueue.length <= 1) return;
+    setDialerQueue(prev => {
+      const next = [...prev];
+      const [skipped] = next.splice(currentQueueIndex, 1);
+      next.push(skipped);
+      return next;
+    });
+    setCurrentQueueIndex(index => Math.min(index, dialerQueue.length - 2));
+  };
+
+  const handleDeleteFalseLead = async () => {
+    if (!currentLead) return;
+    const label = currentLead.agency_name || `Lead #${currentLead.id}`;
+    if (!confirm(`Permanently remove "${label}" from the database because it is not a travel agency? This cannot be undone.`)) return;
+
+    const prevQueue = [...dialerQueue];
+    const prevLeadsList = [...leadsList];
+    const prevIndex = currentQueueIndex;
+    const prevTotalLeads = totalLeadsCount;
+
+    setDialerQueue(prev => {
+      const next = prev.filter(lead => lead.id !== currentLead.id);
+      return next;
+    });
+    setLeadsList(prev => prev.filter(lead => lead.id !== currentLead.id));
+    setTotalLeadsCount(prev => Math.max(0, prev - 1));
+    setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
+
+    const res = await deleteLeadPermanently(currentLead.id);
+    if (!res.success && dbConfigured) {
+      setDialerQueue(prevQueue);
+      setLeadsList(prevLeadsList);
+      setCurrentQueueIndex(prevIndex);
+      setTotalLeadsCount(prevTotalLeads);
+      alert('Failed to remove lead: ' + res.error);
+    } else {
+      fetchAssignmentStats();
     }
   };
 
@@ -672,7 +721,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
     const handle = extractSocialHandle(raw, /(^|\.)instagram\.com$/i);
     if (handle) return `https://instagram.com/${encodeURIComponent(handle)}`;
-    return normalizeExternalUrl(raw.replace(/^@/, ''));
+    return '';
   };
 
   const extractSocialHandle = (value?: string | null, hostPattern?: RegExp) => {
@@ -1142,34 +1191,49 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             </div>
 
                             {/* Alternative Phone */}
-                            {currentLead?.phone_2 && (
+                            {showSecondaryPhone || currentLead?.phone_2 ? (
                               <div className={`bg-white border rounded-xl p-4.5 flex items-center justify-between shadow-sm transition-all ${dialedNumber === currentLead?.phone_2 ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
-                                <div className="flex flex-col gap-0.5">
+                                <div className="flex flex-col gap-1 flex-1 min-w-0">
                                   <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Alternative Phone</span>
-                                  <span className="font-display text-sm font-bold text-slate-800 tracking-wide font-mono">
-                                    {currentLead.phone_2}
-                                  </span>
+                                  <input
+                                    type="text"
+                                    value={currentLead?.phone_2 || ''}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'phone_2', e.target.value)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'phone_2', e.target.value)}
+                                    placeholder="Add alternative phone"
+                                    className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-lg px-2.5 py-1.5 font-body text-xs text-slate-800 focus:outline-none font-mono"
+                                  />
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 ml-3">
                                   <button
+                                    disabled={!currentLead?.phone_2}
                                     onClick={() => copyToClipboard(currentLead.phone_2)}
-                                    className="p-2 hover:bg-slate-50 border border-slate-100 text-slate-500 rounded-lg cursor-pointer"
+                                    className="p-2 hover:bg-slate-50 border border-slate-100 text-slate-500 rounded-lg cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                                     title="Copy Phone 2"
                                   >
                                     <Copy className="w-3.5 h-3.5" />
                                   </button>
                                   <button
+                                    disabled={!currentLead?.phone_2}
                                     onClick={() => {
                                       setDialedNumber(currentLead.phone_2);
                                       window.open(`tel:${currentLead.phone_2}`, '_self');
                                     }}
-                                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all disabled:opacity-40 disabled:pointer-events-none"
                                   >
                                     <Phone className="w-3.5 h-3.5 fill-current" />
                                     Dial
                                   </button>
                                 </div>
                               </div>
+                            ) : (
+                              <button
+                                onClick={() => setShowSecondaryPhone(true)}
+                                className="bg-white border border-dashed border-slate-200 rounded-xl p-4.5 flex items-center justify-center gap-2 text-slate-500 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50/40 transition-all font-body text-xs font-bold cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                Add new phone
+                              </button>
                             )}
                           </div>
                         </div>
@@ -1222,17 +1286,27 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
                                 />
                               </div>
-                              <div className="flex flex-col gap-1">
-                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Email Address 2</span>
-                                <input
-                                  type="email"
-                                  value={currentLead?.email_2 || ''}
-                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email_2', e.target.value)}
-                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email_2', e.target.value)}
-                                  placeholder="Alternative Email"
-                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
-                                />
-                              </div>
+                              {showSecondaryEmail || currentLead?.email_2 ? (
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Email Address 2</span>
+                                  <input
+                                    type="email"
+                                    value={currentLead?.email_2 || ''}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email_2', e.target.value)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email_2', e.target.value)}
+                                    placeholder="Alternative Email"
+                                    className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                  />
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setShowSecondaryEmail(true)}
+                                  className="mt-4.5 h-9 rounded-xl border border-dashed border-slate-200 text-slate-500 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50/40 font-body text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Add new mail
+                                </button>
+                              )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-2.5">
@@ -1247,17 +1321,27 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
                                 />
                               </div>
-                              <div className="flex flex-col gap-1">
-                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Phone Number 2</span>
-                                <input
-                                  type="text"
-                                  value={currentLead?.phone_2 || ''}
-                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'phone_2', e.target.value)}
-                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'phone_2', e.target.value)}
-                                  placeholder="Alternative Phone"
-                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
-                                />
-                              </div>
+                              {showSecondaryPhone || currentLead?.phone_2 ? (
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Phone Number 2</span>
+                                  <input
+                                    type="text"
+                                    value={currentLead?.phone_2 || ''}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'phone_2', e.target.value)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'phone_2', e.target.value)}
+                                    placeholder="Alternative Phone"
+                                    className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                  />
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setShowSecondaryPhone(true)}
+                                  className="mt-4.5 h-9 rounded-xl border border-dashed border-slate-200 text-slate-500 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50/40 font-body text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Add new phone
+                                </button>
+                              )}
                             </div>
                           </div>
 
@@ -1570,24 +1654,26 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         </div>
 
                         {/* Action buttons */}
-                        <div className="flex items-center gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <button
-                            onClick={() => {
-                              if (currentQueueIndex < dialerQueue.length - 1) {
-                                setCurrentQueueIndex(currentQueueIndex + 1);
-                              } else {
-                                loadDialer();
-                              }
-                            }}
-                            className="flex-1 py-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 font-body text-xs font-bold tracking-wider uppercase transition-all cursor-pointer text-center"
+                            onClick={handleSkipLead}
+                            disabled={dialerQueue.length <= 1}
+                            className="py-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 font-body text-xs font-bold tracking-wider uppercase transition-all cursor-pointer text-center disabled:opacity-40 disabled:pointer-events-none"
                           >
                             Skip Lead
+                          </button>
+                          <button
+                            onClick={handleDeleteFalseLead}
+                            className="py-3.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-body text-xs font-bold tracking-wider uppercase transition-all cursor-pointer text-center flex items-center justify-center gap-2"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Not Related
                           </button>
                           
                           <button
                             disabled={parsingAI || !rawNotesInput.trim()}
                             onClick={handleAIParse}
-                            className="flex-1 py-3.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none shadow-md shadow-blue-500/10"
+                            className="py-3.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none shadow-md shadow-blue-500/10"
                           >
                             {parsingAI ? (
                               <>
@@ -2278,12 +2364,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   setLeadsList(prev => prev.filter(x => x.id !== lead.id));
                                   setTotalLostCount(prev => Math.max(0, prev - 1));
 
-                                  // Asynchronous Postgres updates
-                                  Promise.all([
-                                    updateLeadDetails(lead.id, { notes: 'Restored from lost list.', contact_person: '' }),
-                                    updateCallStatusWithAI(lead.id, callerName, 'Restored to queue.')
-                                  ]).then(([res1, res2]) => {
-                                    if ((!res1.success || !res2.success) && dbConfigured) {
+                                  restoreLeadToQueue(lead.id).then((res) => {
+                                    if (!res.success && dbConfigured) {
                                       // Rollback on failure
                                       setLeadsList(prevLeads);
                                       setTotalLostCount(prevTotal);

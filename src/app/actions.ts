@@ -442,6 +442,54 @@ export async function getCallHistory(leadId: number) {
   }
 }
 
+// ── 11b. Permanently Delete Bad Lead ─────────────────────────────────────────
+export async function deleteLeadPermanently(leadId: number) {
+  try {
+    const supabase = requireSupabase();
+
+    const { error: historyError } = await supabase
+      .from('call_history')
+      .delete()
+      .eq('lead_id', leadId);
+    if (historyError) throw new Error(historyError.message);
+
+    const { error } = await supabase
+      .from('leads')
+      .delete()
+      .eq('id', leadId);
+    if (error) throw new Error(error.message);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[deleteLeadPermanently]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function restoreLeadToQueue(leadId: number) {
+  try {
+    const supabase = requireSupabase();
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        call_status: 'Not Called',
+        call_notes: null,
+        caller_name: null,
+        assigned_to: null,
+        meeting_date: null,
+        last_called_at: null,
+        last_updated: new Date().toISOString(),
+      })
+      .eq('id', leadId);
+    if (error) throw new Error(error.message);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[restoreLeadToQueue]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 // ── 12. Get Assignment Stats ──────────────────────────────────────────────────
 export async function getAssignmentStats() {
   try {
