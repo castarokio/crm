@@ -668,12 +668,35 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     return normalizeExternalUrl(handle);
   };
 
+  const extractSocialHandle = (value?: string | null, hostPattern?: RegExp) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    const clean = raw.replace(/^@/, '');
+    if (!/^https?:\/\//i.test(clean) && !clean.includes('/') && /^[A-Za-z0-9._]+$/.test(clean)) return clean;
+
+    try {
+      const url = new URL(normalizeExternalUrl(clean));
+      if (hostPattern && !hostPattern.test(url.hostname)) return '';
+      if (url.pathname === '/profile.php') return url.searchParams.get('id') || '';
+      const firstPathSegment = url.pathname.split('/').filter(Boolean)[0] || '';
+      if (['p', 'reel', 'stories', 'direct', 'share', 'groups', 'events', 'marketplace'].includes(firstPathSegment.toLowerCase())) return '';
+      return firstPathSegment;
+    } catch {
+      if (!clean.includes('/') && !clean.includes('.')) return clean;
+      return '';
+    }
+  };
+
+  const normalizeInstagramDmUrl = (value?: string | null) => {
+    const handle = extractSocialHandle(value, /(^|\.)instagram\.com$/i);
+    return handle ? `https://ig.me/m/${encodeURIComponent(handle)}` : 'https://instagram.com/direct/inbox/';
+  };
+
   const normalizeMessengerUrl = (value?: string | null) => {
     const raw = value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return 'https://m.me/';
-    if (/facebook\.com\//i.test(raw)) {
-      return normalizeExternalUrl(raw).replace(/https?:\/\/(?:www\.)?facebook\.com/i, 'https://m.me');
-    }
+    const facebookHandle = extractSocialHandle(raw, /(^|\.)facebook\.com$/i);
+    if (facebookHandle) return `https://m.me/${encodeURIComponent(facebookHandle)}`;
     const handle = raw.replace(/^@/, '');
     if (!handle.includes('/') && !handle.includes('.')) return `https://m.me/${handle}`;
     return normalizeExternalUrl(handle);
@@ -1314,8 +1337,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   <button
                                     onClick={() => {
                                       navigator.clipboard.writeText(pitch);
-                                      alert('Pitch copied to clipboard! Opening Instagram profile...');
-                                      window.open(normalizeInstagramUrl(currentLead?.instagram), '_blank');
+                                      alert('Pitch copied to clipboard! Opening target Instagram DM...');
+                                      window.open(normalizeInstagramDmUrl(currentLead?.instagram), '_blank');
                                     }}
                                     className="flex-1 min-w-[120px] px-3.5 py-2.5 rounded-xl bg-pink-50 text-pink-700 hover:bg-pink-600 hover:text-white border border-pink-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                                   >
@@ -1326,7 +1349,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   <button
                                     onClick={() => {
                                       navigator.clipboard.writeText(pitch);
-                                      alert('Pitch copied to clipboard! Opening Facebook Messenger...');
+                                      alert('Pitch copied to clipboard! Opening target Facebook Messenger...');
                                       window.open(normalizeMessengerUrl(currentLead?.facebook), '_blank');
                                     }}
                                     className="flex-1 min-w-[120px] px-3.5 py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer"
