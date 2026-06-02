@@ -42,6 +42,14 @@ import {
   updateCallStatusWithAI,
   getTeamLeaderboard,
   getMeetingsList,
+  updateCallStatus,
+  assignLeadsByRegion,
+  assignLeadsByPriority,
+  clearAssignments,
+  splitLeadsEqually,
+  getCallHistory,
+  getAssignmentStats,
+  assignLeadsByRange,
 } from '@/app/actions';
 
 // Custom SVG components for brand icons that are missing in newer lucide-react versions
@@ -139,9 +147,11 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost'>('dialer');
+  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'good_clients'>('dialer');
   const [dbConfigured, setDbConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [assignmentStats, setAssignmentStats] = useState<{ stats: any[]; unassigned: number }>({ stats: [], unassigned: 0 });
+  const [isAdminActionPending, setIsAdminActionPending] = useState<boolean>(false);
 
   // Dialer Session State
   const [dialerQueue, setDialerQueue] = useState<any[]>([]);
@@ -161,12 +171,17 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // Database Tab State
   const [leadsList, setLeadsList] = useState<any[]>([]);
   const [totalLeadsCount, setTotalLeadsCount] = useState<number>(0);
+  const [totalLostCount, setTotalLostCount] = useState<number>(0);
+  const [totalFollowupsCount, setTotalFollowupsCount] = useState<number>(0);
+  const [totalGoodClientsCount, setTotalGoodClientsCount] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterArea, setFilterArea] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isPending, startTransition] = useTransition();
+  const [initialLoadDone, setInitialLoadDone] = useState<boolean>(false);
 
   // Edit details overlay drawer
   const [editingLead, setEditingLead] = useState<any | null>(null);
@@ -174,6 +189,20 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   // Copy Feedback
   const [copiedPhone, setCopiedPhone] = useState<boolean>(false);
+
+  // New States for Dialed Number Tracking & Admin Analytics
+  const [dialedNumber, setDialedNumber] = useState<string>('');
+  const [analyticsData, setAnalyticsData] = useState<any | null>(null);
+
+  // Sync dialedNumber with active lead
+  useEffect(() => {
+    const activeLead = dialerQueue[currentQueueIndex];
+    if (activeLead) {
+      setDialedNumber(activeLead.phone || '');
+    } else {
+      setDialedNumber('');
+    }
+  }, [dialerQueue, currentQueueIndex]);
 
   // Fetch Team Scores
   const fetchLeaderboardData = async () => {
@@ -185,36 +214,45 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   // Fetch Meetings checklist
   const fetchMeetingsData = async () => {
-    setIsLoading(true);
     const res = await getMeetingsList();
     if (res.success && res.meetings) {
       setMeetingsList(res.meetings);
     }
-    setIsLoading(false);
   };
+
+  // Fetch Assignment stats for Hamid
+  const fetchAssignmentStats = useCallback(async () => {
+    if (callerName !== 'Hamid') return;
+    const [assignRes, analyticsRes] = await Promise.all([
+      getAssignmentStats(),
+      getAnalytics()
+    ]);
+    if (assignRes.success) {
+      setAssignmentStats({ stats: assignRes.stats || [], unassigned: assignRes.unassigned || 0 });
+    }
+    if (analyticsRes.success) {
+      setAnalyticsData(analyticsRes.stats);
+    }
+  }, [callerName]);
 
   // Load active Dialer
   const loadDialer = useCallback(async () => {
-    setIsLoading(true);
-    const res = await getDialerQueue();
+    const res = await getDialerQueue(callerName);
     if (!res.success) {
-      if (res.error === 'DATABASE_URL_MISSING') {
-        setDbConfigured(false);
-        setDialerQueue(MOCK_LEADS);
-      }
+      setDbConfigured(false);
+      setDialerQueue(MOCK_LEADS);
     } else {
       setDbConfigured(true);
       setDialerQueue(res.queue);
     }
     setCurrentQueueIndex(0);
-    setIsLoading(false);
-  }, []);
+  }, [callerName]);
 
   // Fetch leads for directory
   const fetchDatabaseLeads = useCallback((excludeLost: boolean) => {
     startTransition(async () => {
       const res = await getLeads({
-        search: searchQuery,
+        search: debouncedSearchQuery,
         status: filterStatus,
         priority: filterPriority,
         area: filterArea,
@@ -225,45 +263,166 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
       if (res.success) {
         setLeadsList(res.leads);
-        setTotalLeadsCount(res.total);
+        if (activeTab === 'database') {
+          setTotalLeadsCount(res.total);
+        } else if (activeTab === 'lost') {
+          setTotalLostCount(res.total);
+        } else if (activeTab === 'followups') {
+          setTotalFollowupsCount(res.total);
+        } else if (activeTab === 'good_clients') {
+          setTotalGoodClientsCount(res.total);
+        }
         setDbConfigured(true);
       } else {
-        if (res.error === 'DATABASE_URL_MISSING') {
-          setDbConfigured(false);
-          setLeadsList(MOCK_LEADS);
+        setLeadsList(MOCK_LEADS);
+        if (activeTab === 'database') {
           setTotalLeadsCount(MOCK_LEADS.length);
+        } else if (activeTab === 'lost') {
+          setTotalLostCount(0);
+        } else if (activeTab === 'followups') {
+          setTotalFollowupsCount(0);
+        } else if (activeTab === 'good_clients') {
+          setTotalGoodClientsCount(0);
         }
+        setDbConfigured(false);
       }
     });
-  }, [searchQuery, filterStatus, filterPriority, filterArea, currentPage]);
+  }, [debouncedSearchQuery, filterStatus, filterPriority, filterArea, currentPage, activeTab]);
 
-  // Handle Tab Switch
-  useEffect(() => {
-    fetchLeaderboardData(); // Always refresh leaderboard on tab transitions to see Hamid/Oussama/Kamel updates!
-    
-    if (activeTab === 'dialer') {
-      loadDialer();
-    } else if (activeTab === 'deadlines') {
-      fetchMeetingsData();
-    } else if (activeTab === 'database') {
-      fetchDatabaseLeads(true); // Exclude lost deals from general list
-    } else if (activeTab === 'lost') {
-      // Set filter status to show lost deals only
-      setFilterStatus('Not Interested');
-      fetchDatabaseLeads(false); // Do not exclude
+  // Initial load all data in parallel on mount
+  const fetchAllData = useCallback(async (showBlockingLoader = true) => {
+    if (showBlockingLoader) setIsLoading(true);
+    try {
+      const promises = [
+        getDialerQueue(callerName),
+        getTeamLeaderboard(),
+        getMeetingsList(),
+        getLeads({
+          search: '',
+          status: '',
+          priority: '',
+          area: '',
+          page: 1,
+          limit: 12,
+          excludeLost: true,
+        }),
+      ] as any[];
+
+      if (callerName === 'Hamid') {
+        promises.push(getAssignmentStats());
+        promises.push(getAnalytics());
+      }
+
+      const results = await Promise.all(promises);
+      const queueRes = results[0];
+      const leaderboardRes = results[1];
+      const meetingsRes = results[2];
+      const leadsRes = results[3];
+
+      if (queueRes.success) {
+        setDbConfigured(true);
+        setDialerQueue(queueRes.queue);
+      } else {
+        setDbConfigured(false);
+        setDialerQueue(MOCK_LEADS);
+      }
+      setCurrentQueueIndex(0);
+
+      if (leaderboardRes.success && leaderboardRes.leaderboard) {
+        setLeaderboard(leaderboardRes.leaderboard);
+      }
+
+      if (meetingsRes.success && meetingsRes.meetings) {
+        setMeetingsList(meetingsRes.meetings);
+      }
+
+      if (leadsRes.success) {
+        setLeadsList(leadsRes.leads);
+        setTotalLeadsCount(leadsRes.total);
+      } else {
+        setLeadsList(MOCK_LEADS);
+        setTotalLeadsCount(MOCK_LEADS.length);
+      }
+
+      if (callerName === 'Hamid') {
+        const assignmentRes = results[4];
+        const analyticsRes = results[5];
+        if (assignmentRes && assignmentRes.success) {
+          setAssignmentStats({ stats: assignmentRes.stats || [], unassigned: assignmentRes.unassigned || 0 });
+        }
+        if (analyticsRes && analyticsRes.success) {
+          setAnalyticsData(analyticsRes.stats);
+        }
+      }
+    } catch (err) {
+      console.error('[fetchAllData] Error:', err);
+    } finally {
+      setIsLoading(false);
+      setInitialLoadDone(true);
     }
-  }, [activeTab, loadDialer, fetchDatabaseLeads]);
+  }, [callerName]);
 
-  // Trigger directory search on params change
+  // Run initial fetch
   useEffect(() => {
+    fetchAllData(true);
+  }, [fetchAllData]);
+
+  // Debounce search query
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 350);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [searchQuery]);
+
+  // Trigger directory search on params change (background transition)
+  useEffect(() => {
+    if (!initialLoadDone) return;
     if (activeTab === 'database') {
       fetchDatabaseLeads(true);
     } else if (activeTab === 'lost') {
       fetchDatabaseLeads(false);
+    } else if (activeTab === 'followups') {
+      fetchDatabaseLeads(false);
+    } else if (activeTab === 'good_clients') {
+      fetchDatabaseLeads(false);
     }
-  }, [currentPage, searchQuery, filterPriority, filterArea, fetchDatabaseLeads, activeTab]);
+  }, [currentPage, debouncedSearchQuery, filterPriority, filterArea, filterStatus, fetchDatabaseLeads, activeTab, initialLoadDone]);
+
+  // Handle Tab Switch (silent refreshes, instant transitions)
+  useEffect(() => {
+    if (!initialLoadDone) return;
+
+    fetchLeaderboardData();
+
+    if (activeTab === 'dialer') {
+      loadDialer();
+    } else if (activeTab === 'deadlines') {
+      fetchMeetingsData();
+    } else if (activeTab === 'admin') {
+      fetchAssignmentStats();
+    } else if (activeTab === 'database') {
+      if (['Not Interested', 'Followups', 'GoodClients'].includes(filterStatus)) {
+        setFilterStatus('');
+      } else {
+        fetchDatabaseLeads(true);
+      }
+    } else if (activeTab === 'lost') {
+      setFilterStatus('Not Interested');
+    } else if (activeTab === 'followups') {
+      setFilterStatus('Followups');
+    } else if (activeTab === 'good_clients') {
+      setFilterStatus('GoodClients');
+    }
+  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus]);
 
   const currentLead = dialerQueue[currentQueueIndex];
+
+  const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
   // Reset notes box when active target updates
   useEffect(() => {
@@ -272,6 +431,77 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setExtractedData(null);
     }
   }, [currentLead]);
+
+  // Direct Inline Dialer editing handlers
+  const updateLeadFieldInQueue = (leadId: number, field: string, value: any) => {
+    setDialerQueue(prev =>
+      prev.map(item => (item.id === leadId ? { ...item, [field]: value } : item))
+    );
+  };
+
+  const saveLeadFieldToServer = async (leadId: number, field: string, value: any) => {
+    const res = await updateLeadDetails(leadId, { [field]: value });
+    if (!res.success && dbConfigured) {
+      console.error('Failed to auto-save field:', field, res.error);
+    }
+  };
+
+  // Quick Outcome status button handler
+  const handleQuickOutcome = async (status: string) => {
+    if (!currentLead) return;
+
+    if (['Interested', 'Accepted', 'Client Configured'].includes(status)) {
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3000);
+    }
+
+    const prevQueue = [...dialerQueue];
+    const prevQueueIndex = currentQueueIndex;
+
+    // Optimistic Leaderboard update
+    setLeaderboard(prev => {
+      return prev.map(item => {
+        if (item.name === callerName) {
+          const isWarm = ['Interested', 'Accepted', 'Client Configured', 'Callback'].includes(status);
+          const isLost = ['Not Interested', 'Wrong Number'].includes(status);
+          const newTotal = item.total_calls + 1;
+          const newWarm = item.warm_deals + (isWarm ? 1 : 0);
+          const newLost = item.lost_deals + (isLost ? 1 : 0);
+          return {
+            ...item,
+            total_calls: newTotal,
+            warm_deals: newWarm,
+            lost_deals: newLost,
+            success_rate: newTotal > 0 ? parseFloat(((newWarm / newTotal) * 100).toFixed(1)) : 0.0,
+          };
+        }
+        return item;
+      });
+    });
+
+    // Advance queue instantly
+    if (currentQueueIndex < dialerQueue.length - 1) {
+      setCurrentQueueIndex(currentQueueIndex + 1);
+    } else {
+      loadDialer();
+    }
+
+    // Call server action to update status directly (saving AI API cost)
+    const res = await updateCallStatus(
+      currentLead.id,
+      status,
+      `Outcome logged via quick buttons. Dialed: ${dialedNumber || currentLead.phone}`,
+      `Outcome logged via quick buttons. Status is ${status}. Dialed: ${dialedNumber || currentLead.phone}`,
+      callerName
+    );
+
+    if (!res.success && dbConfigured) {
+      // Rollback on failure
+      setDialerQueue(prevQueue);
+      setCurrentQueueIndex(prevQueueIndex);
+      alert('Failed to log outcome: ' + res.error);
+    }
+  };
 
   // Handle running raw notes summary through Gemini
   const handleAIParse = async () => {
@@ -283,7 +513,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
     setParsingAI(true);
     // Call server action to run Gemini note processing + save directly to Postgres
-    const res = await updateCallStatusWithAI(currentLead.id, callerName, rawNotesInput);
+    const res = await updateCallStatusWithAI(currentLead.id, callerName, `${rawNotesInput} (Dialed: ${dialedNumber || currentLead.phone})`);
     
     if (res.success || !dbConfigured) {
       const extracted = res.success ? res.extracted : {
@@ -304,7 +534,35 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   // Confirm and advance queue
   const handleConfirmAndNext = () => {
-    // Save state changes locally
+    if (!currentLead || !extractedData) return;
+
+    if (['Interested', 'Accepted', 'Client Configured'].includes(extractedData.call_status)) {
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3000);
+    }
+
+    // 1. Optimistic Leaderboard update
+    setLeaderboard(prev => {
+      return prev.map(item => {
+        if (item.name === callerName) {
+          const isWarm = ['Interested', 'Accepted', 'Client Configured', 'Callback'].includes(extractedData.call_status);
+          const isLost = ['Not Interested', 'Wrong Number'].includes(extractedData.call_status);
+          const newTotal = item.total_calls + 1;
+          const newWarm = item.warm_deals + (isWarm ? 1 : 0);
+          const newLost = item.lost_deals + (isLost ? 1 : 0);
+          return {
+            ...item,
+            total_calls: newTotal,
+            warm_deals: newWarm,
+            lost_deals: newLost,
+            success_rate: newTotal > 0 ? parseFloat(((newWarm / newTotal) * 100).toFixed(1)) : 0.0,
+          };
+        }
+        return item;
+      });
+    });
+
+    // 2. Save state changes locally
     const updatedQueue = [...dialerQueue];
     updatedQueue[currentQueueIndex] = {
       ...currentLead,
@@ -326,43 +584,98 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     }
   };
 
-  // Save changes inside lead editor drawer
+  // Save changes inside lead editor drawer (Optimistic UI)
   const handleSaveDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLead) return;
 
-    setIsSavingDetails(true);
-    const res = await updateLeadDetails(editingLead.id, {
+    // Capture old states for rollbacks
+    const prevLeadsList = [...leadsList];
+    const prevMeetingsList = [...meetingsList];
+    const prevDialerQueue = [...dialerQueue];
+
+    // Optimistic UI updates
+    const updateInArray = (arr: any[]) =>
+      arr.map(item => (item.id === editingLead.id ? { ...item, ...editingLead } : item));
+
+    setLeadsList(updateInArray(leadsList));
+    setMeetingsList(updateInArray(meetingsList));
+    setDialerQueue(updateInArray(dialerQueue));
+
+    // Close the drawer immediately
+    setEditingLead(null);
+
+    // Save in the background
+    updateLeadDetails(editingLead.id, {
       agency_name: editingLead.agency_name,
       phone: editingLead.phone,
+      phone_2: editingLead.phone_2,
       email: editingLead.email,
+      email_2: editingLead.email_2,
       website: editingLead.website,
       facebook: editingLead.facebook,
       instagram: editingLead.instagram,
       tiktok: editingLead.tiktok,
       linkedin: editingLead.linkedin,
+      social_link: editingLead.social_link,
       priority: editingLead.priority,
       area: editingLead.area,
       notes: editingLead.notes,
       contact_person: editingLead.contact_person,
       meeting_date: editingLead.meeting_date,
+    }).then(res => {
+      if (!res.success && dbConfigured) {
+        // Rollback on failure
+        setLeadsList(prevLeadsList);
+        setMeetingsList(prevMeetingsList);
+        setDialerQueue(prevDialerQueue);
+        alert('Failed to save changes to the database: ' + res.error);
+      }
     });
-
-    if (res.success || !dbConfigured) {
-      setEditingLead(null);
-      if (activeTab === 'database') fetchDatabaseLeads(true);
-      else if (activeTab === 'lost') fetchDatabaseLeads(false);
-      else if (activeTab === 'deadlines') fetchMeetingsData();
-    } else {
-      alert('Failed to update details: ' + res.error);
-    }
-    setIsSavingDetails(false);
   };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
+  };
+
+  const normalizeExternalUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('//')) return `https:${raw}`;
+    return `https://${raw}`;
+  };
+
+  const normalizeInstagramUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) {
+      return 'https://instagram.com/direct/inbox/';
+    }
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const handle = raw.replace(/^@/, '');
+    if (!handle.includes('/') && !handle.includes('.')) return `https://instagram.com/${handle}`;
+    return normalizeExternalUrl(handle);
+  };
+
+  const normalizeMessengerUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return 'https://m.me/';
+    if (/facebook\.com\//i.test(raw)) {
+      return normalizeExternalUrl(raw).replace(/https?:\/\/(?:www\.)?facebook\.com/i, 'https://m.me');
+    }
+    const handle = raw.replace(/^@/, '');
+    if (!handle.includes('/') && !handle.includes('.')) return `https://m.me/${handle}`;
+    return normalizeExternalUrl(handle);
+  };
+
+  const formatWhatsappPhone = (value?: string | null) => {
+    const digits = value?.replace(/[^0-9]/g, '') || '';
+    if (!digits) return '';
+    if (digits.startsWith('0')) return `213${digits.substring(1)}`;
+    if (!digits.startsWith('213')) return `213${digits}`;
+    return digits;
   };
 
   const getWebQualityStyles = (quality: string) => {
@@ -381,6 +694,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const getStatusStyle = (status: string) => {
     switch (status) {
       case 'Interested':
+      case 'Accepted':
+      case 'Client Configured':
         return 'bg-emerald-100 text-emerald-800 border border-emerald-200';
       case 'Callback':
         return 'bg-amber-100 text-amber-800 border border-amber-200';
@@ -400,6 +715,45 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 md:px-6 py-8 flex flex-col gap-6 select-none text-slate-800 bg-slate-50">
+      
+      {/* Celebration Confetti Overlay */}
+      {showConfetti && (
+        <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden flex items-center justify-center">
+          {[...Array(60)].map((_, i) => {
+            const color = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'][i % 6];
+            const left = Math.random() * 100;
+            const delay = Math.random() * 0.5;
+            const duration = Math.random() * 1.5 + 1.5;
+            const size = Math.random() * 8 + 6;
+            return (
+              <motion.div
+                key={i}
+                initial={{ y: '100vh', x: `${left}vw`, scale: 0, rotate: 0, opacity: 1 }}
+                animate={{
+                  y: '-10vh',
+                  x: `${left + (Math.random() * 20 - 10)}vw`,
+                  scale: [0, 1, 1, 0],
+                  rotate: Math.random() * 360 * 3,
+                  opacity: [1, 1, 0.8, 0],
+                }}
+                transition={{
+                  duration: duration,
+                  delay: delay,
+                  ease: 'easeOut',
+                }}
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  width: size,
+                  height: size,
+                  borderRadius: i % 2 === 0 ? '50%' : '0%',
+                  backgroundColor: color,
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
       
       {/* DB Config Warning Alert */}
       {!dbConfigured && (
@@ -436,12 +790,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         </div>
 
         {/* Navigation Selector Tabs */}
-        <div className="flex bg-slate-100 border border-slate-200/50 p-1 rounded-2xl">
+        <div className="flex bg-slate-100 border border-slate-200/50 p-1 rounded-2xl flex-wrap justify-center md:justify-start gap-1">
           {[
             { id: 'dialer', label: 'Call Queue' },
-            { id: 'deadlines', label: 'Meetings & Deadlines' },
-            { id: 'database', label: 'Leads Directory' },
-            { id: 'lost', label: 'Lost Deals' }
+            { id: 'deadlines', label: 'Meetings' },
+            { id: 'database', label: 'Directory' },
+            { id: 'followups', label: 'Busy / No Answer' },
+            { id: 'good_clients', label: 'Good Clients' },
+            { id: 'lost', label: 'Lost' },
+            ...(callerName === 'Hamid' ? [{ id: 'admin', label: 'Admin Panel' }] : [])
           ].map((tab) => (
             <button
               key={tab.id}
@@ -611,174 +968,363 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         </div>
 
                         {/* Calling dialer card */}
-                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
-                          <div className="flex flex-col gap-1 items-center md:items-start text-center md:text-left">
-                            <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Phone</span>
-                            <span className="font-display text-xl font-bold text-slate-800 tracking-wide">
-                              {currentLead?.phone || 'No phone number'}
-                            </span>
-                          </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex flex-col gap-4">
+                          <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Phones</span>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                            {/* Primary Phone */}
+                            <div className={`bg-white border rounded-xl p-4.5 flex items-center justify-between shadow-sm transition-all ${dialedNumber === currentLead?.phone ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Primary Phone</span>
+                                <span className="font-display text-sm font-bold text-slate-800 tracking-wide font-mono">
+                                  {currentLead?.phone || 'No phone number'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
+                                  onClick={() => copyToClipboard(currentLead?.phone)}
+                                  className="p-2 hover:bg-slate-50 border border-slate-100 text-slate-500 rounded-lg cursor-pointer"
+                                  title="Copy Phone"
+                                >
+                                  {copiedPhone ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                                <button
+                                  disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
+                                  onClick={() => {
+                                    setDialedNumber(currentLead.phone);
+                                    window.open(`tel:${currentLead.phone}`, '_self');
+                                  }}
+                                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                                >
+                                  <Phone className="w-3.5 h-3.5 fill-current" />
+                                  Dial
+                                </button>
+                              </div>
+                            </div>
 
-                          <div className="flex items-center gap-3 w-full md:w-auto">
-                            <button
-                              disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
-                              onClick={() => copyToClipboard(currentLead?.phone)}
-                              className="flex-1 md:flex-initial px-5 py-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-body text-xs font-semibold tracking-wide transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
-                            >
-                              {copiedPhone ? (
-                                <>
-                                  <Check className="w-4 h-4 text-emerald-600" />
-                                  Copied
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-4 h-4" />
-                                  Copy
-                                </>
-                              )}
-                            </button>
-
-                            <button
-                              disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
-                              onClick={() => window.open(`tel:${currentLead?.phone}`, '_self')}
-                              className="flex-1 md:flex-initial px-6 py-3 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-500/10"
-                            >
-                              <Phone className="w-4 h-4 fill-white" />
-                              DIAL PHONE
-                            </button>
+                            {/* Alternative Phone */}
+                            {currentLead?.phone_2 && (
+                              <div className={`bg-white border rounded-xl p-4.5 flex items-center justify-between shadow-sm transition-all ${dialedNumber === currentLead?.phone_2 ? 'border-blue-500 ring-2 ring-blue-50' : 'border-slate-100'}`}>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Alternative Phone</span>
+                                  <span className="font-display text-sm font-bold text-slate-800 tracking-wide font-mono">
+                                    {currentLead.phone_2}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => copyToClipboard(currentLead.phone_2)}
+                                    className="p-2 hover:bg-slate-50 border border-slate-100 text-slate-500 rounded-lg cursor-pointer"
+                                    title="Copy Phone 2"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setDialedNumber(currentLead.phone_2);
+                                      window.open(`tel:${currentLead.phone_2}`, '_self');
+                                    }}
+                                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                                  >
+                                    <Phone className="w-3.5 h-3.5 fill-current" />
+                                    Dial
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        {/* Details grid list */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-100 pt-6">
+                        {/* Details grid list (Editable Inline Form) */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-slate-100 pt-5">
                           
-                          <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-3.5">
                             <div className="flex flex-col gap-1">
                               <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Address</span>
-                              <span className="font-body text-xs text-slate-700 font-semibold">{currentLead?.address || 'Not specified'}</span>
+                              <input
+                                type="text"
+                                value={currentLead?.address || ''}
+                                onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'address', e.target.value)}
+                                onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'address', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                              />
                             </div>
 
                             <div className="flex flex-col gap-1">
-                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Google Maps</span>
-                              <a
-                                href={currentLead?.maps_link}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="font-body text-xs text-blue-600 hover:underline flex items-center gap-1 font-semibold"
-                              >
-                                Open in Google Maps
-                                <MapPin className="w-3 h-3" />
-                              </a>
-                            </div>
-
-                            <div className="flex flex-col gap-1">
-                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Email Address</span>
-                              <span className="font-body text-xs text-slate-700 font-semibold">{currentLead?.email || 'Not enriched'}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col gap-4">
-                            <div className="flex flex-col gap-1.5">
-                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website Quality</span>
-                              {currentLead?.website && currentLead?.website !== 'Not found' ? (
-                                <div className="flex items-center gap-2">
-                                  <a
-                                    href={currentLead.website.startsWith('http') ? currentLead.website : `https://${currentLead.website}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-body text-xs text-blue-600 hover:underline flex items-center gap-1.5 font-bold"
-                                  >
-                                    <Globe className="w-3.5 h-3.5 text-blue-400" />
-                                    {currentLead.website}
-                                  </a>
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold tracking-widest uppercase ${getWebQualityStyles(currentLead.website_quality)}`}>
-                                    {currentLead.website_quality}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-body text-xs text-slate-400">No website presence</span>
-                                  <span className="px-2 py-0.5 rounded text-[8px] font-bold tracking-widest uppercase bg-rose-50 text-rose-700 border border-rose-100">
-                                    NONE
-                                  </span>
-                                </div>
+                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Google Maps Link</span>
+                              <input
+                                type="text"
+                                value={currentLead?.maps_link || ''}
+                                onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'maps_link', e.target.value)}
+                                onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'maps_link', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-blue-600 focus:outline-none transition-colors font-mono"
+                              />
+                              {normalizeExternalUrl(currentLead?.maps_link) && (
+                                <a
+                                  href={normalizeExternalUrl(currentLead.maps_link)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-body text-[10px] text-blue-500 hover:underline flex items-center gap-1 font-semibold mt-1 self-start"
+                                >
+                                  Open in Maps <MapPin className="w-2.5 h-2.5" />
+                                </a>
                               )}
                             </div>
 
-                            <div className="flex flex-col gap-1.5">
-                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Social Media Profiles</span>
-                              <div className="flex flex-wrap gap-2.5">
-                                {/* Facebook */}
-                                {currentLead?.facebook && currentLead.facebook !== 'Not found' ? (
-                                  <a
-                                    href={currentLead.facebook}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white flex items-center justify-center transition-all duration-200"
-                                    title={`FB: ${currentLead.facebook_followers}`}
-                                  >
-                                    <FacebookIcon className="w-4 h-4 fill-current" />
-                                  </a>
-                                ) : (
-                                  <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-100 text-slate-300 flex items-center justify-center">
-                                    <FacebookIcon className="w-4 h-4 fill-current" />
-                                  </div>
-                                )}
-
-                                {/* Instagram */}
-                                {currentLead?.instagram && currentLead.instagram !== 'Not found' ? (
-                                  <a
-                                    href={currentLead.instagram}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-8 h-8 rounded-xl bg-pink-50 border border-pink-100 text-pink-600 hover:bg-pink-600 hover:text-white flex items-center justify-center transition-all duration-200"
-                                    title={`IG: ${currentLead.instagram_followers}`}
-                                  >
-                                    <InstagramIcon className="w-4 h-4 text-slate-500" />
-                                  </a>
-                                ) : (
-                                  <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-100 text-slate-300 flex items-center justify-center">
-                                    <InstagramIcon className="w-4 h-4 text-slate-300" />
-                                  </div>
-                                )}
-
-                                {/* TikTok */}
-                                {currentLead?.tiktok && currentLead.tiktok !== 'Not found' ? (
-                                  <a
-                                    href={currentLead.tiktok}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-8 h-8 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-700 hover:text-white flex items-center justify-center transition-all duration-200"
-                                  >
-                                    <TikTokIcon className="w-3.5 h-3.5 fill-current" />
-                                  </a>
-                                ) : (
-                                  <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-100 text-slate-300 flex items-center justify-center">
-                                    <TikTokIcon className="w-3.5 h-3.5" />
-                                  </div>
-                                )}
-
-                                {/* LinkedIn */}
-                                {currentLead?.linkedin && currentLead.linkedin !== 'Not found' ? (
-                                  <a
-                                    href={currentLead.linkedin}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white flex items-center justify-center transition-all duration-200"
-                                  >
-                                    <LinkedinIcon className="w-4 h-4 fill-current" />
-                                  </a>
-                                ) : (
-                                  <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-100 text-slate-300 flex items-center justify-center">
-                                    <LinkedinIcon className="w-4 h-4 fill-current" />
-                                  </div>
-                                )}
+                            <div className="grid grid-cols-2 gap-2.5">
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Email Address</span>
+                                <input
+                                  type="email"
+                                  value={currentLead?.email || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email', e.target.value)}
+                                  placeholder="Primary Email"
+                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                />
                               </div>
-                              <span className="font-body text-[10px] text-slate-400 font-semibold mt-1">
-                                Followers details: <strong className="text-slate-600">{fols}</strong>
-                              </span>
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Email Address 2</span>
+                                <input
+                                  type="email"
+                                  value={currentLead?.email_2 || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'email_2', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'email_2', e.target.value)}
+                                  placeholder="Alternative Email"
+                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2.5">
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Person</span>
+                                <input
+                                  type="text"
+                                  value={currentLead?.contact_person || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'contact_person', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'contact_person', e.target.value)}
+                                  placeholder="Secretary / Decision Maker"
+                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Phone Number 2</span>
+                                <input
+                                  type="text"
+                                  value={currentLead?.phone_2 || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'phone_2', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'phone_2', e.target.value)}
+                                  placeholder="Alternative Phone"
+                                  className="w-full bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none transition-colors"
+                                />
+                              </div>
                             </div>
                           </div>
+
+                          <div className="flex flex-col gap-3.5">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website Presence</span>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={currentLead?.website || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'website', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'website', e.target.value)}
+                                  placeholder="None"
+                                  className="flex-1 bg-slate-50 border border-slate-200/60 focus:border-blue-300 rounded-xl px-3 py-2 font-body text-xs text-blue-600 focus:outline-none transition-colors font-semibold"
+                                />
+                                <select
+                                  value={currentLead?.website_quality || 'None'}
+                                  onChange={(e) => {
+                                    updateLeadFieldInQueue(currentLead.id, 'website_quality', e.target.value);
+                                    saveLeadFieldToServer(currentLead.id, 'website_quality', e.target.value);
+                                  }}
+                                  className="bg-slate-50 border border-slate-200/60 rounded-xl px-2 py-2 font-body text-xs text-slate-800 focus:outline-none"
+                                >
+                                  <option value="None">None</option>
+                                  <option value="Low">Low</option>
+                                  <option value="Medium">Medium</option>
+                                  <option value="High">High</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Priority (Manual)</span>
+                                <select
+                                  value={currentLead?.priority || 3}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    updateLeadFieldInQueue(currentLead.id, 'priority', val);
+                                    saveLeadFieldToServer(currentLead.id, 'priority', val);
+                                  }}
+                                  className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none"
+                                >
+                                  <option value={1}>P1 (High Socials)</option>
+                                  <option value={2}>P2 (High Reviews)</option>
+                                  <option value={3}>P3 (Standard)</option>
+                                  <option value={4}>P4 (Low Priority)</option>
+                                  <option value={5}>P5 (Minimal Priority)</option>
+                                </select>
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Google Rating / Reviews</span>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={currentLead?.google_rating || 0.0}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'google_rating', parseFloat(e.target.value) || 0.0)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'google_rating', parseFloat(currentLead.google_rating) || 0.0)}
+                                    className="w-16 bg-slate-50 border border-slate-200/60 rounded-xl px-2 py-2 font-body text-xs text-slate-800 focus:outline-none"
+                                  />
+                                  <input
+                                    type="number"
+                                    value={currentLead?.review_count || 0}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'review_count', parseInt(e.target.value, 10) || 0)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'review_count', parseInt(currentLead.review_count, 10) || 0)}
+                                    className="flex-1 bg-slate-50 border border-slate-200/60 rounded-xl px-2 py-2 font-body text-xs text-slate-800 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                              <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Socials & Followers</span>
+                              <div className="grid grid-cols-2 gap-2">
+                                <input
+                                  type="text"
+                                  value={currentLead?.facebook || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'facebook', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'facebook', e.target.value)}
+                                  placeholder="Facebook URL"
+                                  className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 font-body text-[10px] text-slate-800 focus:outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  value={currentLead?.instagram || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'instagram', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'instagram', e.target.value)}
+                                  placeholder="Instagram URL"
+                                  className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 font-body text-[10px] text-slate-800 focus:outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  value={currentLead?.tiktok || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'tiktok', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'tiktok', e.target.value)}
+                                  placeholder="TikTok URL"
+                                  className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 font-body text-[10px] text-slate-800 focus:outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  value={currentLead?.followers_if_visible || ''}
+                                  onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'followers_if_visible', e.target.value)}
+                                  onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'followers_if_visible', e.target.value)}
+                                  placeholder="e.g. 15K followers"
+                                  className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 font-body text-[10px] text-slate-800 focus:outline-none font-bold"
+                                />
+                                <div className="col-span-2">
+                                  <input
+                                    type="text"
+                                    value={currentLead?.social_link || ''}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'social_link', e.target.value)}
+                                    onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'social_link', e.target.value)}
+                                    placeholder="Other Custom Social / LinkedIn URL"
+                                    className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 font-body text-[10px] text-slate-800 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Direct Outreach Social Pitcher */}
+                        <div className="border-t border-slate-100 pt-5 flex flex-col gap-3">
+                          <div className="flex items-center justify-between">
+                            <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold flex items-center gap-1">
+                              <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                              Dynamic Social Messaging Pitch
+                            </span>
+                            <span className="text-[9px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                              Auto-generated
+                            </span>
+                          </div>
+                          
+                          {(() => {
+                            const agencyName = currentLead?.agency_name || '';
+                            const isNoWeb = !currentLead?.website || currentLead.website === 'Not found' || currentLead.website.toLowerCase() === 'none';
+                            const pitch = isNoWeb 
+                              ? `Salam ${agencyName}, this is ${callerName} from Web-OS. We noticed you have a great social media presence but don't have a website yet. We build premium, high-speed websites for Algerian travel agencies to get direct bookings. Let me know if we can discuss!`
+                              : `Salam ${agencyName}, this is ${callerName} from Web-OS. We checked your website and noticed it could be optimized for mobile and speed. We help travel agencies increase their conversion rates by redesigning outdated portals. Would you like a free speed audit?`;
+
+                            const whatsappPhone = formatWhatsappPhone(currentLead?.phone);
+                            
+                            return (
+                              <div className="flex flex-col gap-3">
+                                <textarea
+                                  readOnly
+                                  value={pitch}
+                                  className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 font-body text-xs text-slate-600 leading-relaxed resize-none h-[75px] outline-none"
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {/* WhatsApp Msg (prefilled) */}
+                                  <button
+                                    disabled={!whatsappPhone}
+                                    onClick={() => {
+                                      window.open(`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(pitch)}`, '_blank');
+                                    }}
+                                    className="flex-1 min-w-[110px] px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                  >
+                                    WhatsApp Msg
+                                  </button>
+
+                                  {/* WhatsApp Chat (direct) */}
+                                  <button
+                                    disabled={!whatsappPhone}
+                                    onClick={() => {
+                                      window.open(`https://wa.me/${whatsappPhone}`, '_blank');
+                                    }}
+                                    className="flex-1 min-w-[110px] px-3 py-2.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-600 hover:text-white border border-teal-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                  >
+                                    WhatsApp Chat
+                                  </button>
+
+                                  {/* Instagram direct links */}
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(pitch);
+                                      alert('Pitch copied to clipboard! Opening Instagram profile...');
+                                      window.open(normalizeInstagramUrl(currentLead?.instagram), '_blank');
+                                    }}
+                                    className="flex-1 min-w-[120px] px-3.5 py-2.5 rounded-xl bg-pink-50 text-pink-700 hover:bg-pink-600 hover:text-white border border-pink-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                  >
+                                    Copy & Instagram
+                                  </button>
+
+                                  {/* Facebook Messenger */}
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(pitch);
+                                      alert('Pitch copied to clipboard! Opening Facebook Messenger...');
+                                      window.open(normalizeMessengerUrl(currentLead?.facebook), '_blank');
+                                    }}
+                                    className="flex-1 min-w-[120px] px-3.5 py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                  >
+                                    Copy & Messenger
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                       </div>
@@ -795,6 +1341,70 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             Post-Call AI Summary Parser
                           </h3>
                         </div>
+
+                        {/* Quick Outcome buttons */}
+                        <div className="flex flex-col gap-2">
+                          <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">
+                            Quick Call Outcome Log
+                          </span>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                            <button
+                              onClick={() => handleQuickOutcome('Accepted')}
+                              className="py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <Smile className="w-3.5 h-3.5" />
+                              Accepted
+                            </button>
+                            
+                            <button
+                              onClick={() => handleQuickOutcome('Not Interested')}
+                              className="py-2.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <Frown className="w-3.5 h-3.5" />
+                              Rejected
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                const dt = prompt("Enter Callback date/time (e.g. Tomorrow 2PM):");
+                                if (dt) {
+                                  handleQuickOutcome('Callback');
+                                  updateLeadDetails(currentLead.id, { meeting_date: dt });
+                                }
+                              }}
+                              className="py-2.5 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-600 hover:text-white border border-amber-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <Clock className="w-3.5 h-3.5" />
+                              Callback
+                            </button>
+
+                            <button
+                              onClick={() => handleQuickOutcome('Busy')}
+                              className="py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <AlertCircle className="w-3.5 h-3.5" />
+                              Busy / Rang
+                            </button>
+
+                            <button
+                              onClick={() => handleQuickOutcome('Wrong Number')}
+                              className="py-2.5 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-600 hover:text-white border border-slate-200 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              Wrong No
+                            </button>
+
+                            <button
+                              onClick={() => handleQuickOutcome('Client Configured')}
+                              className="py-2.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Configured
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 my-1"></div>
 
                         <div className="flex flex-col gap-1.5">
                           <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">
@@ -1039,7 +1649,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <option value="Not Called">Not Called</option>
                         <option value="Interested">Interested / Won</option>
                         <option value="Callback">Callbacks Only</option>
-                        <option value="No Answer">No Answer / Busy</option>
+                        <option value="No Answer / Busy">No Answer / Busy</option>
                       </select>
                       <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                     </div>
@@ -1103,134 +1713,148 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   {/* Lead Directory Directory Card */}
                   <div className={`w-full bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm ${
                     editingLead ? 'xl:col-span-8' : 'xl:col-span-12'
-                  } transition-all duration-300`}>
+                  } transition-all duration-300 relative`}>
                     
-                    {isPending ? (
-                      <div className="w-full h-[400px] flex flex-col items-center justify-center gap-3 bg-white p-10">
-                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-                        <p className="font-body text-[10px] text-slate-400 tracking-wider uppercase font-semibold">Searching campaign table...</p>
+                    {/* Subtle Loading overlay instead of wiping table */}
+                    {isPending && (
+                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex items-center justify-center z-20 transition-all duration-300">
+                        <div className="flex flex-col items-center gap-2 bg-white/95 border border-slate-100 px-6 py-4 rounded-2xl shadow-md">
+                          <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+                          <span className="font-body text-[10px] text-slate-400 tracking-wider uppercase font-bold">Refreshing data...</span>
+                        </div>
                       </div>
-                    ) : (
-                      <>
-                        <div className="w-full overflow-x-auto">
-                          <table className="w-full border-collapse text-left text-xs font-body">
-                            <thead>
-                              <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Agency Name</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Area</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Website</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Priority</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Call Status</th>
-                                <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {leadsList.map((lead) => (
-                                <tr key={lead.id} className="hover:bg-slate-50/30 transition-colors group">
-                                  <td className="p-4">
-                                    <div className="flex flex-col">
-                                      <span className="font-semibold text-slate-900">{lead.agency_name}</span>
-                                      <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{lead.address}</span>
-                                    </div>
-                                  </td>
-                                  <td className="p-4 font-semibold text-slate-600">{lead.area}</td>
-                                  <td className="p-4 font-semibold text-slate-700 font-mono">{lead.phone}</td>
-                                  <td className="p-4">
-                                    {lead.website && lead.website !== 'Not found' ? (
-                                      <span className={`px-2 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase inline-block ${getWebQualityStyles(lead.website_quality)}`}>
-                                        {lead.website_quality}
-                                      </span>
-                                    ) : (
-                                      <span className="text-[9px] text-slate-300">No Website</span>
-                                    )}
-                                  </td>
-                                  <td className="p-4">
-                                    <span className={`px-2.5 py-0.5 rounded text-[9px] font-bold ${
-                                      lead.priority === 1
-                                        ? 'bg-rose-50 text-rose-700 border border-rose-100'
-                                        : lead.priority === 2
-                                        ? 'bg-amber-50 text-amber-700 border border-amber-100'
-                                        : 'bg-slate-100 text-slate-600 border'
-                                    }`}>
-                                      P{lead.priority}
-                                    </span>
-                                  </td>
-                                  <td className="p-4">
-                                    <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase ${getStatusStyle(lead.call_status)}`}>
-                                      {lead.call_status}
-                                    </span>
-                                  </td>
-                                  <td className="p-4 text-right">
-                                    <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                                      <button
-                                        onClick={() => setEditingLead({ ...lead })}
-                                        className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
-                                        title="Edit Details"
-                                      >
-                                        <Edit3 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          const foundIndex = dialerQueue.findIndex(q => q.id === lead.id);
-                                          if (foundIndex !== -1) {
-                                            setCurrentQueueIndex(foundIndex);
-                                          } else {
-                                            setDialerQueue([lead, ...dialerQueue]);
-                                            setCurrentQueueIndex(0);
-                                          }
-                                          setActiveTab('dialer');
-                                        }}
-                                        className="p-2 bg-blue-50 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-lg text-blue-600 cursor-pointer"
-                                        title="Send to Dialer"
-                                      >
-                                        <Phone className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                              {leadsList.length === 0 && (
-                                <tr>
-                                  <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
-                                    No records found matching filters.
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {/* Pagination Footer */}
-                        <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
-                          <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                            Showing {leadsList.length} of {totalLeadsCount} total leads
-                          </span>
-
-                          <div className="flex items-center gap-3">
-                            <button
-                              disabled={currentPage === 1}
-                              onClick={() => setCurrentPage(currentPage - 1)}
-                              className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
-                            >
-                              <ChevronLeft className="w-3.5 h-3.5" />
-                              Prev
-                            </button>
-                            <span className="font-body text-xs text-slate-500 font-mono">
-                              Page {currentPage} of {Math.ceil(totalLeadsCount / 12) || 1}
-                            </span>
-                            <button
-                              disabled={currentPage >= Math.ceil(totalLeadsCount / 12)}
-                              onClick={() => setCurrentPage(currentPage + 1)}
-                              className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
-                            >
-                              Next
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </>
                     )}
+                    
+                    <div className="w-full overflow-x-auto">
+                      <table className="w-full border-collapse text-left text-xs font-body">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Agency Name</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Area</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Website</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Priority</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Call Status</th>
+                            <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {leadsList.map((lead) => (
+                            <tr key={lead.id} className="hover:bg-slate-50/30 transition-colors group">
+                              <td className="p-4">
+                                <div className="flex flex-col">
+                                  <span className="font-semibold text-slate-900">{lead.agency_name}</span>
+                                  <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{lead.address}</span>
+                                </div>
+                              </td>
+                              <td className="p-4 font-semibold text-slate-600">{lead.area}</td>
+                              <td className="p-4 font-semibold text-slate-700 font-mono">{lead.phone}</td>
+                              <td className="p-4">
+                                {lead.website && lead.website !== 'Not found' ? (
+                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase inline-block ${getWebQualityStyles(lead.website_quality)}`}>
+                                    {lead.website_quality}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] text-slate-300">No Website</span>
+                                )}
+                              </td>
+                              <td className="p-4">
+                                <select
+                                  value={lead.priority || 3}
+                                  onChange={async (e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    // Update local state optimistically
+                                    setLeadsList(prev => prev.map(x => x.id === lead.id ? { ...x, priority: val } : x));
+                                    await saveLeadFieldToServer(lead.id, 'priority', val);
+                                  }}
+                                  className={`rounded font-bold px-2 py-1 text-[9px] cursor-pointer focus:outline-none ${
+                                    lead.priority === 1
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : lead.priority === 2
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                  }`}
+                                >
+                                  <option value={1}>P1 - High</option>
+                                  <option value={2}>P2 - Medium</option>
+                                  <option value={3}>P3 - Low</option>
+                                  <option value={4}>P4 - V. Low</option>
+                                  <option value={5}>P5 - Minimal</option>
+                                </select>
+                              </td>
+                              <td className="p-4">
+                                <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase ${getStatusStyle(lead.call_status)}`}>
+                                  {lead.call_status}
+                                </span>
+                              </td>
+                              <td className="p-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => setEditingLead({ ...lead })}
+                                    className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
+                                    title="Edit Details"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const foundIndex = dialerQueue.findIndex(q => q.id === lead.id);
+                                      if (foundIndex !== -1) {
+                                        setCurrentQueueIndex(foundIndex);
+                                      } else {
+                                        setDialerQueue([lead, ...dialerQueue]);
+                                        setCurrentQueueIndex(0);
+                                      }
+                                      setActiveTab('dialer');
+                                    }}
+                                    className="p-2 bg-blue-50 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-lg text-blue-600 cursor-pointer"
+                                    title="Send to Dialer"
+                                  >
+                                    <Phone className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                          {leadsList.length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
+                                No records found matching filters.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination Footer */}
+                    <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                      <span className="font-body text-[10px] text-slate-400 tracking-wider">
+                        Showing {leadsList.length} of {totalLeadsCount} total leads
+                      </span>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          disabled={currentPage === 1}
+                          onClick={() => setCurrentPage(currentPage - 1)}
+                          className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                          Prev
+                        </button>
+                        <span className="font-body text-xs text-slate-500 font-mono">
+                          Page {currentPage} of {Math.ceil(totalLeadsCount / 12) || 1}
+                        </span>
+                        <button
+                          disabled={currentPage >= Math.ceil(totalLeadsCount / 12)}
+                          onClick={() => setCurrentPage(currentPage + 1)}
+                          className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                        >
+                          Next
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* EDIT SIDE DRAWER */}
@@ -1265,7 +1889,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Phone Number</label>
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Primary Phone</label>
                             <input
                               type="text"
                               value={editingLead.phone}
@@ -1273,16 +1897,25 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-mono"
                             />
                           </div>
-
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Region (Area)</label>
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Alternative Phone (2)</label>
                             <input
                               type="text"
-                              value={editingLead.area}
-                              onChange={(e) => setEditingLead({ ...editingLead, area: e.target.value })}
-                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                              value={editingLead.phone_2 || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, phone_2: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-mono"
                             />
                           </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Region (Area)</label>
+                          <input
+                            type="text"
+                            value={editingLead.area}
+                            onChange={(e) => setEditingLead({ ...editingLead, area: e.target.value })}
+                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                          />
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
@@ -1308,14 +1941,25 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Email Address</label>
-                          <input
-                            type="email"
-                            value={editingLead.email || ''}
-                            onChange={(e) => setEditingLead({ ...editingLead, email: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
-                          />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Primary Email</label>
+                            <input
+                              type="email"
+                              value={editingLead.email || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, email: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Alternative Email (2)</label>
+                            <input
+                              type="email"
+                              value={editingLead.email_2 || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, email_2: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                            />
+                          </div>
                         </div>
 
                         <div className="flex flex-col gap-1">
@@ -1350,6 +1994,16 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Other Social / LinkedIn URL</label>
+                          <input
+                            type="text"
+                            value={editingLead.social_link || ''}
+                            onChange={(e) => setEditingLead({ ...editingLead, social_link: e.target.value })}
+                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                          />
+                        </div>
+
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex flex-col gap-1">
                             <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Campaign Priority</label>
@@ -1361,6 +2015,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               <option value={1}>Priority 1 (High Socials, No Web)</option>
                               <option value={2}>Priority 2 (High Reviews, Low Web)</option>
                               <option value={3}>Priority 3 (Default standard)</option>
+                              <option value={4}>Priority 4 (Low)</option>
+                              <option value={5}>Priority 5 (Minimal)</option>
                             </select>
                           </div>
                         </div>
@@ -1414,7 +2070,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </h3>
                   </div>
                   <span className="font-body text-xs text-rose-700 font-bold bg-rose-50 border border-rose-100 px-3 py-1 rounded-full">
-                    {totalLeadsCount} Refused / Disconnected Leads
+                    {totalLostCount} Refused / Disconnected Leads
                   </span>
                 </div>
 
@@ -1462,11 +2118,25 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                 <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={async () => {
-                                  // Restore call status to uncalled
-                                  await updateLeadDetails(lead.id, { notes: 'Restored from lost list.', contact_person: '' });
-                                  await updateCallStatusWithAI(lead.id, callerName, 'Restored to queue.');
-                                  fetchDatabaseLeads(false);
+                                onClick={() => {
+                                  // Optimistic UI update: remove lead from directory list immediately
+                                  const prevLeads = [...leadsList];
+                                  const prevTotal = totalLostCount;
+                                  setLeadsList(prev => prev.filter(x => x.id !== lead.id));
+                                  setTotalLostCount(prev => Math.max(0, prev - 1));
+
+                                  // Asynchronous Postgres updates
+                                  Promise.all([
+                                    updateLeadDetails(lead.id, { notes: 'Restored from lost list.', contact_person: '' }),
+                                    updateCallStatusWithAI(lead.id, callerName, 'Restored to queue.')
+                                  ]).then(([res1, res2]) => {
+                                    if ((!res1.success || !res2.success) && dbConfigured) {
+                                      // Rollback on failure
+                                      setLeadsList(prevLeads);
+                                      setTotalLostCount(prevTotal);
+                                      alert('Failed to restore lead.');
+                                    }
+                                  });
                                 }}
                                 className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 cursor-pointer"
                                 title="Restore to calling queue"
@@ -1491,7 +2161,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 {/* Pagination */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalLeadsCount} total records
+                    Showing {leadsList.length} of {totalLostCount} total records
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -1504,10 +2174,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       Prev
                     </button>
                     <span className="font-body text-xs text-slate-500 font-mono">
-                      Page {currentPage} of {Math.ceil(totalLeadsCount / 12) || 1}
+                      Page {currentPage} of {Math.ceil(totalLostCount / 12) || 1}
                     </span>
                     <button
-                      disabled={currentPage >= Math.ceil(totalLeadsCount / 12)}
+                      disabled={currentPage >= Math.ceil(totalLostCount / 12)}
                       onClick={() => setCurrentPage(currentPage + 1)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                     >
@@ -1515,6 +2185,608 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* TAB 6: FOLLOWUPS (Busy / No Answer) */}
+            {activeTab === 'followups' && (
+              <motion.div
+                key="followups-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4.5 h-4.5 text-blue-600" />
+                    <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                      Busy / Did Not Respond Followups
+                    </h3>
+                  </div>
+                  <span className="font-body text-xs text-blue-700 font-bold bg-blue-50 border border-blue-100 px-3 py-1 rounded-full">
+                    {totalFollowupsCount} Followup Leads
+                  </span>
+                </div>
+
+                <div className="w-full overflow-x-auto text-xs font-body">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Target Agency</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Area</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone Numbers</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Last Called At</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Caller</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Status</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leadsList.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="p-4">
+                            <span className="font-semibold text-slate-900 block">{lead.agency_name}</span>
+                            <span className="text-[10px] text-slate-400 italic max-w-xs truncate block" title={lead.call_notes}>
+                              "{lead.call_notes || 'No call notes'}"
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-600 font-semibold">{lead.area}</td>
+                          <td className="p-4 text-slate-500 font-mono">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold">{lead.phone}</span>
+                              {lead.phone_2 && <span className="text-[10px] text-slate-400">Alt: {lead.phone_2}</span>}
+                            </div>
+                          </td>
+                          <td className="p-4 text-slate-600 font-semibold">
+                            {lead.last_called_at ? new Date(lead.last_called_at).toLocaleString() : 'N/A'}
+                          </td>
+                          <td className="p-4">
+                            <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold border text-[10px]">
+                              {lead.caller_name || 'System'}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${getStatusStyle(lead.call_status)}`}>
+                              {lead.call_status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setEditingLead({ ...lead })}
+                                className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
+                                title="Edit Details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const foundIndex = dialerQueue.findIndex(q => q.id === lead.id);
+                                  if (foundIndex !== -1) {
+                                    setCurrentQueueIndex(foundIndex);
+                                  } else {
+                                    setDialerQueue([lead, ...dialerQueue]);
+                                    setCurrentQueueIndex(0);
+                                  }
+                                  setActiveTab('dialer');
+                                }}
+                                className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 cursor-pointer"
+                                title="Recall (Send to Dialer)"
+                              >
+                                <Phone className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {leadsList.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            No followups pending. Great job!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <span className="font-body text-[10px] text-slate-400 tracking-wider">
+                    Showing {leadsList.length} of {totalFollowupsCount} total followups
+                  </span>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      Prev
+                    </button>
+                    <span className="font-body text-xs text-slate-500 font-mono">
+                      Page {currentPage} of {Math.ceil(totalFollowupsCount / 12) || 1}
+                    </span>
+                    <button
+                      disabled={currentPage >= Math.ceil(totalFollowupsCount / 12)}
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      Next
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* TAB 7: GOOD CLIENTS (Interested / Converted) */}
+            {activeTab === 'good_clients' && (
+              <motion.div
+                key="good-clients-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500" />
+                    <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                      Good Clients & Converted Targets
+                    </h3>
+                  </div>
+                  <span className="font-body text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
+                    {totalGoodClientsCount} Converted Leads
+                  </span>
+                </div>
+
+                <div className="w-full overflow-x-auto text-xs font-body">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Target Agency</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Area</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Contacts</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Socials / Links</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Assigned / Logged By</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Call Status</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leadsList.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="p-4">
+                            <span className="font-semibold text-slate-900 block">{lead.agency_name}</span>
+                            {lead.contact_person && (
+                              <span className="text-[10px] text-slate-500 block">Contact: {lead.contact_person}</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-slate-600 font-semibold">{lead.area}</td>
+                          <td className="p-4 text-slate-600 font-mono">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold">{lead.phone}</span>
+                              {lead.phone_2 && <span className="text-[10px] text-slate-400">Alt: {lead.phone_2}</span>}
+                              {lead.email && <span className="text-[10px] text-slate-400 font-sans">{lead.email}</span>}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              {normalizeExternalUrl(lead.website) && (
+                                <a href={normalizeExternalUrl(lead.website)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Website">
+                                  <Globe className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                              {normalizeExternalUrl(lead.facebook) && (
+                                <a href={normalizeExternalUrl(lead.facebook)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Facebook">
+                                  <FacebookIcon className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                              {normalizeExternalUrl(lead.instagram) && (
+                                <a href={normalizeInstagramUrl(lead.instagram)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Instagram">
+                                  <InstagramIcon className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                              {normalizeExternalUrl(lead.social_link) && (
+                                <a href={normalizeExternalUrl(lead.social_link)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Other Social Link / LinkedIn">
+                                  <LinkedinIcon className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-bold border text-[10px] self-start">
+                                Logged: {lead.caller_name || 'System'}
+                              </span>
+                              {lead.assigned_to && (
+                                <span className="text-[9px] text-slate-400">Assigned: {lead.assigned_to}</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${getStatusStyle(lead.call_status)}`}>
+                              {lead.call_status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setEditingLead({ ...lead })}
+                                className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
+                                title="Edit details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {leadsList.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            No good clients logged yet. Keep converting!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <span className="font-body text-[10px] text-slate-400 tracking-wider">
+                    Showing {leadsList.length} of {totalGoodClientsCount} total good clients
+                  </span>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      Prev
+                    </button>
+                    <span className="font-body text-xs text-slate-500 font-mono">
+                      Page {currentPage} of {Math.ceil(totalGoodClientsCount / 12) || 1}
+                    </span>
+                    <button
+                      disabled={currentPage >= Math.ceil(totalGoodClientsCount / 12)}
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      Next
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* TAB 5: ADMIN PANEL */}
+            {activeTab === 'admin' && callerName === 'Hamid' && (
+              <motion.div
+                key="admin-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full flex flex-col gap-6"
+              >
+                {/* Admin Header with quick summaries */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  {/* Unassigned Leads */}
+                  <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-1 relative overflow-hidden">
+                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Unassigned Active Leads</span>
+                    <span className="font-display text-3xl font-black text-slate-800">{assignmentStats.unassigned}</span>
+                    <p className="font-body text-[10px] text-slate-400 mt-2 font-semibold">Targets waiting for caller assignment</p>
+                  </div>
+                  
+                  {/* Assigned Leads counts */}
+                  {['Hamid', 'Oussama', 'Kamel'].map((name) => {
+                    const stats = assignmentStats.stats.find((x: any) => x.name === name) || { count: 0 };
+                    return (
+                      <div key={name} className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-1 relative overflow-hidden">
+                        <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">{name}'s Assigned Queue</span>
+                        <span className="font-display text-3xl font-black text-slate-800">{stats.count}</span>
+                        <p className="font-body text-[10px] text-slate-400 mt-2 font-semibold">Active uncalled targets assigned</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Campaign Analytics Section */}
+                {analyticsData && (
+                  <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <TrendingUp className="w-4.5 h-4.5 text-blue-600" />
+                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                        Campaign Outreach Analytics & Status Breakdown
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Leads</span>
+                        <span className="font-display text-xl font-bold text-slate-800 mt-1">{analyticsData.totalLeads}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Called</span>
+                        <span className="font-display text-xl font-bold text-blue-600 mt-1">{analyticsData.totalCalled}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Calls Today</span>
+                        <span className="font-display text-xl font-bold text-indigo-600 mt-1">{analyticsData.callsToday}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Interested / Won</span>
+                        <span className="font-display text-xl font-bold text-emerald-600 mt-1">{analyticsData.statuses.interested}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Busy / No Answer</span>
+                        <span className="font-display text-xl font-bold text-amber-600 mt-1">{analyticsData.statuses.noAnswer}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Not Interested</span>
+                        <span className="font-display text-xl font-bold text-rose-600 mt-1">{analyticsData.statuses.notInterested}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Allocation Controls Forms Card */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  
+                  {/* Distribution Panel Controls */}
+                  <div className="lg:col-span-8 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                    <div>
+                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">Allocate Targets to Caller Teams</h3>
+                      <p className="font-body text-xs text-slate-400 mt-1">Assign lists of targets based on Region, Priority, or specific ID Range.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-slate-100 pt-6">
+                      
+                      {/* Region Allocator */}
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const data = new FormData(e.currentTarget);
+                          const caller = data.get('caller') as string;
+                          const region = data.get('region') as string;
+                          if (!caller || !region) return;
+                          if (!confirm(`Assign all currently unassigned ${region} leads to ${caller}? This will update live caller queues.`)) return;
+
+                          setIsAdminActionPending(true);
+                          const res = await assignLeadsByRegion(caller, region);
+                          setIsAdminActionPending(false);
+                          
+                          if (res.success) {
+                            alert(`Successfully assigned ${region} leads to ${caller}!`);
+                            fetchAssignmentStats();
+                          } else {
+                            alert(`Error assigning leads: ${res.error}`);
+                          }
+                        }}
+                        className="flex flex-col gap-4 font-body text-xs"
+                      >
+                        <span className="font-display text-[10px] font-bold tracking-wider text-slate-800 uppercase">Assign by Region</span>
+                        
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
+                          <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
+                            <option value="Hamid">Hamid</option>
+                            <option value="Oussama">Oussama</option>
+                            <option value="Kamel">Kamel</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">Region Name</label>
+                          <select name="region" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
+                            <option value="Algiers">Algiers</option>
+                            <option value="Oran">Oran</option>
+                            <option value="Constantine">Constantine</option>
+                            <option value="Sétif">Sétif</option>
+                            <option value="Tlemcen">Tlemcen</option>
+                            <option value="Blida">Blida</option>
+                          </select>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isAdminActionPending}
+                          className="w-full py-3 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        >
+                          {isAdminActionPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Assign Region'}
+                        </button>
+                      </form>
+
+                      {/* Priority Allocator */}
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const data = new FormData(e.currentTarget);
+                          const caller = data.get('caller') as string;
+                          const priorityVal = data.get('priority') as string;
+                          if (!caller || !priorityVal) return;
+                          if (!confirm(`Assign all currently unassigned Priority ${priorityVal} leads to ${caller}? This will update live caller queues.`)) return;
+
+                          setIsAdminActionPending(true);
+                          const res = await assignLeadsByPriority(caller, parseInt(priorityVal, 10));
+                          setIsAdminActionPending(false);
+
+                          if (res.success) {
+                            alert(`Successfully assigned Priority ${priorityVal} leads to ${caller}!`);
+                            fetchAssignmentStats();
+                          } else {
+                            alert(`Error assigning leads: ${res.error}`);
+                          }
+                        }}
+                        className="flex flex-col gap-4 font-body text-xs"
+                      >
+                        <span className="font-display text-[10px] font-bold tracking-wider text-slate-800 uppercase">Assign by Priority Bracket</span>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
+                          <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
+                            <option value="Hamid">Hamid</option>
+                            <option value="Oussama">Oussama</option>
+                            <option value="Kamel">Kamel</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">Select Priority</label>
+                          <select name="priority" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
+                            <option value="1">Priority 1 (High Socials)</option>
+                            <option value="2">Priority 2 (High Reviews)</option>
+                            <option value="3">Priority 3 (Standard)</option>
+                          </select>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isAdminActionPending}
+                          className="w-full py-3 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        >
+                          {isAdminActionPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Assign Priority'}
+                        </button>
+                      </form>
+
+                      {/* Range Allocator */}
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const data = new FormData(e.currentTarget);
+                          const caller = data.get('caller') as string;
+                          const startId = parseInt(data.get('startId') as string, 10);
+                          const endId = parseInt(data.get('endId') as string, 10);
+                          if (!caller || isNaN(startId) || isNaN(endId)) return;
+                          if (startId > endId) {
+                            alert('Start ID must be lower than or equal to End ID.');
+                            return;
+                          }
+                          if (!confirm(`Assign lead IDs #${startId} through #${endId} to ${caller}? This will update live caller queues.`)) return;
+
+                          setIsAdminActionPending(true);
+                          const res = await assignLeadsByRange(caller, startId, endId);
+                          setIsAdminActionPending(false);
+
+                          if (res.success) {
+                            alert(`Successfully assigned ID range #${startId} - #${endId} to ${caller}!`);
+                            fetchAssignmentStats();
+                          } else {
+                            alert(`Error assigning leads: ${res.error}`);
+                          }
+                        }}
+                        className="flex flex-col gap-4 font-body text-xs"
+                      >
+                        <span className="font-display text-[10px] font-bold tracking-wider text-slate-800 uppercase">Assign by ID Range</span>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
+                          <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
+                            <option value="Hamid">Hamid</option>
+                            <option value="Oussama">Oussama</option>
+                            <option value="Kamel">Kamel</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 uppercase font-bold">Start ID</label>
+                            <input
+                              type="number"
+                              name="startId"
+                              placeholder="e.g. 0"
+                              className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                              required
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 uppercase font-bold">End ID</label>
+                            <input
+                              type="number"
+                              name="endId"
+                              placeholder="e.g. 100"
+                              className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isAdminActionPending}
+                          className="w-full py-3 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        >
+                          {isAdminActionPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Assign Range'}
+                        </button>
+                      </form>
+
+                    </div>
+                  </div>
+
+                  {/* Bulk Actions Control Panel */}
+                  <div className="lg:col-span-4 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
+                    <div>
+                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">Quick Splitting & Resets</h3>
+                      <p className="font-body text-[11px] text-slate-400 mt-1">One-click distribution strategies for team lead queues.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-3.5 border-t border-slate-100 pt-5">
+                      
+                      {/* Equal Split Button */}
+                      <button
+                        onClick={async () => {
+                          if (!confirm("Are you sure you want to divide all unassigned uncalled targets equally among Hamid, Oussama, and Kamel?")) return;
+                          setIsAdminActionPending(true);
+                          const res = await splitLeadsEqually();
+                          setIsAdminActionPending(false);
+                          
+                          if (res.success) {
+                            alert(`Success! Equally split ${res.totalAssigned} targets among the active callers.`);
+                            fetchAssignmentStats();
+                          } else {
+                            alert(`Error splitting leads: ${res.error}`);
+                          }
+                        }}
+                        disabled={isAdminActionPending}
+                        className="w-full py-3.5 rounded-xl bg-indigo-50 border border-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40"
+                      >
+                        <Users className="w-4 h-4" />
+                        EQUAL TEAM SPLIT
+                      </button>
+
+                      {/* Clear Assignments Button */}
+                      <button
+                        onClick={async () => {
+                          if (!confirm("WARNING: This will clear all target caller allocations in the database. Callers will share the default queue. Continue?")) return;
+                          setIsAdminActionPending(true);
+                          const res = await clearAssignments();
+                          setIsAdminActionPending(false);
+
+                          if (res.success) {
+                            alert('Successfully cleared all caller assignments.');
+                            fetchAssignmentStats();
+                          } else {
+                            alert(`Error clearing assignments: ${res.error}`);
+                          }
+                        }}
+                        disabled={isAdminActionPending}
+                        className="w-full py-3.5 rounded-xl bg-rose-50 border border-rose-100 hover:bg-rose-600 hover:text-white text-rose-700 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        CLEAR ALL ASSIGNMENTS
+                      </button>
+
+                    </div>
+                  </div>
+
                 </div>
               </motion.div>
             )}
