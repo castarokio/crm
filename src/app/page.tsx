@@ -11,17 +11,17 @@ export default function Home() {
   
   // PIN states
   const [enteredPortalPin, setEnteredPortalPin] = useState<string>('');
-  const [enteredHamidPin, setEnteredHamidPin] = useState<string>('');
+  const [enteredCallerPin, setEnteredCallerPin] = useState<string>('');
   const [promptPinFor, setPromptPinFor] = useState<string>(''); // Name of user being prompted for PIN
 
   // Verification feedback
   const [portalError, setPortalError] = useState<boolean>(false);
-  const [hamidError, setHamidError] = useState<boolean>(false);
+  const [callerError, setCallerError] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
 
   // Synchronous refs to avoid state closure capture race conditions
   const portalPinRef = useRef<string>('');
-  const hamidPinRef = useRef<string>('');
+  const callerPinRef = useRef<string>('');
 
   // Restore session states on mount
   useEffect(() => {
@@ -57,23 +57,31 @@ export default function Home() {
     setVerifying(false);
   }, []);
 
-  // Verify Hamid Profile PIN (343536)
-  const verifyHamidPin = useCallback(async (pin: string) => {
+  // Verify Caller Profile PIN (Hamid: 343536, Oussama: 121314, Kamel: 232425)
+  const verifyCallerPin = useCallback(async (name: string, pin: string) => {
     setVerifying(true);
     await new Promise(resolve => setTimeout(resolve, 500)); // Tactile delay
 
-    const expectedHamidPin = process.env.NEXT_PUBLIC_HAMID_PIN || '343536';
-    if (pin === expectedHamidPin) {
-      localStorage.setItem('__caller_name', 'Hamid');
-      setCallerName('Hamid');
+    let expectedPin = '';
+    if (name === 'Hamid') {
+      expectedPin = process.env.NEXT_PUBLIC_HAMID_PIN || '343536';
+    } else if (name === 'Oussama') {
+      expectedPin = process.env.NEXT_PUBLIC_OUSSAMA_PIN || '121314';
+    } else if (name === 'Kamel') {
+      expectedPin = process.env.NEXT_PUBLIC_KAMEL_PIN || '232425';
+    }
+
+    if (pin === expectedPin && expectedPin !== '') {
+      localStorage.setItem('__caller_name', name);
+      setCallerName(name);
       setPromptPinFor('');
-      setEnteredHamidPin('');
-      hamidPinRef.current = '';
-      setHamidError(false);
+      setEnteredCallerPin('');
+      callerPinRef.current = '';
+      setCallerError(false);
     } else {
-      setHamidError(true);
-      setEnteredHamidPin('');
-      hamidPinRef.current = '';
+      setCallerError(true);
+      setEnteredCallerPin('');
+      callerPinRef.current = '';
       if (navigator.vibrate) navigator.vibrate(200);
     }
     setVerifying(false);
@@ -90,27 +98,27 @@ export default function Home() {
           verifyPortalPin(portalPinRef.current);
         }
       }
-    } else if (promptPinFor === 'Hamid') {
-      if (hamidPinRef.current.length < 6) {
-        hamidPinRef.current += digit;
-        setEnteredHamidPin(hamidPinRef.current);
-        setHamidError(false);
-        if (hamidPinRef.current.length === 6) {
-          verifyHamidPin(hamidPinRef.current);
+    } else if (promptPinFor) {
+      if (callerPinRef.current.length < 6) {
+        callerPinRef.current += digit;
+        setEnteredCallerPin(callerPinRef.current);
+        setCallerError(false);
+        if (callerPinRef.current.length === 6) {
+          verifyCallerPin(promptPinFor, callerPinRef.current);
         }
       }
     }
-  }, [portalUnlocked, promptPinFor, verifyPortalPin, verifyHamidPin]);
+  }, [portalUnlocked, promptPinFor, verifyPortalPin, verifyCallerPin]);
 
   const handleDeletePress = useCallback(() => {
     if (!portalUnlocked) {
       portalPinRef.current = portalPinRef.current.slice(0, -1);
       setEnteredPortalPin(portalPinRef.current);
       setPortalError(false);
-    } else if (promptPinFor === 'Hamid') {
-      hamidPinRef.current = hamidPinRef.current.slice(0, -1);
-      setEnteredHamidPin(hamidPinRef.current);
-      setHamidError(false);
+    } else if (promptPinFor) {
+      callerPinRef.current = callerPinRef.current.slice(0, -1);
+      setEnteredCallerPin(callerPinRef.current);
+      setCallerError(false);
     }
   }, [portalUnlocked, promptPinFor]);
 
@@ -119,10 +127,10 @@ export default function Home() {
       portalPinRef.current = '';
       setEnteredPortalPin('');
       setPortalError(false);
-    } else if (promptPinFor === 'Hamid') {
-      hamidPinRef.current = '';
-      setEnteredHamidPin('');
-      setHamidError(false);
+    } else if (promptPinFor) {
+      callerPinRef.current = '';
+      setEnteredCallerPin('');
+      setCallerError(false);
     }
   }, [portalUnlocked, promptPinFor]);
 
@@ -142,12 +150,12 @@ export default function Home() {
         handleDeletePress();
       }
 
-      // Escape to cancel/exit Hamid PIN prompt back to selection grid
+      // Escape to cancel/exit PIN prompt back to selection grid
       if (e.key === 'Escape' && promptPinFor) {
         setPromptPinFor('');
-        hamidPinRef.current = '';
-        setEnteredHamidPin('');
-        setHamidError(false);
+        callerPinRef.current = '';
+        setEnteredCallerPin('');
+        setCallerError(false);
       }
     };
 
@@ -156,16 +164,10 @@ export default function Home() {
   }, [callerName, promptPinFor, handleDigitPress, handleDeletePress]);
 
   const handleSelectCaller = (name: string) => {
-    if (name === 'Hamid') {
-      setPromptPinFor('Hamid');
-      hamidPinRef.current = '';
-      setEnteredHamidPin('');
-      setHamidError(false);
-    } else {
-      // Oussama & Kamel are open sessions
-      localStorage.setItem('__caller_name', name);
-      setCallerName(name);
-    }
+    setPromptPinFor(name);
+    callerPinRef.current = '';
+    setEnteredCallerPin('');
+    setCallerError(false);
   };
 
   const handleLogoutCaller = () => {
@@ -173,9 +175,9 @@ export default function Home() {
     setCallerName('');
     setPromptPinFor('');
     portalPinRef.current = '';
-    hamidPinRef.current = '';
+    callerPinRef.current = '';
     setEnteredPortalPin('');
-    setEnteredHamidPin('');
+    setEnteredCallerPin('');
   };
 
   const handleLockPortal = () => {
@@ -185,9 +187,9 @@ export default function Home() {
     setPortalUnlocked(false);
     setPromptPinFor('');
     portalPinRef.current = '';
-    hamidPinRef.current = '';
+    callerPinRef.current = '';
     setEnteredPortalPin('');
-    setEnteredHamidPin('');
+    setEnteredCallerPin('');
   };
 
   return (
@@ -221,7 +223,7 @@ export default function Home() {
                 {!portalUnlocked 
                   ? 'Enter primary PIN using your physical keyboard or the keypad.'
                   : promptPinFor 
-                  ? `Enter Hamid's unique PIN to unlock campaign statistics.`
+                  ? `Enter ${promptPinFor}'s unique PIN to unlock caller dashboard.`
                   : 'Welcome team. Choose your profile to begin cold-calling travel agencies.'
                 }
               </p>
@@ -304,11 +306,11 @@ export default function Home() {
               </div>
             )}
 
-            {/* STATE 3: Hamid Profile PIN lock (PIN 343536) */}
-            {portalUnlocked && promptPinFor === 'Hamid' && (
+            {/* STATE 3: Caller Profile PIN lock (Hamid, Oussama, Kamel) */}
+            {portalUnlocked && promptPinFor && (
               <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-8 shadow-sm flex flex-col items-center gap-6">
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all duration-300 ${
-                  hamidError ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-blue-50 border-blue-100 text-blue-600'
+                  callerError ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-blue-50 border-blue-100 text-blue-600'
                 }`}>
                   <Lock className="w-5 h-5" />
                 </div>
@@ -324,8 +326,8 @@ export default function Home() {
                     <div
                       key={i}
                       className={`w-3.5 h-3.5 rounded-full border transition-all duration-300 ${
-                        i < enteredHamidPin.length
-                          ? hamidError
+                        i < enteredCallerPin.length
+                          ? callerError
                             ? 'bg-rose-500 border-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
                             : 'bg-blue-600 border-blue-500 shadow-[0_0_8px_rgba(37,99,235,0.3)]'
                           : 'bg-transparent border-slate-300'
@@ -334,7 +336,7 @@ export default function Home() {
                   ))}
                 </div>
 
-                {hamidError && (
+                {callerError && (
                   <p className="font-body text-[10px] text-rose-600 font-bold tracking-wider uppercase flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
                     INCORRECT PIN. ACCESS REFUSED.
@@ -361,9 +363,9 @@ export default function Home() {
                   <button
                     onClick={() => {
                       setPromptPinFor('');
-                      hamidPinRef.current = '';
-                      setEnteredHamidPin('');
-                      setHamidError(false);
+                      callerPinRef.current = '';
+                      setEnteredCallerPin('');
+                      setCallerError(false);
                     }}
                     className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
                   >
@@ -391,8 +393,8 @@ export default function Home() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
                   {[
                     { name: 'Hamid', desc: 'LOCKED PROFILE', style: 'border-blue-200 hover:border-blue-500 hover:shadow-blue-500/10 text-blue-600', isLocked: true },
-                    { name: 'Oussama', desc: 'OPEN SESSION', style: 'border-indigo-200 hover:border-indigo-500 hover:shadow-indigo-500/10 text-indigo-600', isLocked: false },
-                    { name: 'Kamel', desc: 'OPEN SESSION', style: 'border-cyan-200 hover:border-cyan-500 hover:shadow-cyan-500/10 text-cyan-600', isLocked: false }
+                    { name: 'Oussama', desc: 'LOCKED PROFILE', style: 'border-indigo-200 hover:border-indigo-500 hover:shadow-indigo-500/10 text-indigo-600', isLocked: true },
+                    { name: 'Kamel', desc: 'LOCKED PROFILE', style: 'border-cyan-200 hover:border-cyan-500 hover:shadow-cyan-500/10 text-cyan-600', isLocked: true }
                   ].map((user) => (
                     <button
                       key={user.name}
