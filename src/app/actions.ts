@@ -226,8 +226,10 @@ export async function updateCallStatus(id: number, status: string, notes: string
 // ── 4. Update Lead Details ────────────────────────────────────────────────────
 export async function updateLeadDetails(id: number, fields: {
   agency_name?: string; phone?: string; phone_2?: string; email?: string; email_2?: string; website?: string;
+  website_quality?: string;
   facebook?: string; instagram?: string; tiktok?: string; linkedin?: string; social_link?: string;
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
+  address?: string; maps_link?: string;
 }) {
   try {
     const supabase = requireSupabase();
@@ -425,7 +427,7 @@ export async function getMeetingsList() {
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('leads')
-      .select('id, agency_name, phone, area, contact_person, meeting_date, caller_name, call_status')
+      .select('*')
       .not('meeting_date', 'is', null)
       .neq('meeting_date', '')
       .in('call_status', ['Interested', 'Accepted', 'Callback'])

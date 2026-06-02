@@ -23,13 +23,13 @@ export default function Home() {
   const portalPinRef = useRef<string>('');
   const callerPinRef = useRef<string>('');
 
-  // Restore session states on mount
+  // Restore session states on mount (sessionStorage = per-tab only, clears on tab close)
   useEffect(() => {
-    const cachedPortal = localStorage.getItem('__portal_unlocked');
+    const cachedPortal = sessionStorage.getItem('__portal_unlocked');
     if (cachedPortal === 'true') {
       setPortalUnlocked(true);
       
-      const cachedCaller = localStorage.getItem('__caller_name');
+      const cachedCaller = sessionStorage.getItem('__caller_name');
       if (cachedCaller && ['Hamid', 'Oussama', 'Kamel'].includes(cachedCaller)) {
         setCallerName(cachedCaller);
       }
@@ -41,9 +41,9 @@ export default function Home() {
     setVerifying(true);
     await new Promise(resolve => setTimeout(resolve, 500)); // Tactile delay
 
-    const expectedPortalPin = process.env.NEXT_PUBLIC_PORTAL_PIN || '676869';
+    const expectedPortalPin = (process.env.NEXT_PUBLIC_PORTAL_PIN || '676869').trim();
     if (pin === expectedPortalPin) {
-      localStorage.setItem('__portal_unlocked', 'true');
+      sessionStorage.setItem('__portal_unlocked', 'true');
       setPortalUnlocked(true);
       setEnteredPortalPin('');
       portalPinRef.current = '';
@@ -64,15 +64,15 @@ export default function Home() {
 
     let expectedPin = '';
     if (name === 'Hamid') {
-      expectedPin = process.env.NEXT_PUBLIC_HAMID_PIN || '343536';
+      expectedPin = (process.env.NEXT_PUBLIC_HAMID_PIN || '343536').trim();
     } else if (name === 'Oussama') {
-      expectedPin = process.env.NEXT_PUBLIC_OUSSAMA_PIN || '121314';
+      expectedPin = (process.env.NEXT_PUBLIC_OUSSAMA_PIN || '121314').trim();
     } else if (name === 'Kamel') {
-      expectedPin = process.env.NEXT_PUBLIC_KAMEL_PIN || '232425';
+      expectedPin = (process.env.NEXT_PUBLIC_KAMEL_PIN || '232425').trim();
     }
 
     if (pin === expectedPin && expectedPin !== '') {
-      localStorage.setItem('__caller_name', name);
+      sessionStorage.setItem('__caller_name', name);
       setCallerName(name);
       setPromptPinFor('');
       setEnteredCallerPin('');
@@ -171,7 +171,7 @@ export default function Home() {
   };
 
   const handleLogoutCaller = () => {
-    localStorage.removeItem('__caller_name');
+    sessionStorage.removeItem('__caller_name');
     setCallerName('');
     setPromptPinFor('');
     portalPinRef.current = '';
@@ -181,8 +181,8 @@ export default function Home() {
   };
 
   const handleLockPortal = () => {
-    localStorage.removeItem('__caller_name');
-    localStorage.removeItem('__portal_unlocked');
+    sessionStorage.removeItem('__caller_name');
+    sessionStorage.removeItem('__portal_unlocked');
     setCallerName('');
     setPortalUnlocked(false);
     setPromptPinFor('');

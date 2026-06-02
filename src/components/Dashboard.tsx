@@ -575,6 +575,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setDialerQueue(prev =>
       prev.map(item => (item.id === leadId ? { ...item, [field]: value } : item))
     );
+    setLeadsList(prev =>
+      prev.map(item => (item.id === leadId ? { ...item, [field]: value } : item))
+    );
+    setMeetingsList(prev =>
+      prev.map(item => (item.id === leadId ? { ...item, [field]: value } : item))
+    );
   };
 
   const saveLeadFieldToServer = async (leadId: number, field: string, value: any) => {
@@ -869,6 +875,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       email: editingLead.email,
       email_2: editingLead.email_2,
       website: editingLead.website,
+      website_quality: editingLead.website_quality,
+      address: editingLead.address,
+      maps_link: editingLead.maps_link,
       facebook: editingLead.facebook,
       instagram: editingLead.instagram,
       tiktok: editingLead.tiktok,
@@ -1587,6 +1596,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       <option value="Low">Low</option>
                                       <option value="Medium">Medium</option>
                                       <option value="High">High</option>
+                                      {currentLead?.website_quality && !['None', 'Low', 'Medium', 'High'].includes(currentLead.website_quality) && (
+                                        <option value={currentLead.website_quality}>{currentLead.website_quality}</option>
+                                      )}
                                     </select>
                                   </div>
                                 </div>
@@ -2449,6 +2461,27 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           />
                         </div>
 
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Physical Address</label>
+                          <textarea
+                            value={editingLead.address || ''}
+                            onChange={(e) => setEditingLead({ ...editingLead, address: e.target.value })}
+                            placeholder="Full physical address..."
+                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none h-16 resize-none"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Google Maps Link</label>
+                          <input
+                            type="text"
+                            value={editingLead.maps_link || ''}
+                            onChange={(e) => setEditingLead({ ...editingLead, maps_link: e.target.value })}
+                            placeholder="Google Maps URL..."
+                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none text-blue-600 font-semibold"
+                          />
+                        </div>
+
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex flex-col gap-1">
                             <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Contact Person</label>
@@ -2493,14 +2526,33 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Website</label>
-                          <input
-                            type="text"
-                            value={editingLead.website || ''}
-                            onChange={(e) => setEditingLead({ ...editingLead, website: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-semibold text-blue-600"
-                          />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Website Link</label>
+                            <input
+                              type="text"
+                              value={editingLead.website || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, website: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none font-semibold text-blue-600"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Website Quality</label>
+                            <select
+                              value={editingLead.website_quality || 'None'}
+                              onChange={(e) => setEditingLead({ ...editingLead, website_quality: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none cursor-pointer font-semibold text-slate-700"
+                            >
+                              <option value="None">None</option>
+                              <option value="Low">Low</option>
+                              <option value="Medium">Medium</option>
+                              <option value="High">High</option>
+                              {editingLead.website_quality && !['None', 'Low', 'Medium', 'High'].includes(editingLead.website_quality) && (
+                                <option value={editingLead.website_quality}>{editingLead.website_quality}</option>
+                              )}
+                            </select>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
