@@ -1,6 +1,12 @@
 'use server';
 
-import { supabase } from '@/lib/supabase';
+import { getSupabase } from '@/lib/supabase';
+
+function requireSupabase() {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('DATABASE_NOT_CONFIGURED');
+  return supabase;
+}
 
 const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
 const WARM_STATUSES = ['Interested'];
@@ -21,6 +27,7 @@ export async function getLeads(options: {
   const offset = (page - 1) * limit;
 
   try {
+    const supabase = requireSupabase();
     let q = supabase.from('leads').select('*', { count: 'exact' });
 
     if (search) {
@@ -58,6 +65,7 @@ export async function getLeads(options: {
 // ── 2. Dialer Queue ───────────────────────────────────────────────────────────
 export async function getDialerQueue(callerName?: string) {
   try {
+    const supabase = requireSupabase();
     let q = supabase
       .from('leads')
       .select('*')
@@ -84,6 +92,7 @@ export async function getDialerQueue(callerName?: string) {
 // ── 3. Update Call Status ─────────────────────────────────────────────────────
 export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string) {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase.from('leads').update({
       call_status: status,
       notes,
@@ -101,7 +110,7 @@ export async function updateCallStatus(id: number, status: string, notes: string
       caller_name: callerName,
       call_status: status,
       notes: callNotes || notes
-    }).then(({ error: histErr }) => {
+    }).then(({ error: histErr }: any) => {
       if (histErr) console.warn('[call_history log warning]', histErr.message);
     });
 
@@ -118,6 +127,7 @@ export async function updateLeadDetails(id: number, fields: {
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
 }) {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase.from('leads').update({
       ...fields,
       last_updated: new Date().toISOString(),
@@ -132,6 +142,7 @@ export async function updateLeadDetails(id: number, fields: {
 // ── 5. Analytics ──────────────────────────────────────────────────────────────
 export async function getAnalytics() {
   try {
+    const supabase = requireSupabase();
     const [
       totalRes,
       todayRes,
@@ -241,6 +252,7 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
   const data = aiRes.extractedData;
 
   try {
+    const supabase = requireSupabase();
     const updatePayload: any = {
       call_status: data.call_status,
       call_notes: data.summary,
@@ -261,7 +273,7 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
       caller_name: callerName,
       call_status: data.call_status,
       notes: data.summary || rawSummary
-    }).then(({ error: histErr }) => {
+    }).then(({ error: histErr }: any) => {
       if (histErr) console.warn('[call_history log warning]', histErr.message);
     });
 
@@ -276,6 +288,7 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
 export async function getTeamLeaderboard() {
   const callers = ['Hamid', 'Oussama', 'Kamel'];
   try {
+    const supabase = requireSupabase();
     const promises = callers.map(async (name) => {
       const [totalRes, warmRes, lostRes] = await Promise.all([
         supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name),
@@ -306,6 +319,7 @@ export async function getTeamLeaderboard() {
 // ── 9. Meetings List ──────────────────────────────────────────────────────────
 export async function getMeetingsList() {
   try {
+    const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('leads')
       .select('id, agency_name, phone, area, contact_person, meeting_date, caller_name, call_status')
@@ -326,6 +340,7 @@ export async function getMeetingsList() {
 // ── 10. Admin Lead Distribution ──────────────────────────────────────────────
 export async function assignLeadsByRegion(caller: string, region: string) {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
       .update({ assigned_to: caller })
@@ -342,6 +357,7 @@ export async function assignLeadsByRegion(caller: string, region: string) {
 
 export async function assignLeadsByPriority(caller: string, priority: number) {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
       .update({ assigned_to: caller })
@@ -358,6 +374,7 @@ export async function assignLeadsByPriority(caller: string, priority: number) {
 
 export async function clearAssignments() {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
       .update({ assigned_to: null })
@@ -372,6 +389,7 @@ export async function clearAssignments() {
 
 export async function splitLeadsEqually() {
   try {
+    const supabase = requireSupabase();
     const { data: leads, error: fetchErr } = await supabase
       .from('leads')
       .select('id')
@@ -382,10 +400,11 @@ export async function splitLeadsEqually() {
     if (!leads || leads.length === 0) return { success: true, totalAssigned: 0 };
 
     const callers = ['Hamid', 'Oussama', 'Kamel'];
-    const totalLeads = leads.length;
+    const targetLeads = leads as Array<{ id: number }>;
+    const totalLeads = targetLeads.length;
     
     const promises = callers.map(async (caller, idx) => {
-      const ids = leads
+      const ids = targetLeads
         .filter((_, i) => i % callers.length === idx)
         .map(x => x.id);
 
@@ -408,6 +427,7 @@ export async function splitLeadsEqually() {
 // ── 11. Call History Actions ──────────────────────────────────────────────────
 export async function getCallHistory(leadId: number) {
   try {
+    const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('call_history')
       .select('*')
@@ -425,6 +445,7 @@ export async function getCallHistory(leadId: number) {
 // ── 12. Get Assignment Stats ──────────────────────────────────────────────────
 export async function getAssignmentStats() {
   try {
+    const supabase = requireSupabase();
     const callers = ['Hamid', 'Oussama', 'Kamel'];
     const promises = callers.map(async (name) => {
       const { count, error } = await supabase
@@ -454,6 +475,7 @@ export async function getAssignmentStats() {
 // ── 13. Admin Lead Range Assignment ──────────────────────────────────────────
 export async function assignLeadsByRange(caller: string, startId: number, endId: number) {
   try {
+    const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
       .update({ assigned_to: caller })
@@ -468,3 +490,4 @@ export async function assignLeadsByRange(caller: string, startId: number, endId:
     return { success: false, error: error.message };
   }
 }
+
