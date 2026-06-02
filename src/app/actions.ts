@@ -160,13 +160,20 @@ export async function getLeads(options: {
 export async function getDialerQueue(callerName?: string) {
   try {
     const supabase = requireSupabase();
+    
+    // Select leads that are not finalised
     let q = supabase
       .from('leads')
       .select('*')
-      .or(ACTIVE_ASSIGNMENT_FILTER);
+      .not('call_status', 'in', '("Interested","Accepted","Client Configured","Not Interested","Wrong Number")');
 
     if (callerName) {
-      q = q.or(`assigned_to.eq.${callerName},and(assigned_to.is.null,or(caller_name.is.null,caller_name.eq.${callerName}))`);
+      // Must be assigned to the caller OR unassigned
+      q = q.or(`assigned_to.eq.${callerName},assigned_to.is.null`);
+      
+      // Must not be locked by another caller (lease older than 5 minutes is expired)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      q = q.or(`locked_by.is.null,locked_by.eq.${callerName},locked_at.lt.${fiveMinutesAgo}`);
     }
 
     const { data, error } = await q
@@ -615,16 +622,23 @@ export async function getAssignmentStats() {
 }
 
 // ── 13. Admin Lead Range Assignment ──────────────────────────────────────────
-export async function assignLeadsByRange(caller: string, startId: number, endId: number) {
+export async function assignLeadsByRange(caller: string, startId: number, endId: number, forceReassign: boolean = false) {
   try {
     const supabase = requireSupabase();
-    const { error } = await supabase
+    let q = supabase
       .from('leads')
       .update({ assigned_to: caller })
       .gte('id', startId)
-      .lte('id', endId)
-      .is('assigned_to', null)
-      .or(ACTIVE_ASSIGNMENT_FILTER);
+      .lte('id', endId);
+
+    if (!forceReassign) {
+      q = q.is('assigned_to', null);
+    }
+
+    // Protect converted leads (Interested, Accepted, Client Configured)
+    q = q.not('call_status', 'in', '("Interested","Accepted","Client Configured")');
+
+    const { error } = await q;
 
     if (error) throw new Error(error.message);
     return { success: true };
@@ -822,6 +836,128 @@ export async function undoLastImport() {
     return { success: true, batchId: batch.id, removed: count || 0 };
   } catch (error: any) {
     console.error('[undoLastImport]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ── 15. Active Dialer Locking System ──────────────────────────────────────────
+export async function lockLead(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date().toISOString();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+    const { data, error } = await supabase
+      .from('leads')
+      .update({
+        locked_by: callerName,
+        locked_at: now
+      })
+      .eq('id', leadId)
+      .or(`locked_by.is.null,locked_by.eq.${callerName},locked_at.lt.${fiveMinutesAgo}`)
+      .select('id');
+
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) {
+      return { success: false, error: 'LEAD_LOCKED_BY_OTHER' };
+    }
+    return { success: true };
+  } catch (error: any) {
+    console.error('[lockLead]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function unlockLead(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        locked_by: null,
+        locked_at: null
+      })
+      .eq('id', leadId)
+      .eq('locked_by', callerName);
+
+    if (error) throw new Error(error.message);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[unlockLead]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ── 16. Recall Lead Database Integration ──────────────────────────────────────
+export async function recallLead(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        call_status: 'Callback',
+        assigned_to: callerName,
+        locked_by: callerName,
+        locked_at: now,
+        last_updated: now
+      })
+      .eq('id', leadId);
+
+    if (error) throw new Error(error.message);
+
+    // Log call history
+    supabase.from('call_history').insert({
+      lead_id: leadId,
+      caller_name: callerName,
+      call_status: 'Callback',
+      notes: 'Lead recalled and pushed to calling queue.'
+    }).then(({ error: histErr }: any) => {
+      if (histErr) console.warn('[call_history log warning]', histErr.message);
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[recallLead]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ── 17. Reset Campaign to Zero ────────────────────────────────────────────────
+export async function resetCampaign() {
+  try {
+    const supabase = requireSupabase();
+    
+    // Reset all leads to fresh status
+    const { error: resetErr } = await supabase
+      .from('leads')
+      .update({
+        call_status: 'Not Called',
+        call_notes: '',
+        caller_name: null,
+        assigned_to: null,
+        meeting_date: null,
+        last_called_at: null,
+        locked_by: null,
+        locked_at: null,
+        last_updated: new Date().toISOString()
+      })
+      .neq('id', 0); // Updates all rows
+
+    if (resetErr) throw new Error(resetErr.message);
+
+    // Delete all call history logs
+    const { error: historyErr } = await supabase
+      .from('call_history')
+      .delete()
+      .neq('id', 0);
+
+    if (historyErr) throw new Error(historyErr.message);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[resetCampaign]', error.message);
     return { success: false, error: error.message };
   }
 }

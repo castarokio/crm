@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Dashboard from '@/components/Dashboard';
 import { User, ShieldAlert, ArrowRight, Lock, KeyRound, AlertCircle, Laptop } from 'lucide-react';
 
@@ -18,6 +18,10 @@ export default function Home() {
   const [portalError, setPortalError] = useState<boolean>(false);
   const [hamidError, setHamidError] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
+
+  // Synchronous refs to avoid state closure capture race conditions
+  const portalPinRef = useRef<string>('');
+  const hamidPinRef = useRef<string>('');
 
   // Restore session states on mount
   useEffect(() => {
@@ -37,15 +41,17 @@ export default function Home() {
     setVerifying(true);
     await new Promise(resolve => setTimeout(resolve, 500)); // Tactile delay
 
-    const expectedPortalPin = '676869';
+    const expectedPortalPin = process.env.NEXT_PUBLIC_PORTAL_PIN || '676869';
     if (pin === expectedPortalPin) {
       localStorage.setItem('__portal_unlocked', 'true');
       setPortalUnlocked(true);
       setEnteredPortalPin('');
+      portalPinRef.current = '';
       setPortalError(false);
     } else {
       setPortalError(true);
       setEnteredPortalPin('');
+      portalPinRef.current = '';
       if (navigator.vibrate) navigator.vibrate(200);
     }
     setVerifying(false);
@@ -56,20 +62,69 @@ export default function Home() {
     setVerifying(true);
     await new Promise(resolve => setTimeout(resolve, 500)); // Tactile delay
 
-    const expectedHamidPin = '343536';
+    const expectedHamidPin = process.env.NEXT_PUBLIC_HAMID_PIN || '343536';
     if (pin === expectedHamidPin) {
       localStorage.setItem('__caller_name', 'Hamid');
       setCallerName('Hamid');
       setPromptPinFor('');
       setEnteredHamidPin('');
+      hamidPinRef.current = '';
       setHamidError(false);
     } else {
       setHamidError(true);
       setEnteredHamidPin('');
+      hamidPinRef.current = '';
       if (navigator.vibrate) navigator.vibrate(200);
     }
     setVerifying(false);
   }, []);
+
+  // Sync state functions for Ref updates
+  const handleDigitPress = useCallback((digit: string) => {
+    if (!portalUnlocked) {
+      if (portalPinRef.current.length < 6) {
+        portalPinRef.current += digit;
+        setEnteredPortalPin(portalPinRef.current);
+        setPortalError(false);
+        if (portalPinRef.current.length === 6) {
+          verifyPortalPin(portalPinRef.current);
+        }
+      }
+    } else if (promptPinFor === 'Hamid') {
+      if (hamidPinRef.current.length < 6) {
+        hamidPinRef.current += digit;
+        setEnteredHamidPin(hamidPinRef.current);
+        setHamidError(false);
+        if (hamidPinRef.current.length === 6) {
+          verifyHamidPin(hamidPinRef.current);
+        }
+      }
+    }
+  }, [portalUnlocked, promptPinFor, verifyPortalPin, verifyHamidPin]);
+
+  const handleDeletePress = useCallback(() => {
+    if (!portalUnlocked) {
+      portalPinRef.current = portalPinRef.current.slice(0, -1);
+      setEnteredPortalPin(portalPinRef.current);
+      setPortalError(false);
+    } else if (promptPinFor === 'Hamid') {
+      hamidPinRef.current = hamidPinRef.current.slice(0, -1);
+      setEnteredHamidPin(hamidPinRef.current);
+      setHamidError(false);
+    }
+  }, [portalUnlocked, promptPinFor]);
+
+  const handleClearPress = useCallback(() => {
+    if (!portalUnlocked) {
+      portalPinRef.current = '';
+      setEnteredPortalPin('');
+      setPortalError(false);
+    } else if (promptPinFor === 'Hamid') {
+      hamidPinRef.current = '';
+      setEnteredHamidPin('');
+      setHamidError(false);
+    }
+  }, [portalUnlocked, promptPinFor]);
 
   // Core physical keyboard typing listener
   useEffect(() => {
@@ -79,41 +134,18 @@ export default function Home() {
 
       // Handle numbers 0-9
       if (e.key >= '0' && e.key <= '9') {
-        if (!portalUnlocked) {
-          if (enteredPortalPin.length < 6) {
-            const nextPin = enteredPortalPin + e.key;
-            setEnteredPortalPin(nextPin);
-            setPortalError(false);
-            if (nextPin.length === 6) {
-              verifyPortalPin(nextPin);
-            }
-          }
-        } else if (promptPinFor === 'Hamid') {
-          if (enteredHamidPin.length < 6) {
-            const nextPin = enteredHamidPin + e.key;
-            setEnteredHamidPin(nextPin);
-            setHamidError(false);
-            if (nextPin.length === 6) {
-              verifyHamidPin(nextPin);
-            }
-          }
-        }
+        handleDigitPress(e.key);
       }
 
       // Handle Backspace deletion
       if (e.key === 'Backspace') {
-        if (!portalUnlocked) {
-          setEnteredPortalPin(prev => prev.slice(0, -1));
-          setPortalError(false);
-        } else if (promptPinFor === 'Hamid') {
-          setEnteredHamidPin(prev => prev.slice(0, -1));
-          setHamidError(false);
-        }
+        handleDeletePress();
       }
 
       // Escape to cancel/exit Hamid PIN prompt back to selection grid
       if (e.key === 'Escape' && promptPinFor) {
         setPromptPinFor('');
+        hamidPinRef.current = '';
         setEnteredHamidPin('');
         setHamidError(false);
       }
@@ -121,11 +153,12 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [portalUnlocked, callerName, promptPinFor, enteredPortalPin, enteredHamidPin, verifyPortalPin, verifyHamidPin]);
+  }, [callerName, promptPinFor, handleDigitPress, handleDeletePress]);
 
   const handleSelectCaller = (name: string) => {
     if (name === 'Hamid') {
       setPromptPinFor('Hamid');
+      hamidPinRef.current = '';
       setEnteredHamidPin('');
       setHamidError(false);
     } else {
@@ -139,6 +172,9 @@ export default function Home() {
     localStorage.removeItem('__caller_name');
     setCallerName('');
     setPromptPinFor('');
+    portalPinRef.current = '';
+    hamidPinRef.current = '';
+    setEnteredPortalPin('');
     setEnteredHamidPin('');
   };
 
@@ -148,39 +184,10 @@ export default function Home() {
     setCallerName('');
     setPortalUnlocked(false);
     setPromptPinFor('');
+    portalPinRef.current = '';
+    hamidPinRef.current = '';
     setEnteredPortalPin('');
     setEnteredHamidPin('');
-  };
-
-  // Click handler for on-screen numeric keypad clicking
-  const handleKeypadPress = (digit: string) => {
-    if (!portalUnlocked) {
-      if (enteredPortalPin.length < 6) {
-        const nextPin = enteredPortalPin + digit;
-        setEnteredPortalPin(nextPin);
-        setPortalError(false);
-        if (nextPin.length === 6) {
-          verifyPortalPin(nextPin);
-        }
-      }
-    } else if (promptPinFor === 'Hamid') {
-      if (enteredHamidPin.length < 6) {
-        const nextPin = enteredHamidPin + digit;
-        setEnteredHamidPin(nextPin);
-        setHamidError(false);
-        if (nextPin.length === 6) {
-          verifyHamidPin(nextPin);
-        }
-      }
-    }
-  };
-
-  const handleKeypadDelete = () => {
-    if (!portalUnlocked) {
-      setEnteredPortalPin(prev => prev.slice(0, -1));
-    } else if (promptPinFor === 'Hamid') {
-      setEnteredHamidPin(prev => prev.slice(0, -1));
-    }
   };
 
   return (
@@ -269,26 +276,26 @@ export default function Home() {
                   {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
                     <button
                       key={num}
-                      onClick={() => handleKeypadPress(num)}
+                      onClick={() => handleDigitPress(num)}
                       className="py-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-200 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
                     >
                       {num}
                     </button>
                   ))}
                   <button
-                    onClick={() => setEnteredPortalPin('')}
+                    onClick={handleClearPress}
                     className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
                   >
                     Clear
                   </button>
                   <button
-                    onClick={() => handleKeypadPress('0')}
+                    onClick={() => handleDigitPress('0')}
                     className="py-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-200 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
                   >
                     0
                   </button>
                   <button
-                    onClick={handleKeypadDelete}
+                    onClick={handleDeletePress}
                     className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
                   >
                     Del
@@ -345,7 +352,7 @@ export default function Home() {
                   {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
                     <button
                       key={num}
-                      onClick={() => handleKeypadPress(num)}
+                      onClick={() => handleDigitPress(num)}
                       className="py-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-200 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
                     >
                       {num}
@@ -354,6 +361,7 @@ export default function Home() {
                   <button
                     onClick={() => {
                       setPromptPinFor('');
+                      hamidPinRef.current = '';
                       setEnteredHamidPin('');
                       setHamidError(false);
                     }}
@@ -362,13 +370,13 @@ export default function Home() {
                     Back
                   </button>
                   <button
-                    onClick={() => handleKeypadPress('0')}
+                    onClick={() => handleDigitPress('0')}
                     className="py-3.5 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-200 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
                   >
                     0
                   </button>
                   <button
-                    onClick={handleKeypadDelete}
+                    onClick={handleDeletePress}
                     className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
                   >
                     Del
