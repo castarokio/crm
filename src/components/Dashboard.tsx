@@ -662,10 +662,17 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) {
       return 'https://instagram.com/direct/inbox/';
     }
-    if (/^https?:\/\//i.test(raw)) return raw;
-    const handle = raw.replace(/^@/, '');
-    if (!handle.includes('/') && !handle.includes('.')) return `https://instagram.com/${handle}`;
-    return normalizeExternalUrl(handle);
+    const handle = extractSocialHandle(raw, /(^|\.)instagram\.com$/i);
+    if (handle) return `https://instagram.com/${encodeURIComponent(handle)}`;
+    return normalizeExternalUrl(raw.replace(/^@/, ''));
+  };
+
+  const normalizeInstagramProfileUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    const handle = extractSocialHandle(raw, /(^|\.)instagram\.com$/i);
+    if (handle) return `https://instagram.com/${encodeURIComponent(handle)}`;
+    return normalizeExternalUrl(raw.replace(/^@/, ''));
   };
 
   const extractSocialHandle = (value?: string | null, hostPattern?: RegExp) => {
@@ -692,6 +699,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     return handle ? `https://ig.me/m/${encodeURIComponent(handle)}` : 'https://instagram.com/direct/inbox/';
   };
 
+  const normalizeFacebookProfileUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    const handle = extractSocialHandle(raw, /(^|\.)facebook\.com$/i);
+    if (handle) return `https://facebook.com/${encodeURIComponent(handle)}`;
+    return normalizeExternalUrl(raw.replace(/^@/, ''));
+  };
+
   const normalizeMessengerUrl = (value?: string | null) => {
     const raw = value?.trim();
     if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return 'https://m.me/';
@@ -700,6 +715,90 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     const handle = raw.replace(/^@/, '');
     if (!handle.includes('/') && !handle.includes('.')) return `https://m.me/${handle}`;
     return normalizeExternalUrl(handle);
+  };
+
+  const normalizeTikTokUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    const handle = extractSocialHandle(raw, /(^|\.)tiktok\.com$/i).replace(/^@/, '');
+    if (handle) return `https://www.tiktok.com/@${encodeURIComponent(handle)}`;
+    return normalizeExternalUrl(raw.replace(/^@/, ''));
+  };
+
+  const normalizeLinkedInUrl = (value?: string | null) => {
+    const raw = value?.trim();
+    if (!raw || ['not found', 'none', 'n/a'].includes(raw.toLowerCase())) return '';
+    if (/linkedin\.com/i.test(raw)) return normalizeExternalUrl(raw);
+    const handle = raw.replace(/^@/, '');
+    if (!handle.includes('/') && !handle.includes('.')) return `https://www.linkedin.com/company/${encodeURIComponent(handle)}`;
+    return normalizeExternalUrl(handle);
+  };
+
+  const SocialProfileBadges = ({ lead, compact = false }: { lead?: Record<string, any> | null; compact?: boolean }) => {
+    const links = [
+      {
+        key: 'website',
+        label: 'Website',
+        href: normalizeExternalUrl(lead?.website),
+        icon: <Globe className="w-3.5 h-3.5" />,
+        className: 'hover:bg-slate-900 hover:text-white',
+      },
+      {
+        key: 'facebook',
+        label: 'Facebook',
+        href: normalizeFacebookProfileUrl(lead?.facebook),
+        icon: <FacebookIcon className="w-3.5 h-3.5" />,
+        className: 'hover:bg-blue-600 hover:text-white',
+      },
+      {
+        key: 'instagram',
+        label: 'Instagram',
+        href: normalizeInstagramProfileUrl(lead?.instagram),
+        icon: <InstagramIcon className="w-3.5 h-3.5" />,
+        className: 'hover:bg-pink-600 hover:text-white',
+      },
+      {
+        key: 'tiktok',
+        label: 'TikTok',
+        href: normalizeTikTokUrl(lead?.tiktok),
+        icon: <TikTokIcon className="w-3.5 h-3.5" />,
+        className: 'hover:bg-black hover:text-white',
+      },
+      {
+        key: 'linkedin',
+        label: 'LinkedIn',
+        href: normalizeLinkedInUrl(lead?.linkedin),
+        icon: <LinkedinIcon className="w-3.5 h-3.5" />,
+        className: 'hover:bg-sky-700 hover:text-white',
+      },
+      {
+        key: 'social_link',
+        label: 'Other Link',
+        href: normalizeExternalUrl(lead?.social_link),
+        icon: <Globe className="w-3.5 h-3.5" />,
+        className: 'hover:bg-violet-600 hover:text-white',
+      },
+    ].filter((link) => Boolean(link.href));
+
+    if (!links.length) return null;
+
+    return (
+      <div className={`flex flex-wrap items-center ${compact ? 'gap-1.5' : 'gap-2'}`}>
+        {links.map((link) => (
+          <a
+            key={link.key}
+            href={link.href}
+            target="_blank"
+            rel="noreferrer"
+            title={link.label}
+            aria-label={`Open ${link.label}`}
+            className={`${compact ? 'h-7 w-7' : 'h-8 w-8'} inline-flex items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 transition-colors ${link.className}`}
+          >
+            {link.icon}
+          </a>
+        ))}
+      </div>
+    );
   };
 
   const formatWhatsappPhone = (value?: string | null) => {
@@ -1278,6 +1377,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   />
                                 </div>
                               </div>
+                              <SocialProfileBadges lead={currentLead} />
                             </div>
                           </div>
                         </div>
@@ -2557,28 +2657,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             </div>
                           </td>
                           <td className="p-4">
-                            <div className="flex items-center gap-2">
-                              {normalizeExternalUrl(lead.website) && (
-                                <a href={normalizeExternalUrl(lead.website)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Website">
-                                  <Globe className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                              {normalizeExternalUrl(lead.facebook) && (
-                                <a href={normalizeExternalUrl(lead.facebook)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Facebook">
-                                  <FacebookIcon className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                              {normalizeExternalUrl(lead.instagram) && (
-                                <a href={normalizeInstagramUrl(lead.instagram)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Instagram">
-                                  <InstagramIcon className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                              {normalizeExternalUrl(lead.social_link) && (
-                                <a href={normalizeExternalUrl(lead.social_link)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-slate-600 transition-colors" title="Other Social Link / LinkedIn">
-                                  <LinkedinIcon className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                            </div>
+                            <SocialProfileBadges lead={lead} compact />
                           </td>
                           <td className="p-4">
                             <div className="flex flex-col gap-0.5">
