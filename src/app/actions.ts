@@ -137,6 +137,8 @@ export async function getLeads(options: {
       q = q.in('call_status', WARM_STATUSES);
     } else if (status === 'GoodClients') {
       q = q.in('call_status', CONVERTED_STATUSES);
+    } else if (status === 'Lost') {
+      q = q.in('call_status', ['Not Interested', 'Wrong Number']);
     } else if (status) {
       q = q.eq('call_status', status);
     } else if (excludeLost) {
@@ -163,11 +165,11 @@ export async function getDialerQueue(callerName?: string) {
   try {
     const supabase = requireSupabase();
     
-    // Select leads that are not finalised
+    // Select leads that are fresh or explicitly recalled
     let q = supabase
       .from('leads')
       .select('*')
-      .not('call_status', 'in', '("Interested","Accepted","Client Configured","Not Interested","Wrong Number")');
+      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled');
 
     if (callerName) {
       // Must be assigned to the caller OR unassigned
@@ -193,10 +195,11 @@ export async function getDialerQueue(callerName?: string) {
 }
 
 // ── 3. Update Call Status ─────────────────────────────────────────────────────
-export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string) {
+export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string, meetingDate?: string) {
   try {
     const supabase = requireSupabase();
-    const { error } = await supabase.from('leads').update({
+    
+    const updatePayload: any = {
       call_status: status,
       notes,
       call_notes: callNotes,
@@ -204,7 +207,13 @@ export async function updateCallStatus(id: number, status: string, notes: string
       assigned_to: callerName, // Lock lead to this caller upon contact
       last_called_at: new Date().toISOString(),
       last_updated: new Date().toISOString(),
-    }).eq('id', id);
+    };
+
+    if (meetingDate !== undefined) {
+      updatePayload.meeting_date = meetingDate;
+    }
+
+    const { error } = await supabase.from('leads').update(updatePayload).eq('id', id);
     if (error) throw new Error(error.message);
 
     // Fire-and-forget log call history (safely ignores error if table not created yet)
@@ -348,6 +357,68 @@ Respond ONLY with a valid JSON object:
     return { success: true, extractedData: JSON.parse(textResult.trim()) };
   } catch (error: any) {
     return { success: false, error: error.message, extractedData: { call_status: 'Callback', meeting_date: null, contact_person: null, updated_email: null, summary: 'Error: ' + rawText } };
+  }
+}
+
+// ── 6b. AI Cold Pitch Generator ───────────────────────────────────────────────
+export async function generatePitchWithAI(options: {
+  agencyName: string;
+  website?: string;
+  websiteQuality?: string;
+  area?: string;
+  callerName: string;
+  customInstruction?: string;
+}) {
+  const apiKey = process.env.GLM_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { success: false, error: 'GLM_API_KEY_MISSING' };
+  }
+
+  const isNoWeb = !options.website || options.website === 'Not found' || options.website.toLowerCase() === 'none';
+
+  const basePrompt = `Tu es un expert en vente et prospection commerciale (cold outreach) pour Web-OS.
+Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web.
+
+Détails de l'agence de voyages :
+- Nom de l'agence : ${options.agencyName}
+- Ville : ${options.area || 'Algérie'}
+- Site web existant : ${isNoWeb ? "Non (elle n'a pas de site internet, seulement des réseaux sociaux)" : `Oui (${options.website})`}
+- Qualité du site existant : ${options.websiteQuality || 'Non spécifiée'}
+- Nom du commercial qui prospecte : ${options.callerName}
+
+${options.customInstruction ? `Consignes supplémentaires : "${options.customInstruction}"` : ''}
+
+Consignes de style :
+- Commence par une formule chaleureuse (ex: "Salam", "Bonjour").
+- Présente-toi rapidement ("... de Web-OS").
+- Mentionne un détail spécifique (ex: l'absence de site internet pour générer des réservations en direct, ou le fait que leur site actuel peut être optimisé pour le mobile/vitesse de chargement).
+- Reste extrêmement concis et direct pour WhatsApp ou DM Instagram. Pas de blabla inutile.
+- Termine par une question d'engagement simple (ex: "Disponible pour en discuter ?").
+
+Réponds UNIQUEMENT avec le texte du message généré. Aucun autre commentaire.`;
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: basePrompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 200,
+          }
+        })
+      }
+    );
+    if (!response.ok) throw new Error(`Gemini API Error: ${response.statusText}`);
+    const data = await response.json();
+    const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    return { success: true, pitch: textResult.trim() };
+  } catch (error: any) {
+    console.error('[generatePitchWithAI]', error.message);
+    return { success: false, error: error.message };
   }
 }
 
@@ -901,7 +972,7 @@ export async function recallLead(leadId: number, callerName: string) {
     const { error } = await supabase
       .from('leads')
       .update({
-        call_status: 'Callback',
+        call_status: 'Recalled',
         assigned_to: callerName,
         locked_by: callerName,
         locked_at: now,
@@ -915,7 +986,7 @@ export async function recallLead(leadId: number, callerName: string) {
     supabase.from('call_history').insert({
       lead_id: leadId,
       caller_name: callerName,
-      call_status: 'Callback',
+      call_status: 'Recalled',
       notes: 'Lead recalled and pushed to calling queue.'
     }).then(({ error: histErr }: any) => {
       if (histErr) console.warn('[call_history log warning]', histErr.message);

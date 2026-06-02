@@ -53,6 +53,7 @@ import {
   getAssignmentStats,
   assignLeadsByRange,
   deleteLeadPermanently,
+  generatePitchWithAI,
   restoreLeadToQueue,
   checkDataSafetySchema,
   downloadFullBackup,
@@ -221,6 +222,27 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [sidebarSearch, setSidebarSearch] = useState<string>('');
   const [currentCallHistory, setCurrentCallHistory] = useState<any[]>([]);
 
+  // Dynamic French Outreach Pitch States & Effects
+  const [customPitchText, setCustomPitchText] = useState<string>('');
+  const [customInstructionInput, setCustomInstructionInput] = useState<string>('');
+  const [isGeneratingPitch, setIsGeneratingPitch] = useState<boolean>(false);
+
+  useEffect(() => {
+    const activeLead = dialerQueue[currentQueueIndex];
+    if (activeLead) {
+      const agencyName = activeLead.agency_name || '';
+      const isNoWeb = !activeLead.website || activeLead.website === 'Not found' || activeLead.website.toLowerCase() === 'none';
+      const defaultPitch = isNoWeb 
+        ? `Salam ${agencyName}, c'est ${callerName} de Web-OS. Nous avons remarqué que vous aviez une excellente présence sur les réseaux sociaux mais pas encore de site internet. Nous concevons des sites web premium et ultra-rapides pour les agences de voyages algériennes afin de générer des réservations directes. Dites-moi si nous pouvons en discuter !`
+        : `Salam ${agencyName}, c'est ${callerName} de Web-OS. Nous avons analysé votre site web et avons constaté qu'il pourrait être optimisé pour le mobile et la vitesse de chargement. Nous aidons les agences de voyages à augmenter leurs ventes en modernisant leur portail. Seriez-vous intéressé par un audit gratuit de votre site ?`;
+      setCustomPitchText(defaultPitch);
+      setCustomInstructionInput('');
+    } else {
+      setCustomPitchText('');
+      setCustomInstructionInput('');
+    }
+  }, [dialerQueue, currentQueueIndex, callerName]);
+
   const lockedLeadIdRef = React.useRef<number | null>(null);
 
   // Sync dialedNumber with active lead
@@ -372,11 +394,11 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   }, [callerName]);
 
   // Fetch leads for directory
-  const fetchDatabaseLeads = useCallback((excludeLost: boolean) => {
+  const fetchDatabaseLeads = useCallback((excludeLost: boolean, statusOverride?: string) => {
     startTransition(async () => {
       const res = await getLeads({
         search: debouncedSearchQuery,
-        status: filterStatus,
+        status: statusOverride !== undefined ? statusOverride : filterStatus,
         priority: filterPriority,
         area: filterArea,
         page: currentPage,
@@ -517,13 +539,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (activeTab === 'database') {
       fetchDatabaseLeads(true);
     } else if (activeTab === 'lost') {
-      fetchDatabaseLeads(false);
+      fetchDatabaseLeads(false, 'Lost');
     } else if (activeTab === 'followups') {
-      fetchDatabaseLeads(false);
+      fetchDatabaseLeads(false, 'Followups');
     } else if (activeTab === 'warm_leads') {
-      fetchDatabaseLeads(false);
+      fetchDatabaseLeads(false, 'WarmLeads');
     } else if (activeTab === 'good_clients') {
-      fetchDatabaseLeads(false);
+      fetchDatabaseLeads(false, 'GoodClients');
     }
   }, [currentPage, debouncedSearchQuery, filterPriority, filterArea, filterStatus, fetchDatabaseLeads, activeTab, initialLoadDone]);
 
@@ -540,13 +562,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else if (activeTab === 'admin') {
       fetchAssignmentStats();
     } else if (activeTab === 'database') {
-      if (['Not Interested', 'Followups', 'WarmLeads', 'GoodClients'].includes(filterStatus)) {
+      if (['Lost', 'Followups', 'WarmLeads', 'GoodClients'].includes(filterStatus)) {
         setFilterStatus('');
       } else {
         fetchDatabaseLeads(true);
       }
     } else if (activeTab === 'lost') {
-      setFilterStatus('Not Interested');
+      setFilterStatus('Lost');
     } else if (activeTab === 'followups') {
       setFilterStatus('Followups');
     } else if (activeTab === 'warm_leads') {
@@ -591,14 +613,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const handleSkipLead = () => {
-    if (dialerQueue.length <= 1) return;
+    if (!currentLead || dialerQueue.length <= 1) return;
     setDialerQueue(prev => {
-      const next = [...prev];
-      const [skipped] = next.splice(currentQueueIndex, 1);
-      next.push(skipped);
-      return next;
+      const skipped = prev.find(lead => lead.id === currentLead.id);
+      if (!skipped) return prev;
+      return [...prev.filter(lead => lead.id !== currentLead.id), skipped];
     });
-    setCurrentQueueIndex(index => Math.min(index, dialerQueue.length - 2));
+    setCurrentQueueIndex(0);
   };
 
   const handleDeleteFalseLead = async () => {
@@ -608,23 +629,52 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
     const prevQueue = [...dialerQueue];
     const prevLeadsList = [...leadsList];
+    const prevMeetingsList = [...meetingsList];
     const prevIndex = currentQueueIndex;
     const prevTotalLeads = totalLeadsCount;
 
-    setDialerQueue(prev => {
-      const next = prev.filter(lead => lead.id !== currentLead.id);
-      return next;
-    });
+    setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
     setLeadsList(prev => prev.filter(lead => lead.id !== currentLead.id));
+    setMeetingsList(prev => prev.filter(lead => lead.id !== currentLead.id));
     setTotalLeadsCount(prev => Math.max(0, prev - 1));
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
 
     const res = await deleteLeadPermanently(currentLead.id);
-    if (!res.success && dbConfigured) {
+    if (!res.success) {
       setDialerQueue(prevQueue);
       setLeadsList(prevLeadsList);
+      setMeetingsList(prevMeetingsList);
       setCurrentQueueIndex(prevIndex);
       setTotalLeadsCount(prevTotalLeads);
+      alert('Failed to remove lead: ' + res.error);
+    } else {
+      fetchAssignmentStats();
+    }
+  };
+
+  const handleDeleteLeadFromDrawer = async () => {
+    if (!editingLead) return;
+    const label = editingLead.agency_name || `Lead #${editingLead.id}`;
+    if (!confirm(`Permanently remove "${label}" from the database because it is not a travel agency? This cannot be undone.`)) return;
+
+    const prevQueue = [...dialerQueue];
+    const prevLeadsList = [...leadsList];
+    const prevMeetingsList = [...meetingsList];
+    const prevTotalLeads = totalLeadsCount;
+
+    setDialerQueue(prev => prev.filter(lead => lead.id !== editingLead.id));
+    setLeadsList(prev => prev.filter(lead => lead.id !== editingLead.id));
+    setMeetingsList(prev => prev.filter(lead => lead.id !== editingLead.id));
+    setTotalLeadsCount(prev => Math.max(0, prev - 1));
+    setEditingLead(null);
+
+    const res = await deleteLeadPermanently(editingLead.id);
+    if (!res.success) {
+      setDialerQueue(prevQueue);
+      setLeadsList(prevLeadsList);
+      setMeetingsList(prevMeetingsList);
+      setTotalLeadsCount(prevTotalLeads);
+      setEditingLead(editingLead);
       alert('Failed to remove lead: ' + res.error);
     } else {
       fetchAssignmentStats();
@@ -709,7 +759,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   // Quick Outcome status button handler
-  const handleQuickOutcome = async (status: string) => {
+  const handleQuickOutcome = async (status: string, meetingDate?: string) => {
     if (!currentLead) return;
 
     if (['Interested', 'Accepted', 'Client Configured'].includes(status)) {
@@ -741,12 +791,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       });
     });
 
-    // Advance queue instantly
-    if (currentQueueIndex < dialerQueue.length - 1) {
-      setCurrentQueueIndex(currentQueueIndex + 1);
-    } else {
-      loadDialer();
-    }
+    // Advance and filter queue instantly
+    setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
+    setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
 
     // Call server action to update status directly (saving AI API cost)
     const res = await updateCallStatus(
@@ -754,14 +801,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       status,
       `Outcome logged via quick buttons. Dialed: ${dialedNumber || currentLead.phone}`,
       `Outcome logged via quick buttons. Status is ${status}. Dialed: ${dialedNumber || currentLead.phone}`,
-      callerName
+      callerName,
+      meetingDate
     );
 
-    if (!res.success && dbConfigured) {
+    if (!res.success) {
       // Rollback on failure
       setDialerQueue(prevQueue);
       setCurrentQueueIndex(prevQueueIndex);
       alert('Failed to log outcome: ' + res.error);
+    } else {
+      // Refresh all lists in background to keep dashboard tabs updated
+      fetchAllData(false);
     }
   };
 
@@ -824,26 +875,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       });
     });
 
-    // 2. Save state changes locally
-    const updatedQueue = [...dialerQueue];
-    updatedQueue[currentQueueIndex] = {
-      ...currentLead,
-      call_status: extractedData.call_status,
-      call_notes: extractedData.summary,
-      caller_name: callerName,
-      meeting_date: extractedData.meeting_date,
-      contact_person: extractedData.contact_person,
-    };
-    setDialerQueue(updatedQueue);
+    // 2. Filter queue instantly
+    setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
+    setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
     setExtractedData(null);
     setRawNotesInput('');
-
-    // Advance to next uncalled lead
-    if (currentQueueIndex < dialerQueue.length - 1) {
-      setCurrentQueueIndex(currentQueueIndex + 1);
-    } else {
-      loadDialer();
-    }
+    
+    // Refresh all lists in background to keep dashboard tabs updated
+    fetchAllData(false);
   };
 
   // Save changes inside lead editor drawer (Optimistic UI)
@@ -899,8 +938,35 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     });
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const writeClipboardText = async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+      console.warn('Clipboard API failed, using fallback:', error);
+    }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return success;
+    } catch (error) {
+      console.warn('Clipboard fallback failed:', error);
+      return false;
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    await writeClipboardText(text);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
   };
@@ -1656,45 +1722,109 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             <div className="flex items-center justify-between">
                               <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold flex items-center gap-1">
                                 <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                                Dynamic Pitch & Social Outreach
+                                Script & Pitch de Prospection (IA & Français)
                               </span>
                             </div>
                             
                             {(() => {
-                              const agencyName = currentLead?.agency_name || '';
-                              const isNoWeb = !currentLead?.website || currentLead.website === 'Not found' || currentLead.website.toLowerCase() === 'none';
-                              const pitch = isNoWeb 
-                                ? `Salam ${agencyName}, this is ${callerName} from Web-OS. We noticed you have a great social media presence but don't have a website yet. We build premium, high-speed websites for Algerian travel agencies to get direct bookings. Let me know if we can discuss!`
-                                : `Salam ${agencyName}, this is ${callerName} from Web-OS. We checked your website and noticed it could be optimized for mobile and speed. We help travel agencies increase their conversion rates by redesigning outdated portals. Would you like a free speed audit?`;
-
                               const whatsappPhone = formatWhatsappPhone(dialedNumber || currentLead?.phone);
                               
                               return (
                                 <div className="flex flex-col gap-4">
-                                  <textarea
-                                    readOnly
-                                    value={pitch}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 font-body text-xs text-slate-600 leading-relaxed resize-none h-[110px] outline-none shadow-inner"
-                                  />
+                                  {/* Editable Pitch Area */}
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[8px] text-slate-400 uppercase font-bold">Message à envoyer (Modifiable manuellement)</label>
+                                    <textarea
+                                      value={customPitchText}
+                                      onChange={(e) => setCustomPitchText(e.target.value)}
+                                      className="w-full bg-slate-50 border border-slate-200 focus:border-blue-300 focus:bg-white rounded-2xl p-4 font-body text-xs text-slate-700 leading-relaxed h-[110px] outline-none shadow-inner transition-all"
+                                      placeholder="Le script s'affichera ici..."
+                                    />
+                                  </div>
+
+                                  {/* AI Customization Prompt Bar */}
+                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-2xl">
+                                    <input
+                                      type="text"
+                                      value={customInstructionInput}
+                                      onChange={(e) => setCustomInstructionInput(e.target.value)}
+                                      placeholder="Ex: insister sur le mobile, ton amical, mentionner les avis..."
+                                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-300 font-body placeholder-slate-300"
+                                      onKeyDown={async (e) => {
+                                        if (e.key === 'Enter' && !isGeneratingPitch && customInstructionInput.trim()) {
+                                          e.preventDefault();
+                                          setIsGeneratingPitch(true);
+                                          const res = await generatePitchWithAI({
+                                            agencyName: currentLead?.agency_name || '',
+                                            website: currentLead?.website,
+                                            websiteQuality: currentLead?.website_quality,
+                                            area: currentLead?.area,
+                                            callerName: callerName,
+                                            customInstruction: customInstructionInput
+                                          });
+                                          setIsGeneratingPitch(false);
+                                          if (res.success && res.pitch) {
+                                            setCustomPitchText(res.pitch);
+                                          } else {
+                                            alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                          }
+                                        }
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={isGeneratingPitch}
+                                      onClick={async () => {
+                                        setIsGeneratingPitch(true);
+                                        const res = await generatePitchWithAI({
+                                          agencyName: currentLead?.agency_name || '',
+                                          website: currentLead?.website,
+                                          websiteQuality: currentLead?.website_quality,
+                                          area: currentLead?.area,
+                                          callerName: callerName,
+                                          customInstruction: customInstructionInput
+                                        });
+                                        setIsGeneratingPitch(false);
+                                        if (res.success && res.pitch) {
+                                          setCustomPitchText(res.pitch);
+                                        } else {
+                                          alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                        }
+                                      }}
+                                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                    >
+                                      {isGeneratingPitch ? (
+                                        <>
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          IA...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                          Ajuster
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
                                   
                                   {/* Social links row */}
                                   {currentLead && (
                                     <div className="flex items-center gap-2 border-t border-slate-100 pt-3">
-                                      <span className="font-body text-[9px] text-slate-400 uppercase font-bold mr-1">Social Accounts:</span>
+                                      <span className="font-body text-[9px] text-slate-400 uppercase font-bold mr-1">Réseaux Sociaux:</span>
                                       <SocialProfileBadges lead={currentLead} />
                                       {(!currentLead.facebook && !currentLead.instagram && !currentLead.tiktok && !currentLead.linkedin && !currentLead.social_link) && (
-                                        <span className="text-[10px] text-slate-400 italic">No social profiles found</span>
+                                        <span className="text-[10px] text-slate-400 italic">Aucun profil trouvé</span>
                                       )}
                                     </div>
                                   )}
 
-                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1 font-body">
                                     <button
                                       disabled={!whatsappPhone}
                                       onClick={() => {
-                                        window.open(`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(pitch)}`, '_blank');
+                                        window.open(`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(customPitchText)}`, '_blank');
                                       }}
-                                      className="px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-100 font-body text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40"
+                                      className="px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40"
                                     >
                                       WhatsApp Msg
                                     </button>
@@ -1704,29 +1834,29 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       onClick={() => {
                                         window.open(`https://wa.me/${whatsappPhone}`, '_blank');
                                       }}
-                                      className="px-3 py-2.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-600 hover:text-white border border-teal-100 font-body text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40"
+                                      className="px-3 py-2.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-600 hover:text-white border border-teal-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40"
                                     >
                                       WhatsApp Chat
                                     </button>
 
                                     <button
                                       onClick={() => {
-                                        navigator.clipboard.writeText(pitch);
-                                        alert('Pitch copied! Opening Instagram DMs...');
+                                        writeClipboardText(customPitchText);
+                                        alert('Pitch copié dans le presse-papier ! Ouverture de Instagram DMs...');
                                         window.open(normalizeInstagramDmUrl(currentLead?.instagram), '_blank');
                                       }}
-                                      className="px-3 py-2.5 rounded-xl bg-pink-50 text-pink-700 hover:bg-pink-600 hover:text-white border border-pink-100 font-body text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                      className="px-3 py-2.5 rounded-xl bg-pink-50 text-pink-700 hover:bg-pink-600 hover:text-white border border-pink-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
                                     >
                                       IG Direct DM
                                     </button>
 
                                     <button
                                       onClick={() => {
-                                        navigator.clipboard.writeText(pitch);
-                                        alert('Pitch copied! Opening Facebook Messenger...');
+                                        writeClipboardText(customPitchText);
+                                        alert('Pitch copié dans le presse-papier ! Ouverture de Facebook Messenger...');
                                         window.open(normalizeMessengerUrl(currentLead?.facebook), '_blank');
                                       }}
-                                      className="px-3 py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 font-body text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                      className="px-3 py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
                                     >
                                       FB Messenger
                                     </button>
@@ -1804,7 +1934,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               </button>
 
                               <button
-                                onClick={() => handleQuickOutcome('Accepted')}
+                                onClick={() => {
+                                  const dt = prompt("Enter Meeting date/time (e.g. Friday 3PM):");
+                                  if (dt) {
+                                    handleQuickOutcome('Accepted', dt);
+                                  }
+                                }}
                                 className="py-2 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
                               >
                                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1831,8 +1966,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                 onClick={() => {
                                   const dt = prompt("Enter Callback date/time (e.g. Tomorrow 2PM):");
                                   if (dt) {
-                                    handleQuickOutcome('Callback');
-                                    updateLeadDetails(currentLead.id, { meeting_date: dt });
+                                    handleQuickOutcome('Callback', dt);
                                   }
                                 }}
                                 className="py-2 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-600 hover:text-white border border-amber-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
@@ -2340,15 +2474,32 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <Edit3 className="w-3.5 h-3.5" />
                                   </button>
                                   <button
-                                    onClick={() => {
-                                      const foundIndex = dialerQueue.findIndex(q => q.id === lead.id);
-                                      if (foundIndex !== -1) {
-                                        setCurrentQueueIndex(foundIndex);
+                                    onClick={async () => {
+                                      const needRecall = ![!lead.call_status, lead.call_status === 'Not Called', lead.call_status === 'Recalled'].some(Boolean);
+                                      if (needRecall) {
+                                        const res = await recallLead(lead.id, callerName);
+                                        if (res.success || !dbConfigured) {
+                                          const updatedLead = {
+                                            ...lead,
+                                            call_status: 'Recalled',
+                                            assigned_to: callerName,
+                                          };
+                                          setDialerQueue(prev => [updatedLead, ...prev.filter(q => q.id !== lead.id)]);
+                                          setCurrentQueueIndex(0);
+                                          setActiveTab('dialer');
+                                        } else {
+                                          alert('Failed to send to dialer: ' + res.error);
+                                        }
                                       } else {
-                                        setDialerQueue([lead, ...dialerQueue]);
-                                        setCurrentQueueIndex(0);
+                                        const foundIndex = dialerQueue.findIndex(q => q.id === lead.id);
+                                        if (foundIndex !== -1) {
+                                          setCurrentQueueIndex(foundIndex);
+                                        } else {
+                                          setDialerQueue([lead, ...dialerQueue]);
+                                          setCurrentQueueIndex(0);
+                                        }
+                                        setActiveTab('dialer');
                                       }
-                                      setActiveTab('dialer');
                                     }}
                                     className="p-2 bg-blue-50 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-lg text-blue-600 cursor-pointer"
                                     title="Send to Dialer"
@@ -2635,20 +2786,31 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           />
                         </div>
 
-                        <button
-                          type="submit"
-                          disabled={isSavingDetails}
-                          className="w-full mt-2 py-3.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-500/10"
-                        >
-                          {isSavingDetails ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Saving...
-                            </>
-                          ) : (
-                            'SAVE CHANGES'
-                          )}
-                        </button>
+                        <div className="grid grid-cols-3 gap-3 mt-2">
+                          <button
+                            type="submit"
+                            disabled={isSavingDetails}
+                            className="col-span-2 py-3.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold tracking-wider hover:bg-blue-700 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-blue-500/10"
+                          >
+                            {isSavingDetails ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Saving...
+                              </>
+                            ) : (
+                              'SAVE CHANGES'
+                            )}
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={handleDeleteLeadFromDrawer}
+                            className="py-3.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-body text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Delete
+                          </button>
+                        </div>
                       </form>
                     </div>
                   )}
@@ -2918,7 +3080,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   if (res.success || !dbConfigured) {
                                     const updatedLead = {
                                       ...lead,
-                                      call_status: 'Callback',
+                                      call_status: 'Recalled',
                                       assigned_to: callerName,
                                     };
                                     setDialerQueue(prev => [updatedLead, ...prev.filter(x => x.id !== lead.id)]);
@@ -3080,10 +3242,20 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                 <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={() => {
-                                  setDialerQueue([lead, ...dialerQueue.filter(q => q.id !== lead.id)]);
-                                  setCurrentQueueIndex(0);
-                                  setActiveTab('dialer');
+                                onClick={async () => {
+                                  const res = await recallLead(lead.id, callerName);
+                                  if (res.success || !dbConfigured) {
+                                    const updatedLead = {
+                                      ...lead,
+                                      call_status: 'Recalled',
+                                      assigned_to: callerName,
+                                    };
+                                    setDialerQueue(prev => [updatedLead, ...prev.filter(q => q.id !== lead.id)]);
+                                    setCurrentQueueIndex(0);
+                                    setActiveTab('dialer');
+                                  } else {
+                                    alert('Failed to send to dialer: ' + res.error);
+                                  }
                                 }}
                                 className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 cursor-pointer"
                                 title="Send to Dialer"
