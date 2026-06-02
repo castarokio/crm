@@ -147,7 +147,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'good_clients'>('dialer');
+  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients'>('dialer');
   const [dbConfigured, setDbConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [assignmentStats, setAssignmentStats] = useState<{ stats: any[]; unassigned: number }>({ stats: [], unassigned: 0 });
@@ -173,6 +173,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [totalLeadsCount, setTotalLeadsCount] = useState<number>(0);
   const [totalLostCount, setTotalLostCount] = useState<number>(0);
   const [totalFollowupsCount, setTotalFollowupsCount] = useState<number>(0);
+  const [totalWarmCount, setTotalWarmCount] = useState<number>(0);
   const [totalGoodClientsCount, setTotalGoodClientsCount] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
@@ -269,6 +270,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           setTotalLostCount(res.total);
         } else if (activeTab === 'followups') {
           setTotalFollowupsCount(res.total);
+        } else if (activeTab === 'warm_leads') {
+          setTotalWarmCount(res.total);
         } else if (activeTab === 'good_clients') {
           setTotalGoodClientsCount(res.total);
         }
@@ -281,6 +284,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           setTotalLostCount(0);
         } else if (activeTab === 'followups') {
           setTotalFollowupsCount(0);
+        } else if (activeTab === 'warm_leads') {
+          setTotalWarmCount(0);
         } else if (activeTab === 'good_clients') {
           setTotalGoodClientsCount(0);
         }
@@ -388,6 +393,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       fetchDatabaseLeads(false);
     } else if (activeTab === 'followups') {
       fetchDatabaseLeads(false);
+    } else if (activeTab === 'warm_leads') {
+      fetchDatabaseLeads(false);
     } else if (activeTab === 'good_clients') {
       fetchDatabaseLeads(false);
     }
@@ -406,7 +413,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else if (activeTab === 'admin') {
       fetchAssignmentStats();
     } else if (activeTab === 'database') {
-      if (['Not Interested', 'Followups', 'GoodClients'].includes(filterStatus)) {
+      if (['Not Interested', 'Followups', 'WarmLeads', 'GoodClients'].includes(filterStatus)) {
         setFilterStatus('');
       } else {
         fetchDatabaseLeads(true);
@@ -415,6 +422,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setFilterStatus('Not Interested');
     } else if (activeTab === 'followups') {
       setFilterStatus('Followups');
+    } else if (activeTab === 'warm_leads') {
+      setFilterStatus('WarmLeads');
     } else if (activeTab === 'good_clients') {
       setFilterStatus('GoodClients');
     }
@@ -706,6 +715,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         return 'bg-rose-100 text-rose-800 border border-rose-200';
       case 'Wrong Number':
         return 'bg-slate-100 text-slate-600 border border-slate-200';
+      case 'Dormant':
+        return 'bg-zinc-100 text-zinc-500 border border-zinc-200';
       default:
         return 'bg-slate-50 text-slate-400 border border-slate-100';
     }
@@ -795,8 +806,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
             { id: 'dialer', label: 'Call Queue' },
             { id: 'deadlines', label: 'Meetings' },
             { id: 'database', label: 'Directory' },
-            { id: 'followups', label: 'Busy / No Answer' },
-            { id: 'good_clients', label: 'Good Clients' },
+            { id: 'followups', label: 'Followups' },
+            { id: 'warm_leads', label: 'Warm Leads' },
+            { id: 'good_clients', label: 'Converted' },
             { id: 'lost', label: 'Lost' },
             ...(callerName === 'Hamid' ? [{ id: 'admin', label: 'Admin Panel' }] : [])
           ].map((tab) => (
@@ -860,7 +872,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   <h3 className="font-display text-sm font-bold text-slate-800 uppercase tracking-wide">{name}</h3>
                   <div className="flex gap-2.5 font-body text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">
                     <span>Calls: <strong className="text-slate-700">{stats.total_calls}</strong></span>
-                    <span>Warm: <strong className="text-emerald-600">{stats.warm_deals}</strong></span>
+                    <span>Won/Warm: <strong className="text-emerald-600">{stats.warm_deals}</strong></span>
                   </div>
                 </div>
               </div>
@@ -881,7 +893,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
             <p className="font-body text-[11px] text-slate-400 tracking-wider uppercase font-semibold">Loading campaign leads...</p>
           </div>
         ) : (
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             
             {/* TAB 1: CALL QUEUE */}
             {activeTab === 'dialer' && (
@@ -1347,15 +1359,31 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">
                             Quick Call Outcome Log
                           </span>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <button
-                              onClick={() => handleQuickOutcome('Accepted')}
+                              onClick={() => handleQuickOutcome('Interested')}
                               className="py-2.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
                             >
                               <Smile className="w-3.5 h-3.5" />
+                              Warm
+                            </button>
+
+                            <button
+                              onClick={() => handleQuickOutcome('Accepted')}
+                              className="py-2.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
                               Accepted
                             </button>
-                            
+
+                            <button
+                              onClick={() => handleQuickOutcome('Client Configured')}
+                              className="py-2.5 rounded-xl bg-cyan-50 text-cyan-700 hover:bg-cyan-600 hover:text-white border border-cyan-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Configured
+                            </button>
+
                             <button
                               onClick={() => handleQuickOutcome('Not Interested')}
                               className="py-2.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
@@ -1383,7 +1411,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               className="py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
                             >
                               <AlertCircle className="w-3.5 h-3.5" />
-                              Busy / Rang
+                              Busy
+                            </button>
+
+                            <button
+                              onClick={() => handleQuickOutcome('No Answer')}
+                              className="py-2.5 rounded-xl bg-sky-50 text-sky-700 hover:bg-sky-600 hover:text-white border border-sky-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              <AlertCircle className="w-3.5 h-3.5" />
+                              No Answer
                             </button>
 
                             <button
@@ -1392,14 +1428,6 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             >
                               <XCircle className="w-3.5 h-3.5" />
                               Wrong No
-                            </button>
-
-                            <button
-                              onClick={() => handleQuickOutcome('Client Configured')}
-                              className="py-2.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                              Configured
                             </button>
                           </div>
                         </div>
@@ -1598,7 +1626,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       {meetingsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
-                            No upcoming meetings or callbacks scheduled.
+                            No accepted meetings or callbacks scheduled.
                           </td>
                         </tr>
                       )}
@@ -1647,7 +1675,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       >
                         <option value="">Active Call Statuses</option>
                         <option value="Not Called">Not Called</option>
-                        <option value="Interested">Interested / Won</option>
+                        <option value="Interested">Interested Only</option>
+                        <option value="Accepted">Accepted Only</option>
+                        <option value="Client Configured">Configured Only</option>
                         <option value="Callback">Callbacks Only</option>
                         <option value="No Answer / Busy">No Answer / Busy</option>
                       </select>
@@ -2202,7 +2232,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   <div className="flex items-center gap-2">
                     <Clock className="w-4.5 h-4.5 text-blue-600" />
                     <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
-                      Busy / Did Not Respond Followups
+                      Followups Due From Callback / Busy / No Answer
                     </h3>
                   </div>
                   <span className="font-body text-xs text-blue-700 font-bold bg-blue-50 border border-blue-100 px-3 py-1 rounded-full">
@@ -2323,7 +2353,136 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
               </motion.div>
             )}
 
-            {/* TAB 7: GOOD CLIENTS (Interested / Converted) */}
+            {/* TAB 7: WARM LEADS (Interested but not converted) */}
+            {activeTab === 'warm_leads' && (
+              <motion.div
+                key="warm-leads-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Smile className="w-4.5 h-4.5 text-emerald-500" />
+                    <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                      Warm Leads Waiting For Close
+                    </h3>
+                  </div>
+                  <span className="font-body text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
+                    {totalWarmCount} Interested Leads
+                  </span>
+                </div>
+
+                <div className="w-full overflow-x-auto text-xs font-body">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Target Agency</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Area</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Contacts</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Next Step</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Logged By</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Status</th>
+                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leadsList.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="p-4">
+                            <span className="font-semibold text-slate-900 block">{lead.agency_name}</span>
+                            <span className="text-[10px] text-slate-400 italic max-w-xs truncate block" title={lead.call_notes}>
+                              "{lead.call_notes || lead.notes || 'Needs closing notes'}"
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-600 font-semibold">{lead.area}</td>
+                          <td className="p-4 text-slate-600 font-mono">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold">{lead.phone}</span>
+                              {lead.phone_2 && <span className="text-[10px] text-slate-400">Alt: {lead.phone_2}</span>}
+                              {lead.email && <span className="text-[10px] text-slate-400 font-sans">{lead.email}</span>}
+                            </div>
+                          </td>
+                          <td className="p-4 text-slate-600 font-semibold">
+                            {lead.meeting_date || 'Qualify and ask for accepted next step'}
+                          </td>
+                          <td className="p-4">
+                            <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold border text-[10px]">
+                              {lead.caller_name || 'System'}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${getStatusStyle(lead.call_status)}`}>
+                              {lead.call_status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setEditingLead({ ...lead })}
+                                className="p-2 bg-slate-50 hover:bg-slate-100 border rounded-lg text-slate-600 cursor-pointer"
+                                title="Edit details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setDialerQueue([lead, ...dialerQueue.filter(q => q.id !== lead.id)]);
+                                  setCurrentQueueIndex(0);
+                                  setActiveTab('dialer');
+                                }}
+                                className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 cursor-pointer"
+                                title="Send to Dialer"
+                              >
+                                <Phone className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {leadsList.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            No warm leads waiting for close.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <span className="font-body text-[10px] text-slate-400 tracking-wider">
+                    Showing {leadsList.length} of {totalWarmCount} total warm leads
+                  </span>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      Prev
+                    </button>
+                    <span className="font-body text-xs text-slate-500 font-mono">
+                      Page {currentPage} of {Math.ceil(totalWarmCount / 12) || 1}
+                    </span>
+                    <button
+                      disabled={currentPage >= Math.ceil(totalWarmCount / 12)}
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
+                    >
+                      Next
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* TAB 8: CONVERTED CLIENTS */}
             {activeTab === 'good_clients' && (
               <motion.div
                 key="good-clients-tab"
@@ -2336,7 +2495,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500" />
                     <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
-                      Good Clients & Converted Targets
+                      Converted Clients
                     </h3>
                   </div>
                   <span className="font-body text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
@@ -2429,7 +2588,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       {leadsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
-                            No good clients logged yet. Keep converting!
+                            No converted clients logged yet.
                           </td>
                         </tr>
                       )}
@@ -2440,7 +2599,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 {/* Pagination */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalGoodClientsCount} total good clients
+                    Showing {leadsList.length} of {totalGoodClientsCount} total converted clients
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -2523,8 +2682,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <span className="font-display text-xl font-bold text-indigo-600 mt-1">{analyticsData.callsToday}</span>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Interested / Won</span>
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Warm Leads</span>
                         <span className="font-display text-xl font-bold text-emerald-600 mt-1">{analyticsData.statuses.interested}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Converted</span>
+                        <span className="font-display text-xl font-bold text-indigo-600 mt-1">{analyticsData.statuses.converted}</span>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
                         <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Busy / No Answer</span>
@@ -2545,7 +2708,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   <div className="lg:col-span-8 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
                     <div>
                       <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">Allocate Targets to Caller Teams</h3>
-                      <p className="font-body text-xs text-slate-400 mt-1">Assign lists of targets based on Region, Priority, or specific ID Range.</p>
+                      <p className="font-body text-xs text-slate-400 mt-1">Assign only uncalled targets by Region, Priority, or emergency ID Range. Warm and converted leads stay locked.</p>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-slate-100 pt-6">
@@ -2558,7 +2721,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           const caller = data.get('caller') as string;
                           const region = data.get('region') as string;
                           if (!caller || !region) return;
-                          if (!confirm(`Assign all currently unassigned ${region} leads to ${caller}? This will update live caller queues.`)) return;
+                          if (!confirm(`Assign currently unassigned uncalled ${region} leads to ${caller}? Warm and converted leads will stay locked.`)) return;
 
                           setIsAdminActionPending(true);
                           const res = await assignLeadsByRegion(caller, region);
@@ -2613,7 +2776,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           const caller = data.get('caller') as string;
                           const priorityVal = data.get('priority') as string;
                           if (!caller || !priorityVal) return;
-                          if (!confirm(`Assign all currently unassigned Priority ${priorityVal} leads to ${caller}? This will update live caller queues.`)) return;
+                          if (!confirm(`Assign currently unassigned uncalled Priority ${priorityVal} leads to ${caller}? Warm and converted leads will stay locked.`)) return;
 
                           setIsAdminActionPending(true);
                           const res = await assignLeadsByPriority(caller, parseInt(priorityVal, 10));
@@ -2670,7 +2833,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             alert('Start ID must be lower than or equal to End ID.');
                             return;
                           }
-                          if (!confirm(`Assign lead IDs #${startId} through #${endId} to ${caller}? This will update live caller queues.`)) return;
+                          if (!confirm(`Assign currently unassigned uncalled lead IDs #${startId} through #${endId} to ${caller}? Warm and converted leads will stay locked.`)) return;
 
                           setIsAdminActionPending(true);
                           const res = await assignLeadsByRange(caller, startId, endId);
@@ -2735,7 +2898,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   <div className="lg:col-span-4 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
                     <div>
                       <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">Quick Splitting & Resets</h3>
-                      <p className="font-body text-[11px] text-slate-400 mt-1">One-click distribution strategies for team lead queues.</p>
+                      <p className="font-body text-[11px] text-slate-400 mt-1">One-click distribution for uncalled queues only. Worked leads keep their owner.</p>
                     </div>
 
                     <div className="flex flex-col gap-3.5 border-t border-slate-100 pt-5">
@@ -2743,7 +2906,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       {/* Equal Split Button */}
                       <button
                         onClick={async () => {
-                          if (!confirm("Are you sure you want to divide all unassigned uncalled targets equally among Hamid, Oussama, and Kamel?")) return;
+                          if (!confirm("Divide all unassigned uncalled targets equally among Hamid, Oussama, and Kamel? Warm and converted leads will stay locked.")) return;
                           setIsAdminActionPending(true);
                           const res = await splitLeadsEqually();
                           setIsAdminActionPending(false);
@@ -2765,13 +2928,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       {/* Clear Assignments Button */}
                       <button
                         onClick={async () => {
-                          if (!confirm("WARNING: This will clear all target caller allocations in the database. Callers will share the default queue. Continue?")) return;
+                          if (!confirm("Clear caller allocations only for uncalled targets? Warm, followup, lost, and converted leads will keep their owner.")) return;
                           setIsAdminActionPending(true);
                           const res = await clearAssignments();
                           setIsAdminActionPending(false);
 
                           if (res.success) {
-                            alert('Successfully cleared all caller assignments.');
+                            alert('Successfully cleared uncalled target assignments.');
                             fetchAssignmentStats();
                           } else {
                             alert(`Error clearing assignments: ${res.error}`);
@@ -2781,7 +2944,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         className="w-full py-3.5 rounded-xl bg-rose-50 border border-rose-100 hover:bg-rose-600 hover:text-white text-rose-700 font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40"
                       >
                         <RefreshCw className="w-4 h-4" />
-                        CLEAR ALL ASSIGNMENTS
+                        CLEAR UNCALLED ASSIGNMENTS
                       </button>
 
                     </div>

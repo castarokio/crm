@@ -2,6 +2,11 @@
 
 import { supabase } from '@/lib/supabase';
 
+const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
+const WARM_STATUSES = ['Interested'];
+const FOLLOWUP_STATUSES = ['Callback', 'Busy', 'No Answer'];
+const ACTIVE_ASSIGNMENT_FILTER = 'call_status.is.null,call_status.eq.Not Called';
+
 // ── 1. Get Leads ──────────────────────────────────────────────────────────────
 export async function getLeads(options: {
   search?: string;
@@ -22,15 +27,17 @@ export async function getLeads(options: {
       q = q.or(`agency_name.ilike.%${search}%,phone.ilike.%${search}%,area.ilike.%${search}%,website.ilike.%${search}%,contact_person.ilike.%${search}%`);
     }
     if (status === 'Followups') {
-      q = q.in('call_status', ['Busy', 'No Answer']);
+      q = q.in('call_status', FOLLOWUP_STATUSES);
     } else if (status === 'No Answer / Busy') {
       q = q.in('call_status', ['Busy', 'No Answer']);
+    } else if (status === 'WarmLeads') {
+      q = q.in('call_status', WARM_STATUSES);
     } else if (status === 'GoodClients') {
-      q = q.in('call_status', ['Interested', 'Accepted', 'Client Configured']);
+      q = q.in('call_status', CONVERTED_STATUSES);
     } else if (status) {
       q = q.eq('call_status', status);
     } else if (excludeLost) {
-      q = q.not('call_status', 'in', '("Not Interested","Wrong Number","Busy","No Answer","Interested","Accepted","Client Configured")');
+      q = q.or(ACTIVE_ASSIGNMENT_FILTER);
     }
     if (priority) q = q.eq('priority', parseInt(priority, 10));
     if (area) q = q.ilike('area', `%${area}%`);
@@ -54,7 +61,7 @@ export async function getDialerQueue(callerName?: string) {
     let q = supabase
       .from('leads')
       .select('*')
-      .not('call_status', 'in', '("Interested","Not Interested","Wrong Number","Accepted","Client Configured")');
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (callerName) {
       q = q.or(`assigned_to.eq.${callerName},and(assigned_to.is.null,or(caller_name.is.null,caller_name.eq.${callerName}))`);
@@ -62,6 +69,7 @@ export async function getDialerQueue(callerName?: string) {
 
     const { data, error } = await q
       .order('priority', { ascending: true })
+      .order('last_called_at', { ascending: true, nullsFirst: true })
       .order('review_count', { ascending: false })
       .limit(100);
 
@@ -150,13 +158,14 @@ export async function getAnalytics() {
     ]);
 
     const totalLeads = totalRes.count || 0;
-    const interested = (interestedRes.count || 0) + (acceptedRes.count || 0) + (configuredRes.count || 0);
+    const interested = interestedRes.count || 0;
+    const converted = (acceptedRes.count || 0) + (configuredRes.count || 0);
     const callback = callbackRes.count || 0;
     const notInterested = notInterestedRes.count || 0;
     const wrongNumber = wrongNumberRes.count || 0;
     const noAnswer = (noAnswerRes.count || 0) + (busyRes.count || 0);
 
-    const totalCalled = interested + callback + notInterested + wrongNumber + noAnswer;
+    const totalCalled = interested + converted + callback + notInterested + wrongNumber + noAnswer;
 
     return {
       success: true,
@@ -167,6 +176,7 @@ export async function getAnalytics() {
         statuses: {
           notCalled: totalLeads - totalCalled,
           interested,
+          converted,
           notInterested,
           callback,
           noAnswer,
@@ -193,7 +203,8 @@ export async function processCallSummaryWithAI(rawText: string) {
 Analyze this raw call note from an Algerian travel agency call and extract structured data.
 
 Call status options:
-- "Interested": Spoke to decision-maker, they want services or scheduled a meeting.
+- "Interested": Spoke to decision-maker and they are warm, but no firm next step is accepted yet.
+- "Accepted": They agreed to a meeting, audit, demo, or next business step.
 - "Callback": Busy, asked to call back, or requested more info.
 - "Not Interested": Direct refusal or said no.
 - "Wrong Number": Invalid or disconnected number.
@@ -203,7 +214,7 @@ Raw note: """${rawText}"""
 
 Respond ONLY with a valid JSON object:
 {
-  "call_status": "Interested" | "Callback" | "Not Interested" | "Wrong Number" | "No Answer",
+  "call_status": "Interested" | "Accepted" | "Callback" | "Not Interested" | "Wrong Number" | "No Answer",
   "meeting_date": "scheduled date/time string" or null,
   "contact_person": "name of contact" or null,
   "updated_email": "email address if mentioned" or null,
@@ -238,6 +249,7 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
       contact_person: data.contact_person,
       last_called_at: new Date().toISOString(),
       last_updated: new Date().toISOString(),
+      assigned_to: callerName,
     };
     if (data.updated_email) updatePayload.email = data.updated_email;
     const { error } = await supabase.from('leads').update(updatePayload).eq('id', leadId);
@@ -267,7 +279,7 @@ export async function getTeamLeaderboard() {
     const promises = callers.map(async (name) => {
       const [totalRes, warmRes, lostRes] = await Promise.all([
         supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name),
-        supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name).in('call_status', ['Interested', 'Accepted', 'Client Configured', 'Callback']),
+        supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name).in('call_status', ['Interested', 'Accepted', 'Client Configured']),
         supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name).in('call_status', ['Not Interested', 'Wrong Number']),
       ]);
       const total = totalRes.count || 0;
@@ -299,7 +311,7 @@ export async function getMeetingsList() {
       .select('id, agency_name, phone, area, contact_person, meeting_date, caller_name, call_status')
       .not('meeting_date', 'is', null)
       .neq('meeting_date', '')
-      .in('call_status', ['Interested', 'Callback'])
+      .in('call_status', ['Interested', 'Accepted', 'Callback'])
       .order('last_called_at', { ascending: false })
       .limit(50);
 
@@ -318,7 +330,8 @@ export async function assignLeadsByRegion(caller: string, region: string) {
       .from('leads')
       .update({ assigned_to: caller })
       .ilike('area', `%${region}%`)
-      .is('assigned_to', null);
+      .is('assigned_to', null)
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
     return { success: true };
@@ -333,7 +346,8 @@ export async function assignLeadsByPriority(caller: string, priority: number) {
       .from('leads')
       .update({ assigned_to: caller })
       .eq('priority', priority)
-      .is('assigned_to', null);
+      .is('assigned_to', null)
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
     return { success: true };
@@ -347,7 +361,7 @@ export async function clearAssignments() {
     const { error } = await supabase
       .from('leads')
       .update({ assigned_to: null })
-      .neq('id', 0); // Updates all rows
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
     return { success: true };
@@ -362,7 +376,7 @@ export async function splitLeadsEqually() {
       .from('leads')
       .select('id')
       .is('assigned_to', null)
-      .not('call_status', 'in', '("Interested","Not Interested","Wrong Number")');
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (fetchErr) throw new Error(fetchErr.message);
     if (!leads || leads.length === 0) return { success: true, totalAssigned: 0 };
@@ -417,7 +431,7 @@ export async function getAssignmentStats() {
         .from('leads')
         .select('*', { count: 'exact', head: true })
         .eq('assigned_to', name)
-        .not('call_status', 'in', '("Interested","Not Interested","Wrong Number")');
+        .or(ACTIVE_ASSIGNMENT_FILTER);
       if (error) throw new Error(error.message);
       return { name, count: count || 0 };
     });
@@ -426,7 +440,7 @@ export async function getAssignmentStats() {
       .from('leads')
       .select('*', { count: 'exact', head: true })
       .is('assigned_to', null)
-      .not('call_status', 'in', '("Interested","Not Interested","Wrong Number")');
+      .or(ACTIVE_ASSIGNMENT_FILTER);
     if (unassignedErr) throw new Error(unassignedErr.message);
 
     const stats = await Promise.all(promises);
@@ -444,7 +458,9 @@ export async function assignLeadsByRange(caller: string, startId: number, endId:
       .from('leads')
       .update({ assigned_to: caller })
       .gte('id', startId)
-      .lte('id', endId);
+      .lte('id', endId)
+      .is('assigned_to', null)
+      .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
     return { success: true };
