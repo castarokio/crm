@@ -2525,8 +2525,30 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </div>
                         </div>
 
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">TikTok</label>
+                            <input
+                              type="text"
+                              value={editingLead.tiktok || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, tiktok: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">LinkedIn</label>
+                            <input
+                              type="text"
+                              value={editingLead.linkedin || ''}
+                              onChange={(e) => setEditingLead({ ...editingLead, linkedin: e.target.value })}
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Other Social / LinkedIn URL</label>
+                          <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Other Social Link</label>
                           <input
                             type="text"
                             value={editingLead.social_link || ''}

@@ -36,6 +36,8 @@ const IMPORT_HEADER_ALIASES: Record<string, string> = {
   second_email: 'email_2',
   fb: 'facebook',
   ig: 'instagram',
+  tik_tok: 'tiktok',
+  linked_in: 'linkedin',
 };
 
 function parseCsvLine(line: string) {
