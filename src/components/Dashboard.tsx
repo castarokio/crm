@@ -54,6 +54,11 @@ import {
   assignLeadsByRange,
   deleteLeadPermanently,
   restoreLeadToQueue,
+  checkDataSafetySchema,
+  downloadFullBackup,
+  previewLeadImport,
+  commitLeadImport,
+  undoLastImport,
 } from '@/app/actions';
 
 // Custom SVG components for brand icons that are missing in newer lucide-react versions
@@ -200,6 +205,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [analyticsData, setAnalyticsData] = useState<any | null>(null);
   const [showSecondaryPhone, setShowSecondaryPhone] = useState<boolean>(false);
   const [showSecondaryEmail, setShowSecondaryEmail] = useState<boolean>(false);
+  const [dataSafetySchema, setDataSafetySchema] = useState<any | null>(null);
+  const [importPreview, setImportPreview] = useState<any | null>(null);
+  const [importFileName, setImportFileName] = useState<string>('');
+  const [isDataSafetyBusy, setIsDataSafetyBusy] = useState<boolean>(false);
 
   // Sync dialedNumber with active lead
   useEffect(() => {
@@ -230,15 +239,19 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // Fetch Assignment stats for Hamid
   const fetchAssignmentStats = useCallback(async () => {
     if (callerName !== 'Hamid') return;
-    const [assignRes, analyticsRes] = await Promise.all([
+    const [assignRes, analyticsRes, schemaRes] = await Promise.all([
       getAssignmentStats(),
-      getAnalytics()
+      getAnalytics(),
+      checkDataSafetySchema()
     ]);
     if (assignRes.success) {
       setAssignmentStats({ stats: assignRes.stats || [], unassigned: assignRes.unassigned || 0 });
     }
     if (analyticsRes.success) {
       setAnalyticsData(analyticsRes.stats);
+    }
+    if (schemaRes.success) {
+      setDataSafetySchema(schemaRes);
     }
   }, [callerName]);
 
@@ -502,6 +515,83 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else {
       fetchAssignmentStats();
     }
+  };
+
+  const handleDownloadBackup = async () => {
+    setIsDataSafetyBusy(true);
+    const res = await downloadFullBackup();
+    setIsDataSafetyBusy(false);
+    if (!res.success || !res.backup) {
+      alert('Failed to create backup: ' + res.error);
+      return;
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const blob = new Blob([JSON.stringify(res.backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `crm-backup-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFileSelected = async (file?: File | null) => {
+    if (!file) return;
+    setIsDataSafetyBusy(true);
+    setImportFileName(file.name);
+    setImportPreview(null);
+    const text = await file.text();
+    const res = await previewLeadImport(text);
+    setIsDataSafetyBusy(false);
+    if (!res.success || !res.preview) {
+      alert('Import preview failed: ' + res.error);
+      return;
+    }
+    setImportPreview(res.preview);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview) return;
+    if (!dataSafetySchema?.ready) {
+      alert('Run scripts/data_safety_migration.sql in Supabase SQL Editor first, then refresh this admin tab.');
+      return;
+    }
+    if (!confirm(`Import ${importPreview.importable_rows} new leads and skip ${importPreview.skipped_rows} duplicate/problem rows?`)) return;
+
+    setIsDataSafetyBusy(true);
+    const res = await commitLeadImport(importPreview.rows, importFileName, callerName);
+    setIsDataSafetyBusy(false);
+    if (!res.success) {
+      alert('Import failed: ' + res.error);
+      return;
+    }
+
+    alert(`Imported ${res.inserted} leads. Skipped ${res.skipped}.`);
+    setImportPreview(null);
+    setImportFileName('');
+    fetchAllData(false);
+  };
+
+  const handleUndoLastImport = async () => {
+    if (!dataSafetySchema?.ready) {
+      alert('Run scripts/data_safety_migration.sql in Supabase SQL Editor first, then refresh this admin tab.');
+      return;
+    }
+    if (!confirm('Undo the most recent import batch? This removes only leads from that import batch.')) return;
+
+    setIsDataSafetyBusy(true);
+    const res = await undoLastImport();
+    setIsDataSafetyBusy(false);
+    if (!res.success) {
+      alert('Undo failed: ' + res.error);
+      return;
+    }
+
+    alert(`Removed ${res.removed} leads from batch ${res.batchId}.`);
+    fetchAllData(false);
   };
 
   // Quick Outcome status button handler
@@ -2884,6 +2974,114 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </div>
                   </div>
                 )}
+
+                {/* Data Safety / Import Controls */}
+                <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div>
+                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">Data Safety & Lead Imports</h3>
+                      <p className="font-body text-xs text-slate-400 mt-1">Backup first, preview duplicates, then import only clean new leads.</p>
+                    </div>
+                    <span className={`font-body text-[10px] font-bold px-3 py-1 rounded-full border self-start ${dataSafetySchema?.ready ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
+                      {dataSafetySchema?.ready ? 'Batch safety ready' : 'Migration needed for import/undo'}
+                    </span>
+                  </div>
+
+                  {!dataSafetySchema?.ready && (
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-amber-800 font-body text-xs leading-relaxed">
+                      Run <span className="font-mono font-bold">scripts/data_safety_migration.sql</span> in Supabase SQL Editor to enable import batches, undo import, and soft-delete safety columns. Backup download works now.
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <button
+                      onClick={handleDownloadBackup}
+                      disabled={isDataSafetyBusy}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 hover:bg-slate-900 hover:text-white text-slate-700 p-4 font-body text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <Database className="w-4 h-4" />
+                      Download Full Backup
+                    </button>
+
+                    <label className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-blue-700 p-4 font-body text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer">
+                      <Plus className="w-4 h-4" />
+                      Preview CSV Import
+                      <input
+                        type="file"
+                        accept=".csv,text/csv"
+                        className="hidden"
+                        onChange={(e) => handleImportFileSelected(e.target.files?.[0])}
+                      />
+                    </label>
+
+                    <button
+                      onClick={handleUndoLastImport}
+                      disabled={isDataSafetyBusy}
+                      className="rounded-2xl border border-rose-100 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 p-4 font-body text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Undo Last Import
+                    </button>
+                  </div>
+
+                  {isDataSafetyBusy && (
+                    <div className="flex items-center gap-2 text-slate-500 font-body text-xs font-bold">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Processing data safety action...
+                    </div>
+                  )}
+
+                  {importPreview && (
+                    <div className="border border-slate-100 rounded-2xl overflow-hidden">
+                      <div className="bg-slate-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div className="font-body text-xs text-slate-600">
+                          <span className="font-bold text-slate-900">{importFileName || 'CSV import'}</span>
+                          <span className="ml-2">Rows: {importPreview.total_rows}</span>
+                          <span className="ml-2 text-emerald-700 font-bold">Importable: {importPreview.importable_rows}</span>
+                          <span className="ml-2 text-amber-700 font-bold">Skipped: {importPreview.skipped_rows}</span>
+                        </div>
+                        <button
+                          onClick={handleConfirmImport}
+                          disabled={isDataSafetyBusy || !importPreview.importable_rows}
+                          className="px-4 py-2 rounded-xl bg-blue-600 text-white font-body text-xs font-bold hover:bg-blue-700 transition-all cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          Confirm Import
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 overflow-auto">
+                        <table className="w-full text-left font-body text-xs">
+                          <thead className="bg-white sticky top-0 border-b border-slate-100 text-slate-400">
+                            <tr>
+                              <th className="p-3 text-[9px] uppercase tracking-wider">Row</th>
+                              <th className="p-3 text-[9px] uppercase tracking-wider">Agency</th>
+                              <th className="p-3 text-[9px] uppercase tracking-wider">Area</th>
+                              <th className="p-3 text-[9px] uppercase tracking-wider">Phone</th>
+                              <th className="p-3 text-[9px] uppercase tracking-wider">Decision</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {importPreview.rows.slice(0, 50).map((row: any) => (
+                              <tr key={row.row_number} className={row.importable ? 'bg-white' : 'bg-amber-50/40'}>
+                                <td className="p-3 text-slate-400 font-mono">{row.row_number}</td>
+                                <td className="p-3 text-slate-800 font-semibold">{row.agency_name || '-'}</td>
+                                <td className="p-3 text-slate-500">{row.area || '-'}</td>
+                                <td className="p-3 text-slate-500 font-mono">{row.phone || '-'}</td>
+                                <td className="p-3">
+                                  {row.importable ? (
+                                    <span className="text-emerald-700 font-bold">Import</span>
+                                  ) : (
+                                    <span className="text-amber-700 font-bold">{row.duplicate_reasons.join(', ')}</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Allocation Controls Forms Card */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

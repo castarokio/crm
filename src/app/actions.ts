@@ -12,6 +12,100 @@ const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
 const WARM_STATUSES = ['Interested'];
 const FOLLOWUP_STATUSES = ['Callback', 'Busy', 'No Answer'];
 const ACTIVE_ASSIGNMENT_FILTER = 'call_status.is.null,call_status.eq.Not Called';
+const IMPORTABLE_LEAD_FIELDS = [
+  'agency_name', 'area', 'maps_link', 'address', 'phone', 'phone_2', 'email', 'email_2',
+  'website', 'website_quality', 'facebook', 'instagram', 'tiktok', 'linkedin', 'social_link',
+  'google_rating', 'review_count', 'followers_if_visible', 'facebook_followers',
+  'instagram_followers', 'running_ads', 'services', 'notes', 'priority', 'contact_person'
+];
+const IMPORT_HEADER_ALIASES: Record<string, string> = {
+  name: 'agency_name',
+  business_name: 'agency_name',
+  company: 'agency_name',
+  city: 'area',
+  region: 'area',
+  google_maps: 'maps_link',
+  map_link: 'maps_link',
+  phone_number: 'phone',
+  mobile: 'phone',
+  alt_phone: 'phone_2',
+  second_phone: 'phone_2',
+  mail: 'email',
+  email_address: 'email',
+  alt_email: 'email_2',
+  second_email: 'email_2',
+  fb: 'facebook',
+  ig: 'instagram',
+};
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const next = line[i + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      current += '"';
+      i += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function parseCsvText(csvText: string): Array<Record<string, any>> {
+  const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim());
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map(header => {
+    const normalized = header.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return IMPORT_HEADER_ALIASES[normalized] || normalized;
+  });
+  return lines.slice(1).map((line, index) => {
+    const values = parseCsvLine(line);
+    const row: Record<string, any> = {};
+    headers.forEach((header, i) => {
+      if (!IMPORTABLE_LEAD_FIELDS.includes(header)) return;
+      const rawValue = values[i]?.trim() || '';
+      if (!rawValue) return;
+      if (['google_rating'].includes(header)) {
+        row[header] = Number.parseFloat(rawValue) || 0;
+      } else if (['review_count', 'priority'].includes(header)) {
+        row[header] = Number.parseInt(rawValue, 10) || (header === 'priority' ? 3 : 0);
+      } else {
+        row[header] = rawValue;
+      }
+    });
+    return { row_number: index + 2, ...row };
+  });
+}
+
+function normalizeForDuplicate(value?: string | null) {
+  return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+async function getDataSafetySchemaStatus() {
+  const supabase = requireSupabase();
+  const [leadProbe, batchProbe] = await Promise.all([
+    supabase.from('leads').select('id, import_batch_id, deleted_at, source_file, created_at').limit(1),
+    supabase.from('import_batches').select('id').limit(1),
+  ]);
+
+  return {
+    ready: !leadProbe.error && !batchProbe.error,
+    leadsReady: !leadProbe.error,
+    batchesReady: !batchProbe.error,
+    error: leadProbe.error?.message || batchProbe.error?.message || null,
+  };
+}
 
 // ── 1. Get Leads ──────────────────────────────────────────────────────────────
 export async function getLeads(options: {
@@ -535,6 +629,199 @@ export async function assignLeadsByRange(caller: string, startId: number, endId:
     if (error) throw new Error(error.message);
     return { success: true };
   } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ── 14. Data Safety / Import / Backup ────────────────────────────────────────
+export async function checkDataSafetySchema() {
+  try {
+    const status = await getDataSafetySchemaStatus();
+    return { success: true, ...status };
+  } catch (error: any) {
+    return { success: false, ready: false, error: error.message };
+  }
+}
+
+export async function downloadFullBackup() {
+  try {
+    const supabase = requireSupabase();
+    const [leadsRes, historyRes, batchesRes] = await Promise.all([
+      supabase.from('leads').select('*').order('id', { ascending: true }),
+      supabase.from('call_history').select('*').order('created_at', { ascending: true }),
+      supabase.from('import_batches').select('*').order('created_at', { ascending: false }),
+    ]);
+
+    if (leadsRes.error) throw new Error(leadsRes.error.message);
+    if (historyRes.error) throw new Error(historyRes.error.message);
+
+    return {
+      success: true,
+      backup: {
+        exported_at: new Date().toISOString(),
+        version: 1,
+        leads: leadsRes.data || [],
+        call_history: historyRes.data || [],
+        import_batches: batchesRes.error ? [] : (batchesRes.data || []),
+        warnings: batchesRes.error ? ['import_batches table missing; run data_safety_migration.sql for batch tracking.'] : [],
+      },
+    };
+  } catch (error: any) {
+    console.error('[downloadFullBackup]', error.message);
+    return { success: false, error: error.message, backup: null };
+  }
+}
+
+export async function previewLeadImport(csvText: string) {
+  try {
+    const supabase = requireSupabase();
+    const parsedRows = parseCsvText(csvText).filter(row => row.agency_name || row.phone || row.maps_link);
+    if (!parsedRows.length) {
+      return { success: false, error: 'No usable rows found. Include headers like agency_name, area, phone, maps_link.', preview: null };
+    }
+
+    const { data: existing, error } = await supabase
+      .from('leads')
+      .select('id, agency_name, area, phone, maps_link, website')
+      .limit(10000);
+    if (error) throw new Error(error.message);
+
+    const existingRows = existing || [];
+    const seenImportKeys = new Set<string>();
+    const rows = parsedRows.map((row: any) => {
+      const reasons: string[] = [];
+      const phone = normalizeForDuplicate(row.phone);
+      const mapsLink = normalizeForDuplicate(row.maps_link);
+      const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
+
+      if (!row.agency_name) reasons.push('Missing agency_name');
+      if (!row.phone && !row.maps_link && !row.website) reasons.push('Missing phone/maps_link/website');
+
+      if (phone && existingRows.some((lead: any) => normalizeForDuplicate(lead.phone) === phone)) reasons.push('Duplicate phone');
+      if (mapsLink && existingRows.some((lead: any) => normalizeForDuplicate(lead.maps_link) === mapsLink)) reasons.push('Duplicate maps_link');
+      if (row.agency_name && row.area && existingRows.some((lead: any) => `${normalizeForDuplicate(lead.agency_name)}|${normalizeForDuplicate(lead.area)}` === agencyArea)) {
+        reasons.push('Duplicate agency + area');
+      }
+
+      const importKey = phone || mapsLink || agencyArea;
+      if (importKey && seenImportKeys.has(importKey)) reasons.push('Duplicate inside import file');
+      if (importKey) seenImportKeys.add(importKey);
+
+      return {
+        ...row,
+        priority: row.priority || 3,
+        call_status: 'Not Called',
+        duplicate_reasons: reasons,
+        importable: reasons.length === 0,
+      };
+    });
+
+    const importable = rows.filter(row => row.importable).length;
+    return {
+      success: true,
+      preview: {
+        total_rows: rows.length,
+        importable_rows: importable,
+        skipped_rows: rows.length - importable,
+        rows,
+      },
+    };
+  } catch (error: any) {
+    console.error('[previewLeadImport]', error.message);
+    return { success: false, error: error.message, preview: null };
+  }
+}
+
+export async function commitLeadImport(rows: any[], fileName: string, createdBy: string) {
+  try {
+    const supabase = requireSupabase();
+    const schema = await getDataSafetySchemaStatus();
+    if (!schema.ready) {
+      return { success: false, error: `MIGRATION_REQUIRED: ${schema.error || 'Run scripts/data_safety_migration.sql first.'}` };
+    }
+
+    const batchId = `batch_${Date.now()}`;
+    const importRows = rows.filter(row => row.importable).map(row => {
+      const clean: Record<string, any> = {};
+      IMPORTABLE_LEAD_FIELDS.forEach(field => {
+        if (row[field] !== undefined && row[field] !== '') clean[field] = row[field];
+      });
+      return {
+        ...clean,
+        priority: clean.priority || 3,
+        call_status: 'Not Called',
+        caller_name: null,
+        assigned_to: null,
+        call_notes: null,
+        meeting_date: null,
+        last_called_at: null,
+        import_batch_id: batchId,
+        source_file: fileName || 'manual-import.csv',
+      };
+    });
+
+    if (!importRows.length) return { success: false, error: 'No importable rows selected.' };
+
+    const { error: batchError } = await supabase.from('import_batches').insert({
+      id: batchId,
+      file_name: fileName || 'manual-import.csv',
+      total_rows: rows.length,
+      inserted_rows: importRows.length,
+      skipped_rows: rows.length - importRows.length,
+      created_by: createdBy || 'Admin',
+    });
+    if (batchError) throw new Error(batchError.message);
+
+    for (let i = 0; i < importRows.length; i += 500) {
+      const { error } = await supabase.from('leads').insert(importRows.slice(i, i + 500));
+      if (error) throw new Error(error.message);
+    }
+
+    return { success: true, batchId, inserted: importRows.length, skipped: rows.length - importRows.length };
+  } catch (error: any) {
+    console.error('[commitLeadImport]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function undoLastImport() {
+  try {
+    const supabase = requireSupabase();
+    const schema = await getDataSafetySchemaStatus();
+    if (!schema.ready) {
+      return { success: false, error: `MIGRATION_REQUIRED: ${schema.error || 'Run scripts/data_safety_migration.sql first.'}` };
+    }
+
+    const { data: batches, error: batchError } = await supabase
+      .from('import_batches')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (batchError) throw new Error(batchError.message);
+    const batch = batches?.[0];
+    if (!batch) return { success: false, error: 'No import batch found to undo.' };
+
+    const { count, error: countError } = await supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('import_batch_id', batch.id);
+    if (countError) throw new Error(countError.message);
+
+    const { error: deleteError } = await supabase
+      .from('leads')
+      .delete()
+      .eq('import_batch_id', batch.id);
+    if (deleteError) throw new Error(deleteError.message);
+
+    const { error: batchDeleteError } = await supabase
+      .from('import_batches')
+      .delete()
+      .eq('id', batch.id);
+    if (batchDeleteError) throw new Error(batchDeleteError.message);
+
+    return { success: true, batchId: batch.id, removed: count || 0 };
+  } catch (error: any) {
+    console.error('[undoLastImport]', error.message);
     return { success: false, error: error.message };
   }
 }
