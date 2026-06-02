@@ -40,4 +40,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
+# local developer scratch/test scripts
+scripts/check_*
+scripts/test_*
+scripts/show_*
+scripts/alter_*
+scripts/migrate_*
+scripts/add_locking_columns.js
+scripts/new-client.js
+scripts/scrape-competitor.js
+scripts/main.c
+scripts/generate_favicons.py
