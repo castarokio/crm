@@ -94,6 +94,41 @@ function normalizeForDuplicate(value?: string | null) {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+const LEAD_LIST_COLUMNS = [
+  'id',
+  'agency_name',
+  'phone',
+  'phone_2',
+  'email',
+  'email_2',
+  'website',
+  'website_quality',
+  'facebook',
+  'instagram',
+  'tiktok',
+  'linkedin',
+  'social_link',
+  'google_rating',
+  'review_count',
+  'area',
+  'address',
+  'maps_link',
+  'priority',
+  'call_status',
+  'call_notes',
+  'notes',
+  'contact_person',
+  'meeting_date',
+  'caller_name',
+  'assigned_to',
+  'last_called_at',
+  'followers_if_visible',
+  'facebook_followers',
+  'instagram_followers',
+  'running_ads',
+  'services',
+].join(',');
+
 async function getDataSafetySchemaStatus() {
   const supabase = requireSupabase();
   const [leadProbe, batchProbe] = await Promise.all([
@@ -124,7 +159,7 @@ export async function getLeads(options: {
 
   try {
     const supabase = requireSupabase();
-    let q = supabase.from('leads').select('*', { count: 'exact' });
+    let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'planned' });
 
     if (search) {
       q = q.or(`agency_name.ilike.%${search}%,phone.ilike.%${search}%,area.ilike.%${search}%,website.ilike.%${search}%,contact_person.ilike.%${search}%`);
@@ -168,7 +203,7 @@ export async function getDialerQueue(callerName?: string) {
     // Select leads that are fresh or explicitly recalled
     let q = supabase
       .from('leads')
-      .select('*')
+      .select(LEAD_LIST_COLUMNS, { count: 'planned' })
       .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled');
 
     if (callerName) {
@@ -180,14 +215,14 @@ export async function getDialerQueue(callerName?: string) {
       q = q.or(`locked_by.is.null,locked_by.eq.${callerName},locked_at.lt.${fiveMinutesAgo}`);
     }
 
-    const { data, error } = await q
+    const { data, count, error } = await q
       .order('priority', { ascending: true })
       .order('last_called_at', { ascending: true, nullsFirst: true })
       .order('review_count', { ascending: false })
       .limit(100);
 
     if (error) throw new Error(error.message);
-    return { success: true, queue: data || [] };
+    return { success: true, queue: data || [], total: count || (data || []).length };
   } catch (error: any) {
     console.error('[getDialerQueue]', error.message);
     return { success: false, error: error.message, queue: [] };
@@ -269,17 +304,17 @@ export async function getAnalytics() {
       noAnswerRes,
       busyRes
     ] = await Promise.all([
-      supabase.from('leads').select('*', { count: 'exact', head: true }),
-      supabase.from('leads').select('*', { count: 'exact', head: true })
+      supabase.from('leads').select('id', { count: 'planned', head: true }),
+      supabase.from('leads').select('id', { count: 'planned', head: true })
         .gte('last_called_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Interested'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Accepted'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Client Configured'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Callback'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Not Interested'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Wrong Number'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'No Answer'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('call_status', 'Busy'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Interested'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Accepted'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Client Configured'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Callback'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Not Interested'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Wrong Number'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'No Answer'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Busy'),
     ]);
 
     const totalLeads = totalRes.count || 0;
@@ -314,6 +349,36 @@ export async function getAnalytics() {
   } catch (error: any) {
     console.error('[getAnalytics]', error.message);
     return { success: false, error: error.message, stats: null };
+  }
+}
+
+export async function getTargetInventoryCounts() {
+  try {
+    const supabase = requireSupabase();
+    const [totalRes, warmRes, convertedRes, followupRes, lostRes] = await Promise.all([
+      supabase.from('leads').select('id', { count: 'planned', head: true }),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Interested'),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Accepted', 'Client Configured']),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']),
+      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Not Interested', 'Wrong Number']),
+    ]);
+
+    const error = totalRes.error || warmRes.error || convertedRes.error || followupRes.error || lostRes.error;
+    if (error) throw new Error(error.message);
+
+    return {
+      success: true,
+      counts: {
+        total: totalRes.count || 0,
+        warm: warmRes.count || 0,
+        converted: convertedRes.count || 0,
+        followups: followupRes.count || 0,
+        lost: lostRes.count || 0,
+      },
+    };
+  } catch (error: any) {
+    console.error('[getTargetInventoryCounts]', error.message);
+    return { success: false, error: error.message, counts: null };
   }
 }
 
@@ -467,9 +532,9 @@ export async function getTeamLeaderboard() {
     const supabase = requireSupabase();
     const promises = callers.map(async (name) => {
       const [totalRes, warmRes, lostRes] = await Promise.all([
-        supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name),
-        supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name).in('call_status', ['Interested', 'Accepted', 'Client Configured']),
-        supabase.from('leads').select('*', { count: 'exact', head: true }).eq('caller_name', name).in('call_status', ['Not Interested', 'Wrong Number']),
+        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name),
+        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name).in('call_status', ['Interested', 'Accepted', 'Client Configured']),
+        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name).in('call_status', ['Not Interested', 'Wrong Number']),
       ]);
       const total = totalRes.count || 0;
       const warm = warmRes.count || 0;
@@ -498,7 +563,7 @@ export async function getMeetingsList() {
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('leads')
-      .select('*')
+      .select(LEAD_LIST_COLUMNS)
       .not('meeting_date', 'is', null)
       .neq('meeting_date', '')
       .in('call_status', ['Interested', 'Accepted', 'Callback'])
@@ -674,7 +739,7 @@ export async function getAssignmentStats() {
     const promises = callers.map(async (name) => {
       const { count, error } = await supabase
         .from('leads')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'planned', head: true })
         .eq('assigned_to', name)
         .or(ACTIVE_ASSIGNMENT_FILTER);
       if (error) throw new Error(error.message);
@@ -683,7 +748,7 @@ export async function getAssignmentStats() {
 
     const { count: unassignedCount, error: unassignedErr } = await supabase
       .from('leads')
-      .select('*', { count: 'exact', head: true })
+      .select('id', { count: 'planned', head: true })
       .is('assigned_to', null)
       .or(ACTIVE_ASSIGNMENT_FILTER);
     if (unassignedErr) throw new Error(unassignedErr.message);

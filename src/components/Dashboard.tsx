@@ -41,6 +41,7 @@ import {
   getDialerQueue,
   updateLeadDetails,
   getAnalytics,
+  getTargetInventoryCounts,
   updateCallStatusWithAI,
   getTeamLeaderboard,
   getMeetingsList,
@@ -169,6 +170,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   // Dialer Session State
   const [dialerQueue, setDialerQueue] = useState<any[]>([]);
+  const [freshTargetCount, setFreshTargetCount] = useState<number>(0);
   const [currentQueueIndex, setCurrentQueueIndex] = useState<number>(0);
   
   // Post-Call Notes Parser State
@@ -380,15 +382,82 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     }
   }, [callerName]);
 
+  const applyOutcomeToLocalCounts = useCallback((status: string, direction: 1 | -1 = 1) => {
+    setFreshTargetCount(prev => Math.max(0, prev - direction));
+    if (['Interested'].includes(status)) {
+      setTotalWarmCount(prev => Math.max(0, prev + direction));
+    } else if (['Accepted', 'Client Configured'].includes(status)) {
+      setTotalGoodClientsCount(prev => Math.max(0, prev + direction));
+    } else if (['Callback', 'Busy', 'No Answer'].includes(status)) {
+      setTotalFollowupsCount(prev => Math.max(0, prev + direction));
+    } else if (['Not Interested', 'Wrong Number'].includes(status)) {
+      setTotalLostCount(prev => Math.max(0, prev + direction));
+    }
+  }, []);
+
+  const refreshInventoryCounts = useCallback(async () => {
+    const res = await getTargetInventoryCounts();
+    if (res.success && res.counts) {
+      setTotalLeadsCount(res.counts.total);
+      setTotalWarmCount(res.counts.warm);
+      setTotalGoodClientsCount(res.counts.converted);
+      setTotalFollowupsCount(res.counts.followups);
+      setTotalLostCount(res.counts.lost);
+    }
+  }, []);
+
+  const refreshDashboardMetrics = useCallback(async () => {
+    refreshInventoryCounts().catch(err => console.error('[refreshInventoryCounts]', err));
+
+    const promises = [
+      getTeamLeaderboard(),
+      getMeetingsList(),
+      getAnalytics(),
+    ] as any[];
+
+    if (callerName === 'Hamid') {
+      promises.push(getAssignmentStats(), checkDataSafetySchema());
+    }
+
+    const results = await Promise.all(promises);
+    const leaderboardRes = results[0];
+    const meetingsRes = results[1];
+    const analyticsRes = results[2];
+
+    if (leaderboardRes.success && leaderboardRes.leaderboard) {
+      setLeaderboard(leaderboardRes.leaderboard);
+    }
+    if (meetingsRes.success && meetingsRes.meetings) {
+      setMeetingsList(meetingsRes.meetings);
+    }
+    if (analyticsRes.success && analyticsRes.stats) {
+      const stats = analyticsRes.stats;
+      setAnalyticsData(stats);
+    }
+
+    if (callerName === 'Hamid') {
+      const assignmentRes = results[3];
+      const schemaRes = results[4];
+      if (assignmentRes?.success) {
+        setAssignmentStats({ stats: assignmentRes.stats || [], unassigned: assignmentRes.unassigned || 0 });
+      }
+      if (schemaRes?.success) {
+        setDataSafetySchema(schemaRes);
+      }
+    }
+  }, [callerName, refreshInventoryCounts]);
+
   // Load active Dialer
   const loadDialer = useCallback(async () => {
     const res = await getDialerQueue(callerName);
     if (!res.success) {
       setDbConfigured(false);
       setDialerQueue(MOCK_LEADS);
+      setFreshTargetCount(MOCK_LEADS.length);
     } else {
       setDbConfigured(true);
       setDialerQueue(res.queue);
+      setFreshTargetCount(res.total ?? res.queue.length);
     }
     setCurrentQueueIndex(0);
   }, [callerName]);
@@ -442,79 +511,25 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const fetchAllData = useCallback(async (showBlockingLoader = true) => {
     if (showBlockingLoader) setIsLoading(true);
     try {
-      const promises = [
-        getDialerQueue(callerName),
-        getTeamLeaderboard(),
-        getMeetingsList(),
-        getLeads({
-          search: '',
-          status: '',
-          priority: '',
-          area: '',
-          page: 1,
-          limit: 12,
-          excludeLost: true,
-        }),
-        getAnalytics(),
-      ] as any[];
-
-      if (callerName === 'Hamid') {
-        promises.push(getAssignmentStats());
-      }
-
-      const results = await Promise.all(promises);
-      const queueRes = results[0];
-      const leaderboardRes = results[1];
-      const meetingsRes = results[2];
-      const leadsRes = results[3];
-      const analyticsRes = results[4];
-
+      const queueRes = await getDialerQueue(callerName);
       if (queueRes.success) {
         setDbConfigured(true);
         setDialerQueue(queueRes.queue);
+        setFreshTargetCount(queueRes.total ?? queueRes.queue.length);
       } else {
         setDbConfigured(false);
         setDialerQueue(MOCK_LEADS);
+        setFreshTargetCount(MOCK_LEADS.length);
       }
       setCurrentQueueIndex(0);
-
-      if (leaderboardRes.success && leaderboardRes.leaderboard) {
-        setLeaderboard(leaderboardRes.leaderboard);
-      }
-
-      if (meetingsRes.success && meetingsRes.meetings) {
-        setMeetingsList(meetingsRes.meetings);
-      }
-
-      if (leadsRes.success) {
-        setLeadsList(leadsRes.leads);
-      } else {
-        setLeadsList(MOCK_LEADS);
-      }
-
-      if (analyticsRes.success && analyticsRes.stats) {
-        const stats = analyticsRes.stats;
-        setAnalyticsData(stats);
-        setTotalLeadsCount(stats.totalLeads);
-        setTotalWarmCount(stats.statuses.interested);
-        setTotalGoodClientsCount(stats.statuses.converted);
-        setTotalFollowupsCount(stats.statuses.callback + stats.statuses.noAnswer);
-        setTotalLostCount(stats.statuses.notInterested + stats.statuses.wrongNumber);
-      }
-
-      if (callerName === 'Hamid') {
-        const assignmentRes = results[5];
-        if (assignmentRes && assignmentRes.success) {
-          setAssignmentStats({ stats: assignmentRes.stats || [], unassigned: assignmentRes.unassigned || 0 });
-        }
-      }
+      refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     } catch (err) {
       console.error('[fetchAllData] Error:', err);
     } finally {
       setIsLoading(false);
       setInitialLoadDone(true);
     }
-  }, [callerName]);
+  }, [callerName, refreshDashboardMetrics]);
 
   // Run initial fetch
   useEffect(() => {
@@ -636,6 +651,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
     setLeadsList(prev => prev.filter(lead => lead.id !== currentLead.id));
     setMeetingsList(prev => prev.filter(lead => lead.id !== currentLead.id));
+    setFreshTargetCount(prev => Math.max(0, prev - 1));
     setTotalLeadsCount(prev => Math.max(0, prev - 1));
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
 
@@ -644,6 +660,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setDialerQueue(prevQueue);
       setLeadsList(prevLeadsList);
       setMeetingsList(prevMeetingsList);
+      setFreshTargetCount(prev => prev + 1);
       setCurrentQueueIndex(prevIndex);
       setTotalLeadsCount(prevTotalLeads);
       alert('Failed to remove lead: ' + res.error);
@@ -665,6 +682,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setDialerQueue(prev => prev.filter(lead => lead.id !== editingLead.id));
     setLeadsList(prev => prev.filter(lead => lead.id !== editingLead.id));
     setMeetingsList(prev => prev.filter(lead => lead.id !== editingLead.id));
+    setFreshTargetCount(prev => Math.max(0, prev - 1));
     setTotalLeadsCount(prev => Math.max(0, prev - 1));
     setEditingLead(null);
 
@@ -673,6 +691,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setDialerQueue(prevQueue);
       setLeadsList(prevLeadsList);
       setMeetingsList(prevMeetingsList);
+      setFreshTargetCount(prev => prev + 1);
       setTotalLeadsCount(prevTotalLeads);
       setEditingLead(editingLead);
       alert('Failed to remove lead: ' + res.error);
@@ -736,7 +755,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     alert(`Imported ${res.inserted} leads. Skipped ${res.skipped}.`);
     setImportPreview(null);
     setImportFileName('');
-    fetchAllData(false);
+    loadDialer();
+    refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
   };
 
   const handleUndoLastImport = async () => {
@@ -755,7 +775,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     }
 
     alert(`Removed ${res.removed} leads from batch ${res.batchId}.`);
-    fetchAllData(false);
+    loadDialer();
+    refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
   };
 
   // Quick Outcome status button handler
@@ -793,6 +814,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
     // Advance and filter queue instantly
     setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
+    applyOutcomeToLocalCounts(status);
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
 
     // Call server action to update status directly (saving AI API cost)
@@ -809,10 +831,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       // Rollback on failure
       setDialerQueue(prevQueue);
       setCurrentQueueIndex(prevQueueIndex);
+      applyOutcomeToLocalCounts(status, -1);
       alert('Failed to log outcome: ' + res.error);
     } else {
-      // Refresh all lists in background to keep dashboard tabs updated
-      fetchAllData(false);
+      refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     }
   };
 
@@ -877,12 +899,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
     // 2. Filter queue instantly
     setDialerQueue(prev => prev.filter(lead => lead.id !== currentLead.id));
+    applyOutcomeToLocalCounts(extractedData.call_status);
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
     setExtractedData(null);
     setRawNotesInput('');
     
-    // Refresh all lists in background to keep dashboard tabs updated
-    fetchAllData(false);
+    refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
   };
 
   // Save changes inside lead editor drawer (Optimistic UI)
@@ -1247,7 +1269,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         {/* Navigation Selector Tabs */}
         <div className="flex bg-slate-100 border border-slate-200/50 p-1 rounded-2xl flex-wrap justify-center md:justify-start gap-1">
           {[
-            { id: 'dialer', label: 'Call Queue', count: dialerQueue.length },
+            { id: 'dialer', label: 'Call Queue', count: freshTargetCount || dialerQueue.length },
             { id: 'deadlines', label: 'Meetings', count: meetingsList.length },
             { id: 'database', label: 'Directory', count: totalLeadsCount },
             { id: 'followups', label: 'Followups', count: totalFollowupsCount },
