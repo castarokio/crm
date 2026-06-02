@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useTransition } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Phone,
@@ -186,6 +186,8 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   // Database Tab State
   const [leadsList, setLeadsList] = useState<any[]>([]);
+  const [isLeadsListLoading, setIsLeadsListLoading] = useState<boolean>(false);
+  const [inventoryCountsReady, setInventoryCountsReady] = useState<boolean>(false);
   const [totalLeadsCount, setTotalLeadsCount] = useState<number>(0);
   const [totalLostCount, setTotalLostCount] = useState<number>(0);
   const [totalFollowupsCount, setTotalFollowupsCount] = useState<number>(0);
@@ -197,7 +199,6 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterArea, setFilterArea] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [isPending, startTransition] = useTransition();
   const [initialLoadDone, setInitialLoadDone] = useState<boolean>(false);
 
   // Edit details overlay drawer
@@ -217,6 +218,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [importPreview, setImportPreview] = useState<any | null>(null);
   const [importFileName, setImportFileName] = useState<string>('');
   const [isDataSafetyBusy, setIsDataSafetyBusy] = useState<boolean>(false);
+  const activeTabRef = useRef(activeTab);
+  const leadsListRequestRef = useRef(0);
+  const skipNextListEffectRef = useRef(false);
 
   // Added States for visual improvements and locking system
   const [dialerCardTab, setDialerCardTab] = useState<'info' | 'pitch' | 'history'>('info');
@@ -246,6 +250,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   }, [dialerQueue, currentQueueIndex, callerName]);
 
   const lockedLeadIdRef = React.useRef<number | null>(null);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   // Sync dialedNumber with active lead
   useEffect(() => {
@@ -403,6 +411,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setTotalGoodClientsCount(res.counts.converted);
       setTotalFollowupsCount(res.counts.followups);
       setTotalLostCount(res.counts.lost);
+      setInventoryCountsReady(true);
     }
   }, []);
 
@@ -462,50 +471,90 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setCurrentQueueIndex(0);
   }, [callerName]);
 
-  // Fetch leads for directory
-  const fetchDatabaseLeads = useCallback((excludeLost: boolean, statusOverride?: string) => {
-    startTransition(async () => {
-      const res = await getLeads({
-        search: debouncedSearchQuery,
-        status: statusOverride !== undefined ? statusOverride : filterStatus,
-        priority: filterPriority,
-        area: filterArea,
-        page: currentPage,
-        limit: 12,
-        excludeLost,
-      });
+  const setSectionTotal = useCallback((tab: string, total: number) => {
+    if (tab === 'database') {
+      setTotalLeadsCount(total);
+    } else if (tab === 'lost') {
+      setTotalLostCount(total);
+    } else if (tab === 'followups') {
+      setTotalFollowupsCount(total);
+    } else if (tab === 'warm_leads') {
+      setTotalWarmCount(total);
+    } else if (tab === 'good_clients') {
+      setTotalGoodClientsCount(total);
+    }
+  }, []);
 
-      if (res.success) {
-        setLeadsList(res.leads);
-        if (activeTab === 'database') {
-          setTotalLeadsCount(res.total);
-        } else if (activeTab === 'lost') {
-          setTotalLostCount(res.total);
-        } else if (activeTab === 'followups') {
-          setTotalFollowupsCount(res.total);
-        } else if (activeTab === 'warm_leads') {
-          setTotalWarmCount(res.total);
-        } else if (activeTab === 'good_clients') {
-          setTotalGoodClientsCount(res.total);
+  // Fetch leads for directory-like sections with stale-response protection.
+  const fetchDatabaseLeads = useCallback((
+    tab: string,
+    excludeLost: boolean,
+    statusOverride?: string,
+    overrides?: { page?: number; search?: string; priority?: string; area?: string }
+  ) => {
+    const statusForQuery = statusOverride !== undefined ? statusOverride : filterStatus;
+    const pageForQuery = overrides?.page ?? currentPage;
+    const searchForQuery = overrides?.search ?? debouncedSearchQuery;
+    const priorityForQuery = overrides?.priority ?? filterPriority;
+    const areaForQuery = overrides?.area ?? filterArea;
+
+    const requestId = leadsListRequestRef.current + 1;
+    leadsListRequestRef.current = requestId;
+
+    setIsLeadsListLoading(true);
+    setLeadsList([]);
+
+    void (async () => {
+      try {
+        const res = await getLeads({
+          search: searchForQuery,
+          status: statusForQuery,
+          priority: priorityForQuery,
+          area: areaForQuery,
+          page: pageForQuery,
+          limit: 12,
+          excludeLost,
+        });
+
+        if (requestId !== leadsListRequestRef.current || tab !== activeTabRef.current) return;
+
+        if (res.success) {
+          setLeadsList(res.leads);
+          setSectionTotal(tab, res.total);
+          setDbConfigured(true);
+        } else {
+          setLeadsList(tab === 'database' ? MOCK_LEADS : []);
+          setSectionTotal(tab, tab === 'database' ? MOCK_LEADS.length : 0);
+          setDbConfigured(false);
         }
-        setDbConfigured(true);
-      } else {
-        setLeadsList(MOCK_LEADS);
-        if (activeTab === 'database') {
-          setTotalLeadsCount(MOCK_LEADS.length);
-        } else if (activeTab === 'lost') {
-          setTotalLostCount(0);
-        } else if (activeTab === 'followups') {
-          setTotalFollowupsCount(0);
-        } else if (activeTab === 'warm_leads') {
-          setTotalWarmCount(0);
-        } else if (activeTab === 'good_clients') {
-          setTotalGoodClientsCount(0);
+      } catch (err) {
+        if (requestId === leadsListRequestRef.current && tab === activeTabRef.current) {
+          console.error('[fetchDatabaseLeads] Error:', err);
+          setLeadsList(tab === 'database' ? MOCK_LEADS : []);
+          setSectionTotal(tab, tab === 'database' ? MOCK_LEADS.length : 0);
+          setDbConfigured(false);
         }
-        setDbConfigured(false);
+      } finally {
+        if (requestId === leadsListRequestRef.current && tab === activeTabRef.current) {
+          setIsLeadsListLoading(false);
+        }
       }
-    });
-  }, [debouncedSearchQuery, filterStatus, filterPriority, filterArea, currentPage, activeTab]);
+    })();
+  }, [currentPage, debouncedSearchQuery, filterArea, filterPriority, filterStatus, setSectionTotal]);
+
+  const fetchListTab = useCallback((tabId: string, overrides?: { page?: number; search?: string }) => {
+    if (tabId === 'database') {
+      fetchDatabaseLeads('database', true, undefined, overrides);
+    } else if (tabId === 'lost') {
+      fetchDatabaseLeads('lost', false, 'Lost', overrides);
+    } else if (tabId === 'followups') {
+      fetchDatabaseLeads('followups', false, 'Followups', overrides);
+    } else if (tabId === 'warm_leads') {
+      fetchDatabaseLeads('warm_leads', false, 'WarmLeads', overrides);
+    } else if (tabId === 'good_clients') {
+      fetchDatabaseLeads('good_clients', false, 'GoodClients', overrides);
+    }
+  }, [fetchDatabaseLeads]);
 
   // Initial load all data in parallel on mount
   const fetchAllData = useCallback(async (showBlockingLoader = true) => {
@@ -551,24 +600,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   // Trigger directory search on params change (background transition)
   useEffect(() => {
     if (!initialLoadDone) return;
-    if (activeTab === 'database') {
-      fetchDatabaseLeads(true);
-    } else if (activeTab === 'lost') {
-      fetchDatabaseLeads(false, 'Lost');
-    } else if (activeTab === 'followups') {
-      fetchDatabaseLeads(false, 'Followups');
-    } else if (activeTab === 'warm_leads') {
-      fetchDatabaseLeads(false, 'WarmLeads');
-    } else if (activeTab === 'good_clients') {
-      fetchDatabaseLeads(false, 'GoodClients');
+    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients'].includes(activeTab)) {
+      if (skipNextListEffectRef.current) {
+        skipNextListEffectRef.current = false;
+        return;
+      }
+      fetchListTab(activeTab);
     }
-  }, [currentPage, debouncedSearchQuery, filterPriority, filterArea, filterStatus, fetchDatabaseLeads, activeTab, initialLoadDone]);
+  }, [currentPage, debouncedSearchQuery, filterPriority, filterArea, filterStatus, fetchListTab, activeTab, initialLoadDone]);
 
   // Handle Tab Switch (silent refreshes, instant transitions)
   useEffect(() => {
     if (!initialLoadDone) return;
-
-    fetchLeaderboardData();
 
     if (activeTab === 'dialer') {
       loadDialer();
@@ -579,21 +622,24 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else if (activeTab === 'database') {
       if (['Lost', 'Followups', 'WarmLeads', 'GoodClients'].includes(filterStatus)) {
         setFilterStatus('');
-      } else {
-        fetchDatabaseLeads(true);
       }
-    } else if (activeTab === 'lost') {
-      setFilterStatus('Lost');
-    } else if (activeTab === 'followups') {
-      setFilterStatus('Followups');
-    } else if (activeTab === 'warm_leads') {
-      setFilterStatus('WarmLeads');
-    } else if (activeTab === 'good_clients') {
-      setFilterStatus('GoodClients');
     }
   }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus]);
 
   const currentLead = dialerQueue[currentQueueIndex];
+  const displayCount = (count: number) => inventoryCountsReady ? count : '...';
+
+  const handleMainTabChange = (tabId: typeof activeTab) => {
+    activeTabRef.current = tabId;
+    setActiveTab(tabId);
+    if (['database', 'lost', 'followups', 'warm_leads', 'good_clients'].includes(tabId)) {
+      skipNextListEffectRef.current = true;
+      setCurrentPage(1);
+      setSearchQuery('');
+      setDebouncedSearchQuery('');
+      fetchListTab(tabId, { page: 1, search: '' });
+    }
+  };
 
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
@@ -1271,16 +1317,16 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           {[
             { id: 'dialer', label: 'Call Queue', count: freshTargetCount || dialerQueue.length },
             { id: 'deadlines', label: 'Meetings', count: meetingsList.length },
-            { id: 'database', label: 'Directory', count: totalLeadsCount },
-            { id: 'followups', label: 'Followups', count: totalFollowupsCount },
-            { id: 'warm_leads', label: 'Warm Leads', count: totalWarmCount },
-            { id: 'good_clients', label: 'Converted', count: totalGoodClientsCount },
-            { id: 'lost', label: 'Lost', count: totalLostCount },
+            { id: 'database', label: 'Directory', count: displayCount(totalLeadsCount) },
+            { id: 'followups', label: 'Followups', count: displayCount(totalFollowupsCount) },
+            { id: 'warm_leads', label: 'Warm Leads', count: displayCount(totalWarmCount) },
+            { id: 'good_clients', label: 'Converted', count: displayCount(totalGoodClientsCount) },
+            { id: 'lost', label: 'Lost', count: displayCount(totalLostCount) },
             ...(callerName === 'Hamid' ? [{ id: 'admin', label: 'Admin Panel', count: null }] : [])
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => handleMainTabChange(tab.id as typeof activeTab)}
               className={`px-3 py-2 rounded-xl font-display text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
                 activeTab === tab.id
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
@@ -1366,14 +1412,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
             <p className="font-body text-[11px] text-slate-400 tracking-wider uppercase font-semibold">Loading campaign leads...</p>
           </div>
         ) : (
-          <AnimatePresence>
+          <>
                      {/* TAB 1: CALL QUEUE */}
             {activeTab === 'dialer' && (
               <motion.div
                 key="dialer-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="grid grid-cols-1 lg:grid-cols-12 gap-6"
               >
                 {dialerQueue.length === 0 ? (
@@ -2220,7 +2266,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="deadlines-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -2311,7 +2357,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="database-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full flex flex-col gap-6"
               >
                 {/* Directory controls */}
@@ -2415,7 +2461,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   } transition-all duration-300 relative`}>
                     
                     {/* Subtle Loading overlay instead of wiping table */}
-                    {isPending && (
+                    {isLeadsListLoading && (
                       <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex items-center justify-center z-20 transition-all duration-300">
                         <div className="flex flex-col items-center gap-2 bg-white/95 border border-slate-100 px-6 py-4 rounded-2xl shadow-md">
                           <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
@@ -2532,7 +2578,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               </td>
                             </tr>
                           ))}
-                          {leadsList.length === 0 && (
+                          {isLeadsListLoading ? (
+                            <tr>
+                              <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
+                                <Loader2 className="w-5 h-5 animate-spin text-blue-600 mx-auto mb-2" />
+                                Loading section records...
+                              </td>
+                            </tr>
+                          ) : leadsList.length === 0 && (
                             <tr>
                               <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
                                 No records found matching filters.
@@ -2546,7 +2599,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     {/* Pagination Footer */}
                     <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                       <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                        Showing {leadsList.length} of {totalLeadsCount} total leads
+                        {isLeadsListLoading ? 'Loading records...' : `Showing ${leadsList.length} of ${totalLeadsCount} total leads`}
                       </span>
 
                       <div className="flex items-center gap-3">
@@ -2559,10 +2612,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           Prev
                         </button>
                         <span className="font-body text-xs text-slate-500 font-mono">
-                          Page {currentPage} of {Math.ceil(totalLeadsCount / 12) || 1}
+                          Page {currentPage} of {inventoryCountsReady ? (Math.ceil(totalLeadsCount / 12) || 1) : '...'}
                         </span>
                         <button
-                          disabled={currentPage >= Math.ceil(totalLeadsCount / 12)}
+                          disabled={!inventoryCountsReady || currentPage >= Math.ceil(totalLeadsCount / 12)}
                           onClick={() => setCurrentPage(currentPage + 1)}
                           className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                         >
@@ -2848,7 +2901,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="lost-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -2859,7 +2912,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </h3>
                   </div>
                   <span className="font-body text-xs text-rose-700 font-bold bg-rose-50 border border-rose-100 px-3 py-1 rounded-full">
-                    {totalLostCount} Refused / Disconnected Leads
+                    {displayCount(totalLostCount)} Refused / Disconnected Leads
                   </span>
                 </div>
 
@@ -2957,7 +3010,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {leadsList.length === 0 && (
+                      {isLeadsListLoading ? (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            <Loader2 className="w-5 h-5 animate-spin text-rose-500 mx-auto mb-2" />
+                            Loading lost leads...
+                          </td>
+                        </tr>
+                      ) : leadsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No lost deals found. Keep calling!
@@ -2971,7 +3031,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 {/* Pagination */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalLostCount} total records
+                    {isLeadsListLoading ? 'Loading records...' : `Showing ${leadsList.length} of ${totalLostCount} total records`}
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -2984,10 +3044,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       Prev
                     </button>
                     <span className="font-body text-xs text-slate-500 font-mono">
-                      Page {currentPage} of {Math.ceil(totalLostCount / 12) || 1}
+                      Page {currentPage} of {inventoryCountsReady ? (Math.ceil(totalLostCount / 12) || 1) : '...'}
                     </span>
                     <button
-                      disabled={currentPage >= Math.ceil(totalLostCount / 12)}
+                      disabled={!inventoryCountsReady || currentPage >= Math.ceil(totalLostCount / 12)}
                       onClick={() => setCurrentPage(currentPage + 1)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                     >
@@ -3005,7 +3065,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="followups-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -3016,7 +3076,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </h3>
                   </div>
                   <span className="font-body text-xs text-blue-700 font-bold bg-blue-50 border border-blue-100 px-3 py-1 rounded-full">
-                    {totalFollowupsCount} Followup Leads
+                    {displayCount(totalFollowupsCount)} Followup Leads
                   </span>
                 </div>
 
@@ -3123,7 +3183,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {leadsList.length === 0 && (
+                      {isLeadsListLoading ? (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            <Loader2 className="w-5 h-5 animate-spin text-blue-600 mx-auto mb-2" />
+                            Loading followups...
+                          </td>
+                        </tr>
+                      ) : leadsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No followups pending. Great job!
@@ -3137,7 +3204,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 {/* Pagination */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalFollowupsCount} total followups
+                    {isLeadsListLoading ? 'Loading records...' : `Showing ${leadsList.length} of ${totalFollowupsCount} total followups`}
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -3150,10 +3217,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       Prev
                     </button>
                     <span className="font-body text-xs text-slate-500 font-mono">
-                      Page {currentPage} of {Math.ceil(totalFollowupsCount / 12) || 1}
+                      Page {currentPage} of {inventoryCountsReady ? (Math.ceil(totalFollowupsCount / 12) || 1) : '...'}
                     </span>
                     <button
-                      disabled={currentPage >= Math.ceil(totalFollowupsCount / 12)}
+                      disabled={!inventoryCountsReady || currentPage >= Math.ceil(totalFollowupsCount / 12)}
                       onClick={() => setCurrentPage(currentPage + 1)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                     >
@@ -3171,7 +3238,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="warm-leads-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -3182,7 +3249,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </h3>
                   </div>
                   <span className="font-body text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
-                    {totalWarmCount} Interested Leads
+                    {displayCount(totalWarmCount)} Interested Leads
                   </span>
                 </div>
 
@@ -3288,7 +3355,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {leadsList.length === 0 && (
+                      {isLeadsListLoading ? (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            <Loader2 className="w-5 h-5 animate-spin text-emerald-600 mx-auto mb-2" />
+                            Loading warm leads...
+                          </td>
+                        </tr>
+                      ) : leadsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No warm leads waiting for close.
@@ -3301,7 +3375,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalWarmCount} total warm leads
+                    {isLeadsListLoading ? 'Loading records...' : `Showing ${leadsList.length} of ${totalWarmCount} total warm leads`}
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -3314,10 +3388,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       Prev
                     </button>
                     <span className="font-body text-xs text-slate-500 font-mono">
-                      Page {currentPage} of {Math.ceil(totalWarmCount / 12) || 1}
+                      Page {currentPage} of {inventoryCountsReady ? (Math.ceil(totalWarmCount / 12) || 1) : '...'}
                     </span>
                     <button
-                      disabled={currentPage >= Math.ceil(totalWarmCount / 12)}
+                      disabled={!inventoryCountsReady || currentPage >= Math.ceil(totalWarmCount / 12)}
                       onClick={() => setCurrentPage(currentPage + 1)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                     >
@@ -3335,7 +3409,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="good-clients-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -3346,7 +3420,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     </h3>
                   </div>
                   <span className="font-body text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
-                    {totalGoodClientsCount} Converted Leads
+                    {displayCount(totalGoodClientsCount)} Converted Leads
                   </span>
                 </div>
 
@@ -3436,7 +3510,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {leadsList.length === 0 && (
+                      {isLeadsListLoading ? (
+                        <tr>
+                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                            <Loader2 className="w-5 h-5 animate-spin text-emerald-600 mx-auto mb-2" />
+                            Loading converted clients...
+                          </td>
+                        </tr>
+                      ) : leadsList.length === 0 && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No converted clients logged yet.
@@ -3450,7 +3531,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 {/* Pagination */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                   <span className="font-body text-[10px] text-slate-400 tracking-wider">
-                    Showing {leadsList.length} of {totalGoodClientsCount} total converted clients
+                    {isLeadsListLoading ? 'Loading records...' : `Showing ${leadsList.length} of ${totalGoodClientsCount} total converted clients`}
                   </span>
 
                   <div className="flex items-center gap-3">
@@ -3463,10 +3544,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       Prev
                     </button>
                     <span className="font-body text-xs text-slate-500 font-mono">
-                      Page {currentPage} of {Math.ceil(totalGoodClientsCount / 12) || 1}
+                      Page {currentPage} of {inventoryCountsReady ? (Math.ceil(totalGoodClientsCount / 12) || 1) : '...'}
                     </span>
                     <button
-                      disabled={currentPage >= Math.ceil(totalGoodClientsCount / 12)}
+                      disabled={!inventoryCountsReady || currentPage >= Math.ceil(totalGoodClientsCount / 12)}
                       onClick={() => setCurrentPage(currentPage + 1)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 font-body text-xs font-semibold"
                     >
@@ -3484,7 +3565,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 key="admin-tab"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
+                exit={{ opacity: 0, y: 0, transition: { duration: 0 } }}
                 className="w-full flex flex-col gap-6"
               >
                 {/* Admin Header with quick summaries */}
@@ -3958,7 +4039,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
               </motion.div>
             )}
 
-          </AnimatePresence>
+          </>
         )}
       </div>
 
