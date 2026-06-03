@@ -2,14 +2,22 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Dashboard from '@/components/Dashboard';
-import { User, ShieldAlert, ArrowRight, Lock, KeyRound, AlertCircle, Laptop, Loader2 } from 'lucide-react';
-import { getCallerProfiles, verifyCallerPinAction, submitTeamApplication, verifyPortalPinAction } from '@/app/actions';
+import { User, ShieldAlert, ArrowRight, Lock, AlertCircle, Laptop, Loader2 } from 'lucide-react';
+import {
+  getCallerProfiles,
+  getCurrentSessionAction,
+  logoutAction,
+  verifyCallerPinAction,
+  submitTeamApplication,
+  verifyPortalPinAction,
+} from '@/app/actions';
 import { gsap } from 'gsap';
 
 export default function Home() {
   // Authentication states
   const [portalUnlocked, setPortalUnlocked] = useState<boolean>(false);
   const [callerName, setCallerName] = useState<string>('');
+  const [callerRole, setCallerRole] = useState<string>('Caller');
   
   // PIN states
   const [enteredPortalPin, setEnteredPortalPin] = useState<string>('');
@@ -50,18 +58,15 @@ export default function Home() {
     }
   }, []);
 
-  // Restore session states on mount (sessionStorage = per-tab only, clears on tab close)
+  // Restore only the server-verified HTTP-only session.
   useEffect(() => {
-    loadCallerProfiles();
-    const cachedPortal = sessionStorage.getItem('__portal_unlocked');
-    if (cachedPortal === 'true') {
-      setPortalUnlocked(true);
-      
-      const cachedCaller = sessionStorage.getItem('__caller_name');
-      if (cachedCaller) {
-        setCallerName(cachedCaller);
-      }
-    }
+    void getCurrentSessionAction().then(session => {
+      if (!session.success) return;
+      setPortalUnlocked(session.portalUnlocked);
+      setCallerName(session.callerName);
+      setCallerRole(session.callerRole);
+      if (session.portalUnlocked) loadCallerProfiles();
+    });
   }, [loadCallerProfiles]);
 
   // GSAP animation for login elements on mount
@@ -89,7 +94,6 @@ export default function Home() {
 
     const res = await verifyPortalPinAction(pin);
     if (res.success) {
-      sessionStorage.setItem('__portal_unlocked', 'true');
       setPortalUnlocked(true);
       setEnteredPortalPin('');
       portalPinRef.current = '';
@@ -111,8 +115,8 @@ export default function Home() {
     const res = await verifyCallerPinAction(name, pin);
 
     if (res.success) {
-      sessionStorage.setItem('__caller_name', name);
       setCallerName(name);
+      setCallerRole(res.role || 'Caller');
       setPromptPinFor('');
       setEnteredCallerPin('');
       callerPinRef.current = '';
@@ -209,9 +213,10 @@ export default function Home() {
     setCallerError(false);
   };
 
-  const handleLogoutCaller = () => {
-    sessionStorage.removeItem('__caller_name');
+  const handleLogoutCaller = async () => {
+    await logoutAction();
     setCallerName('');
+    setCallerRole('Caller');
     setPromptPinFor('');
     portalPinRef.current = '';
     callerPinRef.current = '';
@@ -219,10 +224,10 @@ export default function Home() {
     setEnteredCallerPin('');
   };
 
-  const handleLockPortal = () => {
-    sessionStorage.removeItem('__caller_name');
-    sessionStorage.removeItem('__portal_unlocked');
+  const handleLockPortal = async () => {
+    await logoutAction();
     setCallerName('');
+    setCallerRole('Caller');
     setPortalUnlocked(false);
     setPromptPinFor('');
     portalPinRef.current = '';
@@ -234,7 +239,7 @@ export default function Home() {
   return (
     <main className="w-full min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-start">
       {callerName ? (
-        <Dashboard callerName={callerName} onLogoutCaller={handleLogoutCaller} />
+        <Dashboard callerName={callerName} callerRole={callerRole} onLogoutCaller={handleLogoutCaller} />
       ) : (
         <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 relative overflow-hidden select-none">
           {/* Animated Light Cyber Grid Overlay */}

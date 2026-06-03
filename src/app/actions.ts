@@ -1,17 +1,25 @@
 'use server';
 
-import { getSupabase } from '@/lib/supabase';
+import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import {
+  clearAuthSession,
+  getCallerSession,
+  hasPortalSession,
+  requireAdminSession,
+  requireCallerSession,
+  requireRole,
+  requireWritableSession,
+  setCallerSession,
+  setPortalSession,
+  type CallerRole,
+} from '@/lib/auth-session';
+import { ALLOWED_CALL_STATUSES, ALLOWED_DEAL_STAGES } from '@/lib/constants';
 
 function requireSupabase() {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   if (!supabase) throw new Error('DATABASE_NOT_CONFIGURED');
   return supabase;
-}
-
-function requireAdmin(adminCallerName?: string) {
-  if (!adminCallerName || adminCallerName !== 'Hamid') {
-    throw new Error('UNAUTHORIZED_ADMIN_ACTION');
-  }
 }
 
 const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
@@ -19,6 +27,9 @@ const WARM_STATUSES = ['Interested'];
 const FOLLOWUP_STATUSES = ['Callback', 'Busy', 'No Answer'];
 const TREATED_STATUSES = ['Treated'];
 const ACTIVE_ASSIGNMENT_FILTER = 'call_status.is.null,call_status.eq.Not Called';
+const PIN_HASH_PREFIX = 'scrypt';
+const PIN_HASH_BYTES = 32;
+
 const IMPORTABLE_LEAD_FIELDS = [
   'agency_name', 'area', 'maps_link', 'address', 'phone', 'phone_2', 'email', 'email_2',
   'website', 'website_quality', 'facebook', 'instagram', 'tiktok', 'linkedin', 'social_link',
@@ -111,6 +122,50 @@ function normalizePhoneForDuplicate(phone?: string | null) {
   return digits;
 }
 
+function normalizePhoneValues(phone?: string | null) {
+  return (phone || '')
+    .split(/\r?\n|[,;]/)
+    .map(value => normalizePhoneForDuplicate(value))
+    .filter(Boolean);
+}
+
+function escapePostgrestFilterValue(value: string) {
+  return value.replace(/[(),.%]/g, char => `\\${char}`);
+}
+
+function assertAllowedCallStatus(status: string) {
+  if (!(ALLOWED_CALL_STATUSES as readonly string[]).includes(status)) throw new Error('INVALID_CALL_STATUS');
+}
+
+function assertAllowedDealStage(stage: string) {
+  if (!(ALLOWED_DEAL_STAGES as readonly string[]).includes(stage)) throw new Error('INVALID_DEAL_STAGE');
+}
+
+function hashCallerPin(pin: string) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(pin, salt, PIN_HASH_BYTES).toString('hex');
+  return `${PIN_HASH_PREFIX}$${salt}$${hash}`;
+}
+
+function verifyCallerPin(storedPin: string, suppliedPin: string) {
+  if (!storedPin.startsWith(`${PIN_HASH_PREFIX}$`)) {
+    return storedPin === suppliedPin;
+  }
+
+  const [, salt, expectedHex] = storedPin.split('$');
+  if (!salt || !expectedHex) return false;
+
+  const expected = Buffer.from(expectedHex, 'hex');
+  const actual = scryptSync(suppliedPin, salt, expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function safeStringEqual(expected: string, supplied: string) {
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const suppliedBuffer = Buffer.from(supplied, 'utf8');
+  return expectedBuffer.length === suppliedBuffer.length && timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
 const LEAD_LIST_COLUMNS = [
   'id',
   'agency_name',
@@ -175,26 +230,28 @@ export async function getLeads(options: {
   const offset = (page - 1) * limit;
 
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'planned' });
 
     if (search) {
+      const safeSearch = escapePostgrestFilterValue(search);
       q = q.or([
-        `agency_name.ilike.%${search}%`,
-        `phone.ilike.%${search}%`,
-        `phone_2.ilike.%${search}%`,
-        `email.ilike.%${search}%`,
-        `email_2.ilike.%${search}%`,
-        `area.ilike.%${search}%`,
-        `address.ilike.%${search}%`,
-        `website.ilike.%${search}%`,
-        `maps_link.ilike.%${search}%`,
-        `facebook.ilike.%${search}%`,
-        `instagram.ilike.%${search}%`,
-        `tiktok.ilike.%${search}%`,
-        `linkedin.ilike.%${search}%`,
-        `social_link.ilike.%${search}%`,
-        `contact_person.ilike.%${search}%`,
+        `agency_name.ilike.%${safeSearch}%`,
+        `phone.ilike.%${safeSearch}%`,
+        `phone_2.ilike.%${safeSearch}%`,
+        `email.ilike.%${safeSearch}%`,
+        `email_2.ilike.%${safeSearch}%`,
+        `area.ilike.%${safeSearch}%`,
+        `address.ilike.%${safeSearch}%`,
+        `website.ilike.%${safeSearch}%`,
+        `maps_link.ilike.%${safeSearch}%`,
+        `facebook.ilike.%${safeSearch}%`,
+        `instagram.ilike.%${safeSearch}%`,
+        `tiktok.ilike.%${safeSearch}%`,
+        `linkedin.ilike.%${safeSearch}%`,
+        `social_link.ilike.%${safeSearch}%`,
+        `contact_person.ilike.%${safeSearch}%`,
       ].join(','));
     }
     if (status === 'Followups') {
@@ -233,6 +290,8 @@ export async function getLeads(options: {
 // ── 2. Dialer Queue ───────────────────────────────────────────────────────────
 export async function getDialerQueue(callerName?: string) {
   try {
+    const session = await requireCallerSession();
+    const effectiveCallerName = session.name;
     const supabase = requireSupabase();
     
     // Select leads that are fresh or explicitly recalled
@@ -241,13 +300,14 @@ export async function getDialerQueue(callerName?: string) {
       .select(LEAD_LIST_COLUMNS, { count: 'planned' })
       .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled');
 
-    if (callerName) {
+    if (effectiveCallerName) {
       // Must be assigned to the caller OR unassigned
-      q = q.or(`assigned_to.eq.${callerName},assigned_to.is.null`);
+      const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
+      q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null`);
       
       // Must not be locked by another caller (lease older than 5 minutes is expired)
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      q = q.or(`locked_by.is.null,locked_by.eq.${callerName},locked_at.lt.${fiveMinutesAgo}`);
+      q = q.or(`locked_by.is.null,locked_by.eq.${safeCaller},locked_at.lt.${fiveMinutesAgo}`);
     }
 
     const { data, count, error } = await q
@@ -267,14 +327,16 @@ export async function getDialerQueue(callerName?: string) {
 // ── 3. Update Call Status ─────────────────────────────────────────────────────
 export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string, meetingDate?: string) {
   try {
+    const session = await requireWritableSession();
+    assertAllowedCallStatus(status);
     const supabase = requireSupabase();
     
     const updatePayload: any = {
       call_status: status,
       notes,
       call_notes: callNotes,
-      caller_name: callerName,
-      assigned_to: callerName, // Lock lead to this caller upon contact
+      caller_name: session.name,
+      assigned_to: session.name, // Lock lead to this caller upon contact
       last_called_at: new Date().toISOString(),
       last_updated: new Date().toISOString(),
     };
@@ -285,16 +347,15 @@ export async function updateCallStatus(id: number, status: string, notes: string
 
     const { error } = await supabase.from('leads').update(updatePayload).eq('id', id);
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'UPDATE_CALL_STATUS', `Updated call status to "${status}". Notes: ${callNotes || notes}`, id);
 
-    // Fire-and-forget log call history (safely ignores error if table not created yet)
-    supabase.from('call_history').insert({
+    const { error: historyError } = await supabase.from('call_history').insert({
       lead_id: id,
-      caller_name: callerName,
+      caller_name: session.name,
       call_status: status,
       notes: callNotes || notes
-    }).then(({ error: histErr }: any) => {
-      if (histErr) console.warn('[call_history log warning]', histErr.message);
     });
+    if (historyError) throw new Error(historyError.message);
 
     return { success: true };
   } catch (error: any) {
@@ -338,10 +399,17 @@ export async function updateLeadDetails(id: number, fields: {
   website_quality?: string;
   facebook?: string; instagram?: string; tiktok?: string; linkedin?: string; social_link?: string;
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
-  address?: string; maps_link?: string; call_status?: string; caller_name?: string; assigned_to?: string;
+  address?: string; maps_link?: string; call_status?: string; caller_name?: string | null; assigned_to?: string | null;
   review_count?: number; google_rating?: number;
-}) {
+}, editorName?: string) {
   try {
+    const session = await requireWritableSession();
+    if (fields.call_status) assertAllowedCallStatus(fields.call_status);
+    if (session.role !== 'Admin') {
+      const callerNameAllowed = !('caller_name' in fields) || fields.caller_name === session.name || fields.caller_name == null;
+      const assignedToAllowed = !('assigned_to' in fields) || fields.assigned_to === session.name || fields.assigned_to == null;
+      if (!callerNameAllowed || !assignedToAllowed) throw new Error('FORBIDDEN_FIELD_UPDATE');
+    }
     // Input Validations
     if ('email' in fields) {
       const email = fields.email ? String(fields.email).trim() : '';
@@ -374,7 +442,7 @@ export async function updateLeadDetails(id: number, fields: {
     }
 
     const supabase = requireSupabase();
-    let finalFields = { ...fields };
+    const finalFields = { ...fields };
     
     // Auto-calculate priority if website/socials change and priority isn't overridden
     const hasWebsite = 'website' in fields;
@@ -408,6 +476,7 @@ export async function updateLeadDetails(id: number, fields: {
       last_updated: new Date().toISOString(),
     }).eq('id', id);
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'EDIT_LEAD_DETAILS', `Edited lead fields: ${Object.keys(fields).join(', ')}`, id);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -417,6 +486,7 @@ export async function updateLeadDetails(id: number, fields: {
 // ── 5. Analytics ──────────────────────────────────────────────────────────────
 export async function getAnalytics() {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     const [
       totalRes,
@@ -452,6 +522,10 @@ export async function getAnalytics() {
     const noAnswer = (noAnswerRes.count || 0) + (busyRes.count || 0);
 
     const totalCalled = interested + converted + callback + notInterested + wrongNumber + noAnswer;
+    const { count: freshCount } = await supabase
+      .from('leads')
+      .select('id', { count: 'planned', head: true })
+      .or('call_status.is.null,call_status.eq.Not Called,call_status.eq.Recalled');
 
     return {
       success: true,
@@ -460,7 +534,7 @@ export async function getAnalytics() {
         totalCalled,
         callsToday: todayRes.count || 0,
         statuses: {
-          notCalled: totalLeads - totalCalled,
+          notCalled: freshCount || 0,
           interested,
           converted,
           notInterested,
@@ -480,6 +554,7 @@ export async function getAnalytics() {
 
 export async function getTargetInventoryCounts() {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     const [totalRes, warmRes, convertedRes, followupRes, lostRes, treatedRes] = await Promise.all([
       supabase.from('leads').select('id', { count: 'planned', head: true }),
@@ -512,6 +587,7 @@ export async function getTargetInventoryCounts() {
 
 // ── 6. AI Post-Call Parser ────────────────────────────────────────────────────
 export async function processCallSummaryWithAI(rawText: string) {
+  await requireWritableSession();
   const apiKey = process.env.GLM_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return { success: false, error: 'GLM_API_KEY_MISSING', extractedData: { call_status: 'Callback', meeting_date: null, contact_person: null, updated_email: null, summary: rawText } };
@@ -562,6 +638,7 @@ export async function generatePitchWithAI(options: {
   callerName: string;
   customInstruction?: string;
 }) {
+  await requireWritableSession();
   const apiKey = process.env.GLM_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return { success: false, error: 'GLM_API_KEY_MISSING' };
@@ -617,34 +694,35 @@ Réponds UNIQUEMENT avec le texte du message généré. Aucun autre commentaire.
 
 // ── 7. AI Update + Save ───────────────────────────────────────────────────────
 export async function updateCallStatusWithAI(leadId: number, callerName: string, rawSummary: string) {
+  const session = await requireWritableSession();
   const aiRes = await processCallSummaryWithAI(rawSummary);
   const data = aiRes.extractedData;
+  assertAllowedCallStatus(data.call_status);
 
   try {
     const supabase = requireSupabase();
     const updatePayload: any = {
       call_status: data.call_status,
       call_notes: data.summary,
-      caller_name: callerName,
+      caller_name: session.name,
       meeting_date: data.meeting_date,
       contact_person: data.contact_person,
       last_called_at: new Date().toISOString(),
       last_updated: new Date().toISOString(),
-      assigned_to: callerName,
+      assigned_to: session.name,
     };
     if (data.updated_email) updatePayload.email = data.updated_email;
     const { error } = await supabase.from('leads').update(updatePayload).eq('id', leadId);
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'UPDATE_CALL_STATUS_AI', `AI updated status to "${data.call_status}". Summary: ${data.summary || rawSummary}`, leadId);
 
-    // Fire-and-forget log call history
-    supabase.from('call_history').insert({
+    const { error: historyError } = await supabase.from('call_history').insert({
       lead_id: leadId,
-      caller_name: callerName,
+      caller_name: session.name,
       call_status: data.call_status,
       notes: data.summary || rawSummary
-    }).then(({ error: histErr }: any) => {
-      if (histErr) console.warn('[call_history log warning]', histErr.message);
     });
+    if (historyError) throw new Error(historyError.message);
 
     return { success: true, extracted: data };
   } catch (error: any) {
@@ -656,6 +734,7 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
 // ── 8. Team Leaderboard ───────────────────────────────────────────────────────
 export async function getTeamLeaderboard() {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     
     // Fetch all profiles first
@@ -664,9 +743,9 @@ export async function getTeamLeaderboard() {
       ? profiles
       : [{ name: 'Hamid', gender: 'Male' }, { name: 'Oussama', gender: 'Male' }, { name: 'Kamel', gender: 'Male' }];
 
-    // Query called leads in ONE query
+    // Count call attempts from the immutable history table, not current lead ownership.
     const { data: leads, error: leadsErr } = await supabase
-      .from('leads')
+      .from('call_history')
       .select('caller_name, call_status')
       .not('caller_name', 'is', null);
 
@@ -721,13 +800,13 @@ export async function getTeamLeaderboard() {
 // ── 9. Meetings List ──────────────────────────────────────────────────────────
 export async function getMeetingsList() {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('leads')
       .select(LEAD_LIST_COLUMNS)
       .not('meeting_date', 'is', null)
       .neq('meeting_date', '')
-      .in('call_status', ['Interested', 'Accepted', 'Callback', 'Treated'])
       .order('last_called_at', { ascending: false })
       .limit(50);
 
@@ -741,18 +820,24 @@ export async function getMeetingsList() {
 
 export async function getLeadAreas() {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
-    const { data, error } = await supabase
-      .from('leads')
-      .select('area')
-      .not('area', 'is', null)
-      .neq('area', '')
-      .order('area', { ascending: true })
-      .limit(5000);
+    const rows: Array<{ area: string | null }> = [];
+    const pageSize = 1000;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('area')
+        .not('area', 'is', null)
+        .neq('area', '')
+        .order('area', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error) throw new Error(error.message);
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
 
-    if (error) throw new Error(error.message);
-
-    const areas = Array.from(new Set<string>((data || [])
+    const areas = Array.from(new Set<string>(rows
       .map((row: any) => String(row.area || '').trim())
       .filter(Boolean)
     )).sort((a, b) => a.localeCompare(b));
@@ -767,7 +852,7 @@ export async function getLeadAreas() {
 // ── 10. Admin Lead Distribution ──────────────────────────────────────────────
 export async function assignLeadsByRegion(adminCallerName: string, caller: string, region: string) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -777,6 +862,7 @@ export async function assignLeadsByRegion(adminCallerName: string, caller: strin
       .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'ALLOCATE_REGION', `Assigned uncalled ${region} leads to ${caller}`);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -785,7 +871,7 @@ export async function assignLeadsByRegion(adminCallerName: string, caller: strin
 
 export async function assignLeadsByPriority(adminCallerName: string, caller: string, priority: number) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -795,6 +881,7 @@ export async function assignLeadsByPriority(adminCallerName: string, caller: str
       .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'ALLOCATE_PRIORITY', `Assigned uncalled priority ${priority} leads to ${caller}`);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -803,7 +890,7 @@ export async function assignLeadsByPriority(adminCallerName: string, caller: str
 
 export async function clearAssignments(adminCallerName: string) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -811,6 +898,7 @@ export async function clearAssignments(adminCallerName: string) {
       .or(ACTIVE_ASSIGNMENT_FILTER);
 
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'CLEAR_ASSIGNMENTS', `Cleared caller assignments for uncalled targets`);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -819,7 +907,7 @@ export async function clearAssignments(adminCallerName: string) {
 
 export async function splitLeadsEqually(adminCallerName: string) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const { data: leads, error: fetchErr } = await supabase
       .from('leads')
@@ -847,7 +935,10 @@ export async function splitLeadsEqually(adminCallerName: string) {
         .in('id', ids);
     });
 
-    await Promise.all(promises);
+    const results = await Promise.all(promises);
+    const updateError = results.find(result => result?.error)?.error;
+    if (updateError) throw new Error(updateError.message);
+    await logAuditEvent(session.name, 'SPLIT_LEADS', `Divided ${totalLeads} unassigned uncalled leads equally among caller teams`);
     return { success: true, totalAssigned: totalLeads };
   } catch (error: any) {
     console.error('[splitLeadsEqually]', error.message);
@@ -858,6 +949,7 @@ export async function splitLeadsEqually(adminCallerName: string) {
 // ── 11. Call History Actions ──────────────────────────────────────────────────
 export async function getCallHistory(leadId: number) {
   try {
+    await requireCallerSession();
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('call_history')
@@ -876,7 +968,7 @@ export async function getCallHistory(leadId: number) {
 // ── 11b. Permanently Delete Bad Lead ─────────────────────────────────────────
 export async function deleteLeadPermanently(adminCallerName: string, leadId: number) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireWritableSession();
     const supabase = requireSupabase();
 
     const { error: historyError } = await supabase
@@ -890,6 +982,7 @@ export async function deleteLeadPermanently(adminCallerName: string, leadId: num
       .delete()
       .eq('id', leadId);
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'DELETE_LEAD', `Permanently deleted lead #${leadId}`, leadId);
 
     return { success: true };
   } catch (error: any) {
@@ -900,6 +993,7 @@ export async function deleteLeadPermanently(adminCallerName: string, leadId: num
 
 export async function restoreLeadToQueue(leadId: number) {
   try {
+    await requireWritableSession();
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -925,8 +1019,9 @@ export async function restoreLeadToQueue(leadId: number) {
 // ── 12. Get Assignment Stats ──────────────────────────────────────────────────
 export async function getAssignmentStats() {
   try {
+    await requireRole(['Admin', 'Supervisor']);
     const supabase = requireSupabase();
-    const callers = ['Hamid', 'Oussama', 'Kamel'];
+    const callers = await getActiveCallers(supabase);
     const promises = callers.map(async (name) => {
       const { count, error } = await supabase
         .from('leads')
@@ -955,7 +1050,7 @@ export async function getAssignmentStats() {
 // ── 13. Admin Lead Range Assignment ──────────────────────────────────────────
 export async function assignLeadsByRange(adminCallerName: string, caller: string, startId: number, endId: number, forceReassign: boolean = false) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     let q = supabase
       .from('leads')
@@ -973,6 +1068,7 @@ export async function assignLeadsByRange(adminCallerName: string, caller: string
     const { error } = await q;
 
     if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'ALLOCATE_RANGE', `Assigned ID range #${startId} - #${endId} to ${caller} (Overwrite: ${forceReassign})`);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -982,6 +1078,7 @@ export async function assignLeadsByRange(adminCallerName: string, caller: string
 // ── 14. Data Safety / Import / Backup ────────────────────────────────────────
 export async function checkDataSafetySchema() {
   try {
+    await requireAdminSession();
     const status = await getDataSafetySchemaStatus();
     return { success: true, ...status };
   } catch (error: any) {
@@ -989,8 +1086,9 @@ export async function checkDataSafetySchema() {
   }
 }
 
-export async function downloadFullBackup() {
+export async function downloadFullBackup(adminCallerName: string = 'Hamid') {
   try {
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const [leadsRes, historyRes, batchesRes] = await Promise.all([
       supabase.from('leads').select('*').order('id', { ascending: true }),
@@ -1001,6 +1099,7 @@ export async function downloadFullBackup() {
     if (leadsRes.error) throw new Error(leadsRes.error.message);
     if (historyRes.error) throw new Error(historyRes.error.message);
 
+    await logAuditEvent(session.name, 'EXPORT_BACKUP', `Downloaded full JSON database backup (${leadsRes.data?.length || 0} leads)`);
     return {
       success: true,
       backup: {
@@ -1020,39 +1119,33 @@ export async function downloadFullBackup() {
 
 export async function previewLeadImport(csvText: string) {
   try {
+    await requireAdminSession();
     const supabase = requireSupabase();
     const parsedRows = parseCsvText(csvText).filter(row => row.agency_name || row.phone || row.maps_link);
     if (!parsedRows.length) {
       return { success: false, error: 'No usable rows found. Include headers like agency_name, area, phone, maps_link.', preview: null };
     }
 
-    const { data: existing, error } = await supabase
-      .from('leads')
-      .select('id, agency_name, area, phone, phone_2, maps_link, website')
-      .limit(10000);
-    if (error) throw new Error(error.message);
-
-    const existingRows = existing || [];
+    const existingRows = await getAllLeadDuplicateFields(supabase);
     const seenImportKeys = new Set<string>();
     const rows = parsedRows.map((row: any) => {
       const reasons: string[] = [];
       const phoneNormalized = normalizePhoneForDuplicate(row.phone);
       const phone2Normalized = normalizePhoneForDuplicate(row.phone_2);
-      const phone = normalizeForDuplicate(row.phone);
       const mapsLink = normalizeForDuplicate(row.maps_link);
       const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
 
       if (!row.agency_name) reasons.push('Missing agency_name');
       if (!row.phone && !row.maps_link && !row.website) reasons.push('Missing phone/maps_link/website');
 
-      if (phoneNormalized && existingRows.some((lead: any) => 
-        normalizePhoneForDuplicate(lead.phone) === phoneNormalized || 
-        normalizePhoneForDuplicate(lead.phone_2) === phoneNormalized
+      if (phoneNormalized && existingRows.some((lead: any) =>
+        normalizePhoneValues(lead.phone).includes(phoneNormalized) ||
+        normalizePhoneValues(lead.phone_2).includes(phoneNormalized)
       )) {
         reasons.push('Duplicate phone');
-      } else if (phone2Normalized && existingRows.some((lead: any) => 
-        normalizePhoneForDuplicate(lead.phone) === phone2Normalized || 
-        normalizePhoneForDuplicate(lead.phone_2) === phone2Normalized
+      } else if (phone2Normalized && existingRows.some((lead: any) =>
+        normalizePhoneValues(lead.phone).includes(phone2Normalized) ||
+        normalizePhoneValues(lead.phone_2).includes(phone2Normalized)
       )) {
         reasons.push('Duplicate phone');
       }
@@ -1093,7 +1186,7 @@ export async function previewLeadImport(csvText: string) {
 
 export async function commitLeadImport(rows: any[], fileName: string, createdBy: string) {
   try {
-    requireAdmin(createdBy);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const schema = await getDataSafetySchemaStatus();
     if (!schema.ready) {
@@ -1128,7 +1221,7 @@ export async function commitLeadImport(rows: any[], fileName: string, createdBy:
       total_rows: rows.length,
       inserted_rows: importRows.length,
       skipped_rows: rows.length - importRows.length,
-      created_by: createdBy || 'Admin',
+        created_by: session.name,
     });
     if (batchError) throw new Error(batchError.message);
 
@@ -1137,6 +1230,7 @@ export async function commitLeadImport(rows: any[], fileName: string, createdBy:
       if (error) throw new Error(error.message);
     }
 
+    await logAuditEvent(session.name, 'COMMIT_IMPORT', `Imported ${importRows.length} leads from file: ${fileName} (skipped ${rows.length - importRows.length} duplicates)`);
     return { success: true, batchId, inserted: importRows.length, skipped: rows.length - importRows.length };
   } catch (error: any) {
     console.error('[commitLeadImport]', error.message);
@@ -1146,7 +1240,7 @@ export async function commitLeadImport(rows: any[], fileName: string, createdBy:
 
 export async function undoLastImport(adminCallerName: string) {
   try {
-    requireAdmin(adminCallerName);
+    const session = await requireAdminSession();
     const supabase = requireSupabase();
     const schema = await getDataSafetySchemaStatus();
     if (!schema.ready) {
@@ -1180,6 +1274,7 @@ export async function undoLastImport(adminCallerName: string) {
       .eq('id', batch.id);
     if (batchDeleteError) throw new Error(batchDeleteError.message);
 
+    await logAuditEvent(session.name, 'UNDO_IMPORT', `Undid import batch ${batch.id}, removing ${count || 0} leads`);
     return { success: true, batchId: batch.id, removed: count || 0 };
   } catch (error: any) {
     console.error('[undoLastImport]', error.message);
@@ -1190,6 +1285,8 @@ export async function undoLastImport(adminCallerName: string) {
 // ── 15. Active Dialer Locking System ──────────────────────────────────────────
 export async function lockLead(leadId: number, callerName: string) {
   try {
+    const session = await requireWritableSession();
+    const effectiveCallerName = session.name;
     const supabase = requireSupabase();
     const now = new Date().toISOString();
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -1197,11 +1294,11 @@ export async function lockLead(leadId: number, callerName: string) {
     const { data, error } = await supabase
       .from('leads')
       .update({
-        locked_by: callerName,
+        locked_by: effectiveCallerName,
         locked_at: now
       })
       .eq('id', leadId)
-      .or(`locked_by.is.null,locked_by.eq.${callerName},locked_at.lt.${fiveMinutesAgo}`)
+      .or(`locked_by.is.null,locked_by.eq.${escapePostgrestFilterValue(effectiveCallerName)},locked_at.lt.${fiveMinutesAgo}`)
       .select('id');
 
     if (error) throw new Error(error.message);
@@ -1217,6 +1314,7 @@ export async function lockLead(leadId: number, callerName: string) {
 
 export async function unlockLead(leadId: number, callerName: string) {
   try {
+    const session = await requireWritableSession();
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -1225,7 +1323,7 @@ export async function unlockLead(leadId: number, callerName: string) {
         locked_at: null
       })
       .eq('id', leadId)
-      .eq('locked_by', callerName);
+      .eq('locked_by', session.name);
 
     if (error) throw new Error(error.message);
     return { success: true };
@@ -1238,6 +1336,7 @@ export async function unlockLead(leadId: number, callerName: string) {
 // ── 16. Recall Lead Database Integration ──────────────────────────────────────
 export async function recallLead(leadId: number, callerName: string) {
   try {
+    const session = await requireWritableSession();
     const supabase = requireSupabase();
     const now = new Date().toISOString();
 
@@ -1245,8 +1344,8 @@ export async function recallLead(leadId: number, callerName: string) {
       .from('leads')
       .update({
         call_status: 'Recalled',
-        assigned_to: callerName,
-        locked_by: callerName,
+        assigned_to: session.name,
+        locked_by: session.name,
         locked_at: now,
         last_updated: now
       })
@@ -1254,15 +1353,13 @@ export async function recallLead(leadId: number, callerName: string) {
 
     if (error) throw new Error(error.message);
 
-    // Log call history
-    supabase.from('call_history').insert({
+    const { error: historyError } = await supabase.from('call_history').insert({
       lead_id: leadId,
-      caller_name: callerName,
+      caller_name: session.name,
       call_status: 'Recalled',
       notes: 'Lead recalled and pushed to calling queue.'
-    }).then(({ error: histErr }: any) => {
-      if (histErr) console.warn('[call_history log warning]', histErr.message);
     });
+    if (historyError) throw new Error(historyError.message);
 
     return { success: true };
   } catch (error: any) {
@@ -1272,10 +1369,12 @@ export async function recallLead(leadId: number, callerName: string) {
 }
 
 // ── 17. Reset Campaign to Zero ────────────────────────────────────────────────
-export async function resetCampaign(pin: string) {
+export async function resetCampaign(pin: string, adminCallerName: string = 'Hamid') {
   try {
-    const adminPin = process.env.ADMIN_RESET_PIN || '676869';
-    if (pin !== adminPin) {
+    const session = await requireAdminSession();
+    const adminPin = process.env.ADMIN_RESET_PIN;
+    if (!adminPin) throw new Error('ADMIN_RESET_PIN_NOT_CONFIGURED');
+    if (!safeStringEqual(adminPin, pin)) {
       throw new Error('INVALID_ADMIN_PIN');
     }
     const supabase = requireSupabase();
@@ -1306,6 +1405,7 @@ export async function resetCampaign(pin: string) {
 
     if (historyErr) throw new Error(historyErr.message);
 
+    await logAuditEvent(session.name, 'RESET_CAMPAIGN', `Reset entire campaign to zero (wiped status, locks, assignments, and call history)`);
     return { success: true };
   } catch (error: any) {
     console.error('[resetCampaign]', error.message);
@@ -1327,10 +1427,45 @@ async function getActiveCallers(supabase: any): Promise<string[]> {
 }
 
 // ── 18. Dynamic Caller Profiles & Team Applications Actions ──────────────────
+export async function logAuditEvent(callerName: string, actionType: string, details: string, leadId?: number) {
+  try {
+    const session = await requireCallerSession();
+    const supabase = requireSupabase();
+    await supabase.from('audit_logs').insert({
+      caller_name: session.name,
+      action_type: actionType,
+      details,
+      lead_id: leadId
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('[logAuditEvent Error]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getAuditLogs() {
+  try {
+    await requireAdminSession();
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return { success: true, logs: data || [] };
+  } catch (error: any) {
+    console.error('[getAuditLogs Error]', error.message);
+    return { success: false, error: error.message, logs: [] };
+  }
+}
+
 export async function getCallerProfiles() {
   try {
+    if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
-    const { data, error } = await supabase.from('caller_profiles').select('name, gender').order('name', { ascending: true });
+    const { data, error } = await supabase.from('caller_profiles').select('name, gender, role, daily_call_target, weekly_appointment_target').order('name', { ascending: true });
     if (error) throw new Error(error.message);
     
     // Fallback if table is empty
@@ -1338,9 +1473,9 @@ export async function getCallerProfiles() {
       return {
         success: true,
         profiles: [
-          { name: 'Hamid', gender: 'Male' },
-          { name: 'Oussama', gender: 'Male' },
-          { name: 'Kamel', gender: 'Male' }
+          { name: 'Hamid', gender: 'Male', role: 'Admin', daily_call_target: 80, weekly_appointment_target: 15 },
+          { name: 'Oussama', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 },
+          { name: 'Kamel', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 }
         ]
       };
     }
@@ -1351,9 +1486,9 @@ export async function getCallerProfiles() {
       success: true,
       dbOffline: true,
       profiles: [
-        { name: 'Hamid', gender: 'Male' },
-        { name: 'Oussama', gender: 'Male' },
-        { name: 'Kamel', gender: 'Male' }
+        { name: 'Hamid', gender: 'Male', role: 'Admin', daily_call_target: 80, weekly_appointment_target: 15 },
+        { name: 'Oussama', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 },
+        { name: 'Kamel', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 }
       ]
     };
   }
@@ -1361,30 +1496,51 @@ export async function getCallerProfiles() {
 
 export async function verifyCallerPinAction(name: string, pin: string) {
   try {
+    if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
     
     // Check custom profiles first
     const { data, error } = await supabase
       .from('caller_profiles')
-      .select('pin')
+      .select('pin, role')
       .eq('name', name)
       .single();
       
     if (!error && data) {
-      return { success: data.pin === pin };
+      if (verifyCallerPin(data.pin, pin)) {
+        if (!data.pin.startsWith(`${PIN_HASH_PREFIX}$`)) {
+          const { error: upgradeError } = await supabase
+            .from('caller_profiles')
+            .update({ pin: hashCallerPin(pin) })
+            .eq('name', name);
+          if (upgradeError) {
+            console.warn('[verifyCallerPinAction] Unable to upgrade legacy caller PIN hash:', upgradeError.message);
+          }
+        }
+        const role = (data.role || 'Caller') as CallerRole;
+        await setCallerSession(name, role);
+        return { success: true, role };
+      }
+      return { success: false };
     }
     
     // Fallback to env variables if not found in DB
     let expectedPin = '';
+    let role = 'Caller';
     if (name === 'Hamid') {
-      expectedPin = (process.env.NEXT_PUBLIC_HAMID_PIN || '343536').trim();
+      expectedPin = (process.env.HAMID_PIN || '').trim();
+      role = 'Admin';
     } else if (name === 'Oussama') {
-      expectedPin = (process.env.NEXT_PUBLIC_OUSSAMA_PIN || '121314').trim();
+      expectedPin = (process.env.OUSSAMA_PIN || '').trim();
+      role = 'Caller';
     } else if (name === 'Kamel') {
-      expectedPin = (process.env.NEXT_PUBLIC_KAMEL_PIN || '232425').trim();
+      expectedPin = (process.env.KAMEL_PIN || '').trim();
+      role = 'Caller';
     }
     
-    return { success: pin === expectedPin && expectedPin !== '' };
+    const matched = expectedPin !== '' && safeStringEqual(expectedPin, pin);
+    if (matched) await setCallerSession(name, role as CallerRole);
+    return { success: matched, role: matched ? role : undefined };
   } catch (error: any) {
     console.error('[verifyCallerPinAction]', error.message);
     return { success: false, error: error.message };
@@ -1393,12 +1549,30 @@ export async function verifyCallerPinAction(name: string, pin: string) {
 
 export async function submitTeamApplication(name: string, email: string, phone: string, gender: string) {
   try {
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phone.trim();
+    const normalizedGender = gender.trim();
+    if (normalizedName.length < 2 || normalizedName.length > 100) throw new Error('INVALID_NAME');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('INVALID_EMAIL_FORMAT');
+    if (normalizedPhone.length < 6 || normalizedPhone.length > 50) throw new Error('INVALID_PHONE');
+    if (!['Male', 'Female', 'Other'].includes(normalizedGender)) throw new Error('INVALID_GENDER');
+
     const supabase = requireSupabase();
+    const { data: existing, error: existingError } = await supabase
+      .from('team_applications')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .eq('status', 'Pending')
+      .limit(1);
+    if (existingError) throw new Error(existingError.message);
+    if (existing?.length) throw new Error('APPLICATION_ALREADY_PENDING');
+
     const { error } = await supabase.from('team_applications').insert({
-      name,
-      email,
-      phone,
-      gender,
+      name: normalizedName,
+      email: normalizedEmail,
+      phone: normalizedPhone,
+      gender: normalizedGender,
       status: 'Pending'
     });
     if (error) throw new Error(error.message);
@@ -1411,6 +1585,7 @@ export async function submitTeamApplication(name: string, email: string, phone: 
 
 export async function getTeamApplications() {
   try {
+    await requireAdminSession();
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('team_applications')
@@ -1426,6 +1601,7 @@ export async function getTeamApplications() {
 
 export async function handleApplicationDecision(applicationId: number, status: 'Accepted' | 'Rejected', pin?: string) {
   try {
+    await requireAdminSession();
     const supabase = requireSupabase();
     
     // 1. Fetch application details
@@ -1437,25 +1613,25 @@ export async function handleApplicationDecision(applicationId: number, status: '
       
     if (fetchErr || !app) throw new Error(fetchErr?.message || 'Application not found');
     
-    // 2. Update application status
-    const { error: updateErr } = await supabase
-      .from('team_applications')
-      .update({ status })
-      .eq('id', applicationId);
-    if (updateErr) throw new Error(updateErr.message);
-    
-    // 3. If accepted, create profile
+    // 2. If accepted, create the caller profile before marking the application accepted.
     if (status === 'Accepted') {
       if (!pin) throw new Error('PIN is required for caller creation.');
       const { error: profileErr } = await supabase
         .from('caller_profiles')
         .insert({
           name: app.name,
-          pin,
+          pin: hashCallerPin(pin),
           gender: app.gender
         });
       if (profileErr) throw new Error(profileErr.message);
     }
+
+    // 3. Update application status only after all prerequisites succeed.
+    const { error: updateErr } = await supabase
+      .from('team_applications')
+      .update({ status })
+      .eq('id', applicationId);
+    if (updateErr) throw new Error(updateErr.message);
     
     return { success: true };
   } catch (error: any) {
@@ -1466,6 +1642,7 @@ export async function handleApplicationDecision(applicationId: number, status: '
 
 export async function deleteCallerProfile(name: string) {
   try {
+    await requireAdminSession();
     if (name === 'Hamid') {
       throw new Error('ADMIN_CANNOT_BE_DELETED');
     }
@@ -1498,11 +1675,277 @@ export async function deleteCallerProfile(name: string) {
 
 export async function verifyPortalPinAction(pin: string) {
   try {
-    const expectedPortalPin = (process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN || '676869').trim();
-    return { success: pin === expectedPortalPin };
+    const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
+    if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
+    const success = safeStringEqual(expectedPortalPin, pin);
+    if (success) await setPortalSession();
+    return { success };
   } catch (error: any) {
     console.error('[verifyPortalPinAction]', error.message);
     return { success: false, error: error.message };
   }
 }
 
+async function getAllLeadDuplicateFields(supabase: any) {
+  const rows: any[] = [];
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id, agency_name, area, phone, phone_2, maps_link, website')
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return rows;
+}
+
+export async function getCurrentSessionAction() {
+  try {
+    const portalUnlocked = await hasPortalSession();
+    const caller = await getCallerSession();
+    return {
+      success: true,
+      portalUnlocked,
+      callerName: caller?.name || '',
+      callerRole: caller?.role || 'Caller',
+    };
+  } catch (error: any) {
+    return { success: false, portalUnlocked: false, callerName: '', callerRole: 'Caller', error: error.message };
+  }
+}
+
+export async function logoutAction() {
+  await clearAuthSession();
+  return { success: true };
+}
+
+
+// ── Phase 2: CSV Header Extraction ───────────────────────────────────────────
+export async function extractCsvHeaders(csvText: string) {
+  try {
+    await requireAdminSession();
+    const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l: string) => l.trim());
+    if (lines.length < 1) return { success: false, error: 'Empty file', headers: [] };
+    const headers = parseCsvLine(lines[0]).map((h: string) => h.trim());
+    return { success: true, headers };
+  } catch (error: any) {
+    return { success: false, error: error.message, headers: [] };
+  }
+}
+
+// ── Phase 2: Preview with explicit column mapping ─────────────────────────────
+export async function previewLeadImportWithMapping(csvText: string, columnMapping: Record<string, string>) {
+  try {
+    await requireAdminSession();
+    const supabase = requireSupabase();
+    const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l: string) => l.trim());
+    if (lines.length < 2) return { success: false, error: 'No data rows found.', preview: null };
+
+    const rawHeaders = parseCsvLine(lines[0]).map((h: string) => h.trim());
+
+    const parsedRows = lines.slice(1).map((line: string, idx: number) => {
+      const values = parseCsvLine(line);
+      const row: Record<string, any> = { row_number: idx + 2 };
+      rawHeaders.forEach((header: string, i: number) => {
+        const dbField = columnMapping[header];
+        if (!dbField || dbField === 'skip') return;
+        if (!IMPORTABLE_LEAD_FIELDS.includes(dbField)) return;
+        const rawValue = values[i]?.trim() || '';
+        if (!rawValue) return;
+        if (['google_rating'].includes(dbField)) {
+          row[dbField] = parseFloat(rawValue) || 0;
+        } else if (['review_count', 'priority'].includes(dbField)) {
+          row[dbField] = parseInt(rawValue, 10) || (dbField === 'priority' ? 3 : 0);
+        } else {
+          row[dbField] = rawValue;
+        }
+      });
+      return row;
+    }).filter((row: any) => row.agency_name || row.phone || row.maps_link);
+
+    if (!parsedRows.length) return { success: false, error: 'No usable rows after mapping.', preview: null };
+
+    const cleanPhone = (raw?: string): { normalized: string; display: string; warning: string | null } => {
+      if (!raw) return { normalized: '', display: '', warning: 'Missing phone' };
+      const stripped = raw.replace(/[\s\-().]/g, '');
+      const digits = stripped.replace(/\D/g, '');
+      if (!digits) return { normalized: '', display: raw, warning: 'Invalid phone format' };
+      if (digits.length < 8) return { normalized: digits, display: raw, warning: 'Phone too short' };
+      if (digits.length > 15) return { normalized: digits, display: raw, warning: 'Phone too long' };
+      let normalized = digits;
+      if (digits.startsWith('0') && digits.length === 10) {
+        normalized = '213' + digits.substring(1);
+      }
+      const display = digits.startsWith('0') ? digits : ('+' + normalized);
+      return { normalized, display, warning: null };
+    };
+
+    const existingRows = await getAllLeadDuplicateFields(supabase);
+    const seenKeys = new Set<string>();
+
+    const rows = parsedRows.map((row: any) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+      if (!row.agency_name) warnings.push('Missing business name');
+      if (!row.phone && !row.maps_link && !row.website) warnings.push('Missing phone/maps/website');
+      const phoneResult = cleanPhone(row.phone);
+      if (phoneResult.warning) warnings.push(phoneResult.warning);
+      const pn = phoneResult.normalized;
+      const mapN = normalizeForDuplicate(row.maps_link);
+      const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
+      if (pn && existingRows.some((l: any) => normalizePhoneValues(l.phone).includes(pn) || normalizePhoneValues(l.phone_2).includes(pn))) reasons.push('Duplicate phone in DB');
+      if (mapN && existingRows.some((l: any) => normalizeForDuplicate(l.maps_link) === mapN)) reasons.push('Duplicate maps_link');
+      if (row.agency_name && row.area && existingRows.some((l: any) => `${normalizeForDuplicate(l.agency_name)}|${normalizeForDuplicate(l.area)}` === agencyArea)) reasons.push('Duplicate name+area');
+      const key = pn || mapN || agencyArea;
+      if (key && seenKeys.has(key)) reasons.push('Duplicate in file');
+      if (key) seenKeys.add(key);
+      return { ...row, phone_display: phoneResult.display || row.phone, phone_normalized: phoneResult.normalized, priority: row.priority || 3, call_status: 'Not Called', duplicate_reasons: reasons, warnings, importable: reasons.length === 0 };
+    });
+
+    return {
+      success: true,
+      preview: {
+        total_rows: rows.length,
+        importable_rows: rows.filter((r: any) => r.importable).length,
+        skipped_rows: rows.filter((r: any) => !r.importable).length,
+        warning_rows: rows.filter((r: any) => r.warnings.length > 0).length,
+        rows,
+      },
+    };
+  } catch (error: any) {
+    console.error('[previewLeadImportWithMapping]', error.message);
+    return { success: false, error: error.message, preview: null };
+  }
+}
+
+// ── Phase 2: Deal Pipeline Actions ────────────────────────────────────────────
+
+export async function getDeals() {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+    const { data, error } = await supabase.from('deals').select('*').order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return { success: true, deals: data || [] };
+  } catch (error: any) {
+    console.error('[getDeals]', error.message);
+    return { success: false, error: error.message, deals: [] };
+  }
+}
+
+export async function createDeal(params: {
+  deal_name: string;
+  company_name?: string;
+  caller_name: string;
+  lead_id?: number;
+  setup_value?: number;
+  recurring_value?: number;
+  expected_close_date?: string;
+  notes?: string;
+}) {
+  try {
+    const session = await requireWritableSession();
+    const supabase = requireSupabase();
+    const { data, error } = await supabase.from('deals').insert([{
+      deal_name: params.deal_name,
+      company_name: params.company_name || '',
+      caller_name: session.name,
+      lead_id: params.lead_id || null,
+      stage: 'New',
+      setup_value: params.setup_value || 0,
+      recurring_value: params.recurring_value || 0,
+      expected_close_date: params.expected_close_date || null,
+      notes: params.notes || '',
+    }]).select().single();
+    if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'CREATE_DEAL', `Created deal: ${params.deal_name}`, params.lead_id);
+    return { success: true, deal: data };
+  } catch (error: any) {
+    console.error('[createDeal]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateDealStage(dealId: number, newStage: string, callerName: string, lostReason?: string) {
+  try {
+    const session = await requireWritableSession();
+    assertAllowedDealStage(newStage);
+    const supabase = requireSupabase();
+    const payload: Record<string, any> = { stage: newStage, updated_at: new Date().toISOString() };
+    if (lostReason) payload.lost_reason = lostReason;
+    const { error } = await supabase.from('deals').update(payload).eq('id', dealId);
+    if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'UPDATE_DEAL_STAGE', `Deal #${dealId} → ${newStage}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[updateDealStage]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateDeal(dealId: number, callerName: string, fields: {
+  deal_name?: string;
+  company_name?: string;
+  setup_value?: number;
+  recurring_value?: number;
+  expected_close_date?: string;
+  notes?: string;
+  lost_reason?: string;
+}) {
+  try {
+    const session = await requireWritableSession();
+    const supabase = requireSupabase();
+    const { error } = await supabase.from('deals').update({ ...fields, updated_at: new Date().toISOString() }).eq('id', dealId);
+    if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'EDIT_DEAL', `Edited deal #${dealId}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[updateDeal]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function deleteDeal(dealId: number, callerName: string) {
+  try {
+    const session = await requireWritableSession();
+    const supabase = requireSupabase();
+    const { error } = await supabase.from('deals').delete().eq('id', dealId);
+    if (error) throw new Error(error.message);
+    await logAuditEvent(session.name, 'DELETE_DEAL', `Deleted deal #${dealId}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[deleteDeal]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getCallerTarget(callerName: string) {
+  try {
+    const session = await requireCallerSession();
+    const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    const supabase = requireSupabase();
+    const { data, error } = await supabase.from('caller_profiles').select('daily_call_target, weekly_appointment_target').eq('name', effectiveCallerName).single();
+    if (error) throw new Error(error.message);
+
+    // Count calls made today by this caller
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const { count, error: countErr } = await supabase
+      .from('call_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('caller_name', effectiveCallerName)
+      .gte('created_at', startOfToday.toISOString());
+    if (countErr) throw new Error(countErr.message);
+
+    return {
+      success: true,
+      daily_call_target: data?.daily_call_target ?? 80,
+      weekly_appointment_target: data?.weekly_appointment_target ?? 15,
+      calls_today: count ?? 0
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message, daily_call_target: 80, weekly_appointment_target: 15, calls_today: 0 };
+  }
+}

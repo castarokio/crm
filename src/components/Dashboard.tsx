@@ -74,6 +74,15 @@ import {
   getTeamApplications,
   handleApplicationDecision,
   deleteCallerProfile,
+  // Phase 2
+  extractCsvHeaders,
+  previewLeadImportWithMapping,
+  getDeals,
+  createDeal,
+  updateDealStage,
+  updateDeal,
+  deleteDeal,
+  getCallerTarget,
 } from '@/app/actions';
 import { getSupabase } from '@/lib/supabase';
 
@@ -166,18 +175,119 @@ const MOCK_LEADS = [
   }
 ];
 
+function useFocusTrap(isOpen: boolean, onClose: () => void) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        if (!ref.current) return;
+
+        const focusableElements = ref.current.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+
+        if (focusableElements.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const firstElement = focusableElements[0] as HTMLElement;
+        const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement) {
+            lastElement.focus();
+            e.preventDefault();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            firstElement.focus();
+            e.preventDefault();
+          }
+        }
+      }
+    };
+
+    const focusTimer = setTimeout(() => {
+      if (ref.current) {
+        if (!ref.current.contains(document.activeElement)) {
+          const focusableElements = ref.current.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          );
+          if (focusableElements.length > 0) {
+            (focusableElements[0] as HTMLElement).focus();
+          }
+        }
+      }
+    }, 50);
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  return ref;
+}
+
 interface DashboardProps {
   callerName: string;
+  callerRole?: string;
   onLogoutCaller: () => void;
 }
 
-export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients' | 'treated'>('dialer');
+export default function Dashboard({ callerName, callerRole, onLogoutCaller }: DashboardProps) {
+  const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients' | 'treated' | 'pipeline'>('dialer');
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const [dbConfigured, setDbConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [assignmentStats, setAssignmentStats] = useState<{ stats: any[]; unassigned: number }>({ stats: [], unassigned: 0 });
   const [isAdminActionPending, setIsAdminActionPending] = useState<boolean>(false);
+
+  // Phase 2: Dialer Daily Target
+  const [dailyCallTarget, setDailyCallTarget] = useState<number>(80);
+  const [callsToday, setCallsToday] = useState<number>(0);
+
+  // Phase 2: Deal Pipeline State
+  const [deals, setDeals] = useState<any[]>([]);
+  const [isDealsLoading, setIsDealsLoading] = useState<boolean>(false);
+  const [dealModalOpen, setDealModalOpen] = useState<boolean>(false);
+  const [selectedDeal, setSelectedDeal] = useState<any | null>(null);
+  const [draggedDealId, setDraggedDealId] = useState<number | null>(null);
+  const [linkableLeads, setLinkableLeads] = useState<any[]>([]);
+  const [isLinkableLeadsLoading, setIsLinkableLeadsLoading] = useState<boolean>(false);
+  const [lostReasonModalDealId, setLostReasonModalDealId] = useState<number | null>(null);
+  const [dealForm, setDealForm] = useState<{
+    deal_name: string;
+    company_name: string;
+    setup_value: number;
+    recurring_value: number;
+    expected_close_date: string;
+    notes: string;
+    lead_id?: number;
+  }>({
+    deal_name: '',
+    company_name: '',
+    setup_value: 0,
+    recurring_value: 0,
+    expected_close_date: '',
+    notes: '',
+  });
+
+  // Phase 2: CSV Column Mapper State
+  const [csvMapperOpen, setCsvMapperOpen] = useState<boolean>(false);
+  const [csvRawHeaders, setCsvRawHeaders] = useState<string[]>([]);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [csvFileText, setCsvFileText] = useState<string>('');
 
   // Dialer Session State
   const [dialerQueue, setDialerQueue] = useState<any[]>([]);
@@ -231,6 +341,45 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const updatesBufferRef = useRef<any[]>([]);
   const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Field Save Statuses for auto-blur inputs (Weakness 14)
+  const [fieldSaveStatuses, setFieldSaveStatuses] = useState<Record<string, 'saving' | 'saved' | 'failed'>>({});
+
+  // AI Clicks Ref Locks (Weakness 15)
+  const isParsingAIRef = useRef<boolean>(false);
+  const isGeneratingPitchRef = useRef<boolean>(false);
+
+  // Clear field save statuses on lead changes
+  useEffect(() => {
+    setFieldSaveStatuses({});
+  }, [currentQueueIndex]);
+
+  const renderFieldSaveStatus = (field: string) => {
+    const status = fieldSaveStatuses[field];
+    if (!status) return null;
+    if (status === 'saving') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[9px] text-blue-500 font-body font-semibold animate-pulse">
+          <Loader2 className="w-2.5 h-2.5 animate-spin" /> Saving...
+        </span>
+      );
+    }
+    if (status === 'saved') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[9px] text-green-600 font-body font-semibold">
+          <Check className="w-2.5 h-2.5" /> Saved
+        </span>
+      );
+    }
+    if (status === 'failed') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[9px] text-rose-500 font-body font-semibold">
+          <X className="w-2.5 h-2.5" /> Failed
+        </span>
+      );
+    }
+    return null;
+  };
+
   // ValueInputModal States
   const [valueModalOpen, setValueModalOpen] = useState<boolean>(false);
   const [valueModalTitle, setValueModalTitle] = useState<string>('');
@@ -263,6 +412,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     typeof window !== 'undefined' ? window.navigator.onLine : true
   );
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // Focus Trap Refs
+  const editDetailsTrapRef = useFocusTrap(!!editingLead, () => setEditingLead(null));
+  const schedulerTrapRef = useFocusTrap(schedulerOpen, () => setSchedulerOpen(false));
+  const valueModalTrapRef = useFocusTrap(valueModalOpen, () => setValueModalOpen(false));
+  const csvMapperTrapRef = useFocusTrap(csvMapperOpen, () => setCsvMapperOpen(false));
+  const dealModalTrapRef = useFocusTrap(dealModalOpen, () => setDealModalOpen(false));
 
   // Helper to add an edit to offline cache
   const bufferOfflineEdit = (leadId: number, field: string, value: any) => {
@@ -515,6 +671,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   useEffect(() => {
     const activeLead = dialerQueue[currentQueueIndex];
     if (activeLead) {
+      // Check if a draft exists in localStorage first (Weakness 13)
+      const draft = localStorage.getItem(`pitch_draft_${activeLead.id}`);
+      if (draft) {
+        setCustomPitchText(draft);
+        setCustomInstructionInput('');
+        return;
+      }
+
       const agencyName = activeLead.agency_name || '';
       const isNoWeb = !activeLead.website || activeLead.website === 'Not found' || activeLead.website.toLowerCase() === 'none';
       const defaultPitch = isNoWeb 
@@ -678,6 +842,33 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setMeetingsList(res.meetings);
     }
   };
+
+  // Fetch Deals (Phase 2)
+  const fetchDeals = useCallback(async () => {
+    setIsDealsLoading(true);
+    const res = await getDeals();
+    if (res.success) {
+      setDeals(res.deals || []);
+    } else {
+      console.error('[fetchDeals] Error:', res.error);
+    }
+    setIsDealsLoading(false);
+  }, []);
+
+  // Fetch Linkable Leads for Deals (Warm / followups) (Phase 2)
+  const fetchLinkableLeads = useCallback(async () => {
+    setIsLinkableLeadsLoading(true);
+    const res = await getLeads({ limit: 200 });
+    if (res.success) {
+      const linkable = res.leads.filter((l: any) => 
+        ['Interested', 'Callback', 'Treated', 'Accepted', 'Client Configured'].includes(l.call_status)
+      );
+      setLinkableLeads(linkable);
+    } else {
+      console.error('[fetchLinkableLeads] Error:', res.error);
+    }
+    setIsLinkableLeadsLoading(false);
+  }, []);
 
   // Fetch Team Join Applications
   const fetchApplications = useCallback(async () => {
@@ -901,7 +1092,11 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (showBlockingLoader) setIsLoading(true);
     try {
       refreshAreaOptions().catch(err => console.error('[refreshAreaOptions]', err));
-      const queueRes = await getDialerQueue(callerName);
+      const [queueRes, targetRes, dealsRes] = await Promise.all([
+        getDialerQueue(callerName),
+        getCallerTarget(callerName),
+        getDeals()
+      ]);
       if (queueRes.success) {
         setDbConfigured(true);
         setDialerQueue(queueRes.queue);
@@ -911,10 +1106,17 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         setDialerQueue(MOCK_LEADS);
         setFreshTargetCount(MOCK_LEADS.length);
       }
+      if (targetRes.success) {
+        setDailyCallTarget(targetRes.daily_call_target);
+        setCallsToday(targetRes.calls_today);
+      }
+      if (dealsRes.success) {
+        setDeals(dealsRes.deals || []);
+      }
       setCurrentQueueIndex(0);
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     } catch (err) {
-      console.error('[fetchAllData] Error:', err);
+      console.error("[fetchAllData] Error:", err)
     } finally {
       setIsLoading(false);
       setInitialLoadDone(true);
@@ -961,12 +1163,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     } else if (activeTab === 'admin') {
       fetchAssignmentStats();
       fetchApplications();
+    } else if (activeTab === 'pipeline') {
+      fetchDeals();
+      fetchLinkableLeads();
     } else if (activeTab === 'database') {
       if (['Lost', 'Followups', 'WarmLeads', 'GoodClients', 'Treated'].includes(filterStatus)) {
         setFilterStatus('');
       }
     }
-  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus, fetchApplications]);
+  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus, fetchApplications, fetchDeals, fetchLinkableLeads]);
 
   const currentLead = dialerQueue[currentQueueIndex];
   const activeCallers = leaderboard.length > 0 ? leaderboard.map(x => x.name) : ['Hamid', 'Oussama', 'Kamel'];
@@ -981,6 +1186,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setSearchQuery('');
       setDebouncedSearchQuery('');
       fetchListTab(tabId, { page: 1, search: '' });
+    } else if (tabId === 'pipeline') {
+      fetchDeals();
+      fetchLinkableLeads();
     }
   };
 
@@ -1010,8 +1218,28 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const saveLeadFieldToServer = async (leadId: number, field: string, value: any) => {
+    const trackedFields = ['website', 'address', 'maps_link', 'email', 'contact_person', 'social_link'];
+    const shouldTrack = trackedFields.includes(field);
+
+    if (shouldTrack) {
+      setFieldSaveStatuses(prev => ({ ...prev, [field]: 'saving' }));
+    }
+
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
       bufferOfflineEdit(leadId, field, value);
+      if (shouldTrack) {
+        setFieldSaveStatuses(prev => ({ ...prev, [field]: 'saved' }));
+        setTimeout(() => {
+          setFieldSaveStatuses(prev => {
+            if (prev[field] === 'saved') {
+              const copy = { ...prev };
+              delete copy[field];
+              return copy;
+            }
+            return prev;
+          });
+        }, 3000);
+      }
       return true;
     }
 
@@ -1021,11 +1249,45 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
         console.error('Failed to auto-save field:', field, res.error);
         if (res.error?.includes('fetch') || res.error?.includes('Network') || res.error?.includes('Failed to fetch')) {
           bufferOfflineEdit(leadId, field, value);
+          if (shouldTrack) {
+            setFieldSaveStatuses(prev => ({ ...prev, [field]: 'saved' }));
+            setTimeout(() => {
+              setFieldSaveStatuses(prev => {
+                if (prev[field] === 'saved') {
+                  const copy = { ...prev };
+                  delete copy[field];
+                  return copy;
+                }
+                return prev;
+              });
+            }, 3000);
+          }
           return true;
         }
+        if (shouldTrack) {
+          setFieldSaveStatuses(prev => ({ ...prev, [field]: 'failed' }));
+        }
         alert(`Failed to auto-save field '${field}': ${res.error || 'Unknown error'}`);
+      } else {
+        if (shouldTrack) {
+          setFieldSaveStatuses(prev => ({ ...prev, [field]: 'failed' }));
+        }
       }
       return false;
+    }
+
+    if (shouldTrack) {
+      setFieldSaveStatuses(prev => ({ ...prev, [field]: 'saved' }));
+      setTimeout(() => {
+        setFieldSaveStatuses(prev => {
+          if (prev[field] === 'saved') {
+            const copy = { ...prev };
+            delete copy[field];
+            return copy;
+          }
+          return prev;
+        });
+      }, 3000);
     }
     return true;
   };
@@ -1129,6 +1391,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
       if (['database', 'treated'].includes(activeTab)) fetchListTab(activeTab);
     } else {
+      setCallsToday(prev => prev + 1);
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     }
   };
@@ -1229,16 +1492,78 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
   const handleImportFileSelected = async (file?: File | null) => {
     if (!file) return;
-    setIsDataSafetyBusy(true);
     setImportFileName(file.name);
     setImportPreview(null);
-    const text = await file.text();
-    const res = await previewLeadImport(text);
+    setIsDataSafetyBusy(true);
+    
+    try {
+      const text = await file.text();
+      setCsvFileText(text);
+      
+      const res = await extractCsvHeaders(text);
+      if (res.success && res.headers && res.headers.length > 0) {
+        setCsvRawHeaders(res.headers);
+        
+        // Initialize mapping guesses
+        const mappings: Record<string, string> = {};
+        res.headers.forEach(h => {
+          const l = h.toLowerCase().trim();
+          if (l.includes('name') || l.includes('agency') || l.includes('entreprise') || l.includes('business') || l.includes('nom')) {
+            mappings[h] = 'agency_name';
+          } else if (l.includes('phone 2') || l.includes('téléphone 2') || l.includes('phone2') || l.includes('mobile 2')) {
+            mappings[h] = 'phone_2';
+          } else if (l.includes('phone') || l.includes('téléphone') || l.includes('mobile') || l.includes('tel') || l.includes('gsm')) {
+            mappings[h] = 'phone';
+          } else if (l.includes('area') || l.includes('city') || l.includes('wilaya') || l.includes('ville') || l.includes('region')) {
+            mappings[h] = 'area';
+          } else if (l.includes('website') || l.includes('site') || l.includes('web') || l.includes('url')) {
+            mappings[h] = 'website';
+          } else if (l.includes('rating') || l.includes('note')) {
+            mappings[h] = 'google_rating';
+          } else if (l.includes('reviews') || l.includes('avis')) {
+            mappings[h] = 'review_count';
+          } else if (l.includes('map') || l.includes('maps') || l.includes('gps') || l.includes('link')) {
+            mappings[h] = 'maps_link';
+          } else if (l.includes('address') || l.includes('adresse') || l.includes('location')) {
+            mappings[h] = 'address';
+          } else if (l.includes('email') || l.includes('mail') || l.includes('courriel')) {
+            mappings[h] = 'email';
+          } else if (l.includes('contact') || l.includes('person') || l.includes('manager') || l.includes('contact_person')) {
+            mappings[h] = 'contact_person';
+          } else if (l.includes('social') || l.includes('instagram') || l.includes('facebook') || l.includes('social_link')) {
+            mappings[h] = 'social_link';
+          } else if (l.includes('notes') || l.includes('note') || l.includes('remarque') || l.includes('comment')) {
+            mappings[h] = 'notes';
+          } else if (l.includes('priority') || l.includes('priorité')) {
+            mappings[h] = 'priority';
+          } else {
+            mappings[h] = 'skip';
+          }
+        });
+        
+        setColumnMapping(mappings);
+        setCsvMapperOpen(true);
+      } else {
+        alert('Failed to parse CSV headers. Make sure it is a valid CSV file.');
+      }
+    } catch (err: any) {
+      alert('Error reading CSV file: ' + err.message);
+    } finally {
+      setIsDataSafetyBusy(false);
+    }
+  };
+
+  const handleCsvMapperConfirm = async () => {
+    setCsvMapperOpen(false);
+    setIsDataSafetyBusy(true);
+    
+    const res = await previewLeadImportWithMapping(csvFileText, columnMapping);
     setIsDataSafetyBusy(false);
     if (!res.success || !res.preview) {
-      alert('Import preview failed: ' + res.error);
+      alert('Preview import mapping failed: ' + (res.error || 'Unknown error'));
       return;
     }
+    
     setImportPreview(res.preview);
   };
 
@@ -1283,6 +1608,89 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     alert(`Removed ${res.removed} leads from batch ${res.batchId}.`);
     loadDialer();
     refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
+  };
+
+  // Phase 2: Deal Pipeline Helpers
+  const handleMoveDeal = async (dealId: number, newStage: string) => {
+    if (newStage === 'Lost') {
+      setLostReasonModalDealId(dealId);
+      return;
+    }
+    
+    // Optimistic update
+    setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: newStage, lost_reason: null } : d));
+    
+    const res = await updateDealStage(dealId, newStage, callerName);
+    if (!res.success) {
+      alert('Failed to update deal stage: ' + res.error);
+      fetchDeals();
+    }
+  };
+
+  const handleCreateDealSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dealForm.deal_name.trim()) return;
+    
+    setIsDealsLoading(true);
+    setDealModalOpen(false);
+    
+    const res = await createDeal({
+      deal_name: dealForm.deal_name,
+      company_name: dealForm.company_name,
+      caller_name: callerName,
+      lead_id: dealForm.lead_id,
+      setup_value: dealForm.setup_value,
+      recurring_value: dealForm.recurring_value,
+      expected_close_date: dealForm.expected_close_date,
+      notes: dealForm.notes,
+    });
+    
+    if (res.success) {
+      fetchDeals();
+      setDealForm({ deal_name: '', company_name: '', setup_value: 0, recurring_value: 0, expected_close_date: '', notes: '' });
+    } else {
+      alert('Failed to create deal: ' + res.error);
+    }
+    setIsDealsLoading(false);
+  };
+
+  const handleUpdateDealSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDeal || !dealForm.deal_name.trim()) return;
+    
+    setIsDealsLoading(true);
+    setDealModalOpen(false);
+    
+    const res = await updateDeal(selectedDeal.id, callerName, {
+      deal_name: dealForm.deal_name,
+      company_name: dealForm.company_name,
+      setup_value: dealForm.setup_value,
+      recurring_value: dealForm.recurring_value,
+      expected_close_date: dealForm.expected_close_date,
+      notes: dealForm.notes,
+    });
+    
+    if (res.success) {
+      fetchDeals();
+      setSelectedDeal(null);
+      setDealForm({ deal_name: '', company_name: '', setup_value: 0, recurring_value: 0, expected_close_date: '', notes: '' });
+    } else {
+      alert('Failed to update deal: ' + res.error);
+    }
+    setIsDealsLoading(false);
+  };
+
+  const handleDeleteDeal = async (dealId: number) => {
+    if (!confirm('Are you sure you want to permanently delete this deal?')) return;
+    
+    setIsDealsLoading(true);
+    const res = await deleteDeal(dealId, callerName);
+    if (res.success) {
+      fetchDeals();
+    } else {
+      alert('Failed to delete deal: ' + res.error);
+    }
+    setIsDealsLoading(false);
   };
 
   // Quick Outcome status button handler
@@ -1340,37 +1748,44 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       applyOutcomeToLocalCounts(status, -1);
       alert('Failed to log outcome: ' + res.error);
     } else {
+      setCallsToday(prev => prev + 1);
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     }
   };
 
-  // Handle running raw notes summary through Gemini
+  // Handle running raw notes summary through Gemini (Weakness 15: AI Click locks)
   const handleAIParse = async () => {
     if (!currentLead) return;
+    if (isParsingAIRef.current) return;
     if (!rawNotesInput.trim()) {
       alert('Please type or dictate call details in the note field first!');
       return;
     }
 
+    isParsingAIRef.current = true;
     setParsingAI(true);
-    // Call server action to run Gemini note processing + save directly to Postgres
-    const res = await updateCallStatusWithAI(currentLead.id, callerName, `${rawNotesInput} (Dialed: ${dialedNumber || currentLead.phone})`);
-    
-    if (res.success || !dbConfigured) {
-      const extracted = res.success ? res.extracted : {
-        call_status: rawNotesInput.toLowerCase().includes('interested') ? 'Interested' : 'Callback',
-        meeting_date: 'AI simulated date extraction',
-        contact_person: 'Parsed Secretary',
-        updated_email: 'extracted@email.com',
-        summary: rawNotesInput
-      };
+    try {
+      // Call server action to run Gemini note processing + save directly to Postgres
+      const res = await updateCallStatusWithAI(currentLead.id, callerName, `${rawNotesInput} (Dialed: ${dialedNumber || currentLead.phone})`);
       
-      setExtractedData(extracted);
-      fetchLeaderboardData();
-    } else {
-      alert('Error parsing summary notes: ' + res.error);
+      if (res.success || !dbConfigured) {
+        const extracted = res.success ? res.extracted : {
+          call_status: rawNotesInput.toLowerCase().includes('interested') ? 'Interested' : 'Callback',
+          meeting_date: 'AI simulated date extraction',
+          contact_person: 'Parsed Secretary',
+          updated_email: 'extracted@email.com',
+          summary: rawNotesInput
+        };
+        
+        setExtractedData(extracted);
+        fetchLeaderboardData();
+      } else {
+        alert('Error parsing summary notes: ' + res.error);
+      }
+    } finally {
+      isParsingAIRef.current = false;
+      setParsingAI(false);
     }
-    setParsingAI(false);
   };
 
   // Confirm and advance queue
@@ -1409,7 +1824,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
     setExtractedData(null);
     setRawNotesInput('');
-    
+    setCallsToday(prev => prev + 1);
     refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
   };
 
@@ -1815,6 +2230,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           {[
             { id: 'dialer', label: 'Call Queue', count: freshTargetCount || dialerQueue.length },
             { id: 'deadlines', label: 'Meetings', count: meetingsList.length },
+            { id: 'pipeline', label: 'Pipeline', count: deals.length },
             { id: 'database', label: 'Directory', count: displayCount(totalLeadsCount) },
             { id: 'followups', label: 'Followups', count: displayCount(totalFollowupsCount) },
             { id: 'warm_leads', label: 'Warm Leads', count: displayCount(totalWarmCount) },
@@ -1944,7 +2360,218 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           </div>
         ) : (
           <>
-                     {/* TAB 1: CALL QUEUE */}
+                     {/* TAB: DEAL PIPELINE (Phase 2) */}
+            {activeTab === 'pipeline' && (
+              <motion.div
+                key="pipeline-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="w-full flex flex-col gap-4"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm">
+                  <div>
+                    <h2 className="font-display text-base font-black text-slate-800 uppercase tracking-wide">Deal Pipeline</h2>
+                    <p className="font-body text-[10px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">
+                      {deals.length} deals total &middot; {deals.filter((d: any) => d.stage !== 'Won' && d.stage !== 'Lost').length} active &middot;{' '}
+                      <span className="text-emerald-600 font-bold">
+                        {deals.filter((d: any) => d.stage === 'Won').reduce((sum: number, d: any) => sum + (d.setup_value || 0) + (d.recurring_value || 0) * 12, 0).toLocaleString()} DZD closings (annualized)
+                      </span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => fetchDeals()}
+                      className="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-500 cursor-pointer transition-all border border-slate-200/20"
+                      title="Rafraîchir"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isDealsLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedDeal(null);
+                        setDealForm({ deal_name: '', company_name: '', setup_value: 0, recurring_value: 0, expected_close_date: '', notes: '' });
+                        setDealModalOpen(true);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-body text-xs font-bold tracking-wide transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Créer un Deal
+                    </button>
+                  </div>
+                </div>
+
+                {/* Columns Kanban Board Container */}
+                <div className="w-full overflow-x-auto pb-4">
+                  <div className="flex gap-4 min-w-[1200px] h-[650px] items-stretch">
+                    {['New', 'Contacted', 'Interested', 'Appointment Booked', 'Proposal Sent', 'Negotiation', 'Won', 'Lost'].map((stage) => {
+                      const stageDeals = deals.filter((d: any) => d.stage === stage);
+                      
+                      let colHeaderColor = 'text-slate-700';
+                      let colBg = 'bg-slate-50/50 border-slate-200/80';
+                      if (stage === 'Won') {
+                        colHeaderColor = 'text-emerald-700';
+                        colBg = 'bg-emerald-50/15 border-emerald-200/40';
+                      } else if (stage === 'Lost') {
+                        colHeaderColor = 'text-rose-700';
+                        colBg = 'bg-rose-50/15 border-rose-200/40';
+                      } else if (stage === 'Interested') {
+                        colHeaderColor = 'text-indigo-700';
+                        colBg = 'bg-indigo-50/15 border-indigo-200/40';
+                      }
+
+                      return (
+                        <div
+                          key={stage}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (draggedDealId !== null) {
+                              handleMoveDeal(draggedDealId, stage);
+                            }
+                          }}
+                          className={`w-80 border-2 rounded-3xl p-4 flex flex-col gap-3 shadow-sm select-none ${colBg}`}
+                        >
+                          {/* Column Title */}
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className={`font-display text-[11px] font-black uppercase tracking-wider ${colHeaderColor}`}>
+                              {stage}
+                            </span>
+                            <span className="bg-slate-100 text-slate-500 font-mono text-[9px] font-bold px-2 py-0.5 rounded-full">
+                              {stageDeals.length}
+                            </span>
+                          </div>
+
+                          {/* Cards List */}
+                          <div className="flex-1 overflow-y-auto flex flex-col gap-3 pr-1">
+                            {stageDeals.map((deal: any) => (
+                              <div
+                                key={deal.id}
+                                draggable
+                                onDragStart={() => setDraggedDealId(deal.id)}
+                                onDragEnd={() => setDraggedDealId(null)}
+                                className={`bg-white border border-slate-200/80 rounded-2xl p-3.5 shadow-sm hover:shadow-md transition-all duration-300 transform active:scale-95 cursor-grab flex flex-col gap-2 relative group`}
+                              >
+                                {/* Edit / Delete Overlay Trigger */}
+                                <div className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 bg-white/90 rounded-lg p-0.5 shadow-sm border border-slate-100">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedDeal(deal);
+                                      setDealForm({
+                                        deal_name: deal.deal_name,
+                                        company_name: deal.company_name,
+                                        setup_value: deal.setup_value,
+                                        recurring_value: deal.recurring_value,
+                                        expected_close_date: deal.expected_close_date || '',
+                                        notes: deal.notes || '',
+                                        lead_id: deal.lead_id || undefined,
+                                      });
+                                      setDealModalOpen(true);
+                                    }}
+                                    className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 transition-colors"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteDeal(deal.id)}
+                                    className="p-1 hover:bg-rose-50 rounded text-rose-400 hover:text-rose-600 transition-colors"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+
+                                <div className="pr-8">
+                                  <h4 className="font-display text-xs font-bold text-slate-800 uppercase tracking-wide leading-snug">
+                                    {deal.deal_name}
+                                  </h4>
+                                  {deal.company_name && (
+                                    <p className="font-body text-[10px] text-slate-400 font-bold uppercase mt-0.5 tracking-wider truncate">
+                                      {deal.company_name}
+                                    </p>
+                                  )}
+                                </div>
+
+                                {/* Value Badges */}
+                                <div className="flex gap-2 mt-1">
+                                  {deal.setup_value > 0 && (
+                                    <span className="bg-slate-50 border border-slate-100 text-slate-600 font-mono text-[9px] font-bold px-2 py-0.5 rounded-lg">
+                                      Setup: {deal.setup_value.toLocaleString()} DZD
+                                    </span>
+                                  )}
+                                  {deal.recurring_value > 0 && (
+                                    <span className="bg-blue-50 border border-blue-100 text-blue-700 font-mono text-[9px] font-bold px-2 py-0.5 rounded-lg">
+                                      MRR: {deal.recurring_value.toLocaleString()} DZD
+                                    </span>
+                                  )}
+                                </div>
+
+                                {deal.expected_close_date && (
+                                  <p className="font-body text-[9px] text-slate-400 font-medium mt-1 flex items-center gap-1">
+                                    <Clock className="w-3 h-3 text-slate-300" />
+                                    Close: {deal.expected_close_date}
+                                  </p>
+                                )}
+
+                                {deal.notes && (
+                                  <p className="font-body text-[9px] text-slate-400 line-clamp-2 bg-slate-50/50 p-2 rounded-xl border border-slate-100 leading-relaxed">
+                                    {deal.notes}
+                                  </p>
+                                )}
+
+                                {stage === 'Lost' && deal.lost_reason && (
+                                  <div className="mt-1 bg-rose-50 border border-rose-100 text-rose-700 text-[9px] font-bold px-2.5 py-1 rounded-xl uppercase tracking-wider text-center">
+                                    Raison: {deal.lost_reason}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Lost Reason Dialog Modal */}
+                {lostReasonModalDealId !== null && (
+                  <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-sm border border-slate-100 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+                      <div>
+                        <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">Pourquoi le Deal est-il Perdu ?</h3>
+                        <p className="font-body text-[9px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">Spécifier le motif de perte commerciale</p>
+                      </div>
+                      
+                      <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto pr-1">
+                        {['Budget trop limité', 'Déjà équipé', 'Pas intéressé', 'Trop cher', 'Mauvais timing', 'Choix concurrent', 'Profil inadapté', 'Autre raison'].map(reason => (
+                          <button 
+                            key={reason} 
+                            onClick={async () => {
+                              const id = lostReasonModalDealId!;
+                              setDeals((prev: any[]) => prev.map((d: any) => d.id === id ? { ...d, stage: 'Lost', lost_reason: reason } : d));
+                              setLostReasonModalDealId(null);
+                              await updateDealStage(id, 'Lost', callerName, reason);
+                            }} 
+                            className="w-full text-left px-3.5 py-2.5 hover:bg-rose-50 hover:text-rose-700 rounded-xl font-body text-xs font-semibold transition-all cursor-pointer border border-transparent hover:border-rose-100 text-slate-700"
+                          >
+                            {reason}
+                          </button>
+                        ))}
+                      </div>
+                      
+                      <button 
+                        onClick={() => setLostReasonModalDealId(null)} 
+                        className="w-full mt-2 py-3 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* TAB 1: CALL QUEUE */}
             {activeTab === 'dialer' && (
               <motion.div
                 key="dialer-tab"
@@ -2278,7 +2905,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                                 <div className="flex flex-col gap-2.5">
                                   <div className="flex items-center justify-between">
-                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Emails</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Emails</span>
+                                      {renderFieldSaveStatus('email')}
+                                    </div>
                                     <button
                                       type="button"
                                       onClick={() => currentLead && promptAddMultiValue(currentLead, 'email_2', 'email')}
@@ -2333,7 +2963,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               <div className="flex flex-col gap-3.5">
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website links & status</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Website links & status</span>
+                                      {renderFieldSaveStatus('website')}
+                                    </div>
                                     <button
                                       type="button"
                                       onClick={() => currentLead && promptAddMultiValue(currentLead, 'website', 'website link')}
@@ -2407,7 +3040,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Person</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Contact Person</span>
+                                      {renderFieldSaveStatus('contact_person')}
+                                    </div>
                                     <input
                                       type="text"
                                       value={currentLead?.contact_person || ''}
@@ -2431,7 +3067,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                                 <div className="flex flex-col gap-2">
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Profile links</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Profile links</span>
+                                      {renderFieldSaveStatus('social_link')}
+                                    </div>
                                     <button
                                       type="button"
                                       onClick={() => currentLead && promptAddMultiValue(currentLead, 'social_link', 'profile link')}
@@ -2487,7 +3126,13 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <label className="text-[8px] text-slate-400 uppercase font-bold">Message à envoyer (Modifiable manuellement)</label>
                                     <textarea
                                       value={customPitchText}
-                                      onChange={(e) => setCustomPitchText(e.target.value)}
+                                      onChange={(e) => {
+                                        const newVal = e.target.value;
+                                        setCustomPitchText(newVal);
+                                        if (currentLead) {
+                                          localStorage.setItem(`pitch_draft_${currentLead.id}`, newVal);
+                                        }
+                                      }}
                                       className="w-full bg-slate-50 border border-slate-200 focus:border-blue-300 focus:bg-white rounded-2xl p-4 font-body text-xs text-slate-700 leading-relaxed h-[110px] outline-none shadow-inner transition-all"
                                       placeholder="Le script s'affichera ici..."
                                     />
@@ -2506,6 +3151,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                             const date = currentLead.meeting_date || "[Date]";
                                             const txt = `Bonjour, je vous confirme notre rendez-vous téléphonique le ${date} avec l'équipe de Call-OS. Cordialement, ${callerName}.`;
                                             setCustomPitchText(txt);
+                                            localStorage.setItem(`pitch_draft_${currentLead.id}`, txt);
                                           }
                                         }}
                                         className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
@@ -2522,6 +3168,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                             const contact = currentLead.contact_person || 'Madame, Monsieur';
                                             const txt = `Bonjour ${contact}, suite à notre appel, voici le lien pour configurer vos services : ${site}. À votre entière disposition.`;
                                             setCustomPitchText(txt);
+                                            localStorage.setItem(`pitch_draft_${currentLead.id}`, txt);
                                           }
                                         }}
                                         className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
@@ -2537,6 +3184,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                             const date = currentLead.meeting_date || "[Date]";
                                             const txt = `Hello, following our discussion, I am locking in our session on ${date}. Best, ${callerName}.`;
                                             setCustomPitchText(txt);
+                                            localStorage.setItem(`pitch_draft_${currentLead.id}`, txt);
                                           }
                                         }}
                                         className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
@@ -2557,21 +3205,30 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-300 font-body placeholder-slate-300"
                                       onKeyDown={async (e) => {
                                         if (e.key === 'Enter' && !isGeneratingPitch && customInstructionInput.trim()) {
+                                          if (isGeneratingPitchRef.current) return;
+                                          isGeneratingPitchRef.current = true;
                                           e.preventDefault();
                                           setIsGeneratingPitch(true);
-                                          const res = await generatePitchWithAI({
-                                            agencyName: currentLead?.agency_name || '',
-                                            website: currentLead?.website,
-                                            websiteQuality: currentLead?.website_quality,
-                                            area: currentLead?.area,
-                                            callerName: callerName,
-                                            customInstruction: customInstructionInput
-                                          });
-                                          setIsGeneratingPitch(false);
-                                          if (res.success && res.pitch) {
-                                            setCustomPitchText(res.pitch);
-                                          } else {
-                                            alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                          try {
+                                            const res = await generatePitchWithAI({
+                                              agencyName: currentLead?.agency_name || '',
+                                              website: currentLead?.website,
+                                              websiteQuality: currentLead?.website_quality,
+                                              area: currentLead?.area,
+                                              callerName: callerName,
+                                              customInstruction: customInstructionInput
+                                            });
+                                            if (res.success && res.pitch) {
+                                              setCustomPitchText(res.pitch);
+                                              if (currentLead) {
+                                                localStorage.setItem(`pitch_draft_${currentLead.id}`, res.pitch);
+                                              }
+                                            } else {
+                                              alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                            }
+                                          } finally {
+                                            isGeneratingPitchRef.current = false;
+                                            setIsGeneratingPitch(false);
                                           }
                                         }
                                       }}
@@ -2580,20 +3237,29 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       type="button"
                                       disabled={isGeneratingPitch}
                                       onClick={async () => {
+                                        if (isGeneratingPitchRef.current) return;
+                                        isGeneratingPitchRef.current = true;
                                         setIsGeneratingPitch(true);
-                                        const res = await generatePitchWithAI({
-                                          agencyName: currentLead?.agency_name || '',
-                                          website: currentLead?.website,
-                                          websiteQuality: currentLead?.website_quality,
-                                          area: currentLead?.area,
-                                          callerName: callerName,
-                                          customInstruction: customInstructionInput
-                                        });
-                                        setIsGeneratingPitch(false);
-                                        if (res.success && res.pitch) {
-                                          setCustomPitchText(res.pitch);
-                                        } else {
-                                          alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                        try {
+                                          const res = await generatePitchWithAI({
+                                            agencyName: currentLead?.agency_name || '',
+                                            website: currentLead?.website,
+                                            websiteQuality: currentLead?.website_quality,
+                                            area: currentLead?.area,
+                                            callerName: callerName,
+                                            customInstruction: customInstructionInput
+                                          });
+                                          if (res.success && res.pitch) {
+                                            setCustomPitchText(res.pitch);
+                                            if (currentLead) {
+                                              localStorage.setItem(`pitch_draft_${currentLead.id}`, res.pitch);
+                                            }
+                                          } else {
+                                            alert("Erreur de personnalisation: " + (res.error || "inconnue"));
+                                          }
+                                        } finally {
+                                          isGeneratingPitchRef.current = false;
+                                          setIsGeneratingPitch(false);
                                         }
                                       }}
                                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -3545,7 +4211,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                   {/* EDIT SIDE DRAWER */}
                   {editingLead && (
-                    <div className="xl:col-span-4 w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-5 relative overflow-hidden">
+                    <div ref={editDetailsTrapRef} className="xl:col-span-4 w-full bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-5 relative overflow-hidden">
                       <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                         <div className="flex items-center gap-2">
                           <Edit3 className="w-4 h-4 text-slate-800" />
@@ -5462,7 +6128,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
       {/* Visual Scheduler (Date & Time Picker) Modal */}
       {schedulerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+        <div ref={schedulerTrapRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-slideUp">
             
             {/* Header */}
@@ -5490,8 +6156,25 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
               {/* Calendar Section */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between px-1">
-                  <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest">
-                    {calendarViewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                  <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
+                    <span>{calendarViewDate.toLocaleString('default', { month: 'long' })}</span>
+                    <select
+                      value={calendarViewDate.getFullYear()}
+                      onChange={(e) => {
+                        const newYear = parseInt(e.target.value, 10);
+                        setCalendarViewDate(new Date(newYear, calendarViewDate.getMonth(), 1));
+                      }}
+                      className="bg-transparent border border-slate-200 rounded px-1 py-0.5 text-[10px] font-bold text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      {Array.from({ length: 8 }).map((_, idx) => {
+                        const yr = new Date().getFullYear() - 1 + idx;
+                        return (
+                          <option key={yr} value={yr}>
+                            {yr}
+                          </option>
+                        );
+                      })}
+                    </select>
                   </span>
                   <div className="flex gap-1">
                     <button
@@ -5703,7 +6386,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
       {/* Custom ValueInputModal prompt replacement */}
       {valueModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+        <div ref={valueModalTrapRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-slideUp">
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/30">
@@ -5752,6 +6435,235 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
                 >
                   Confirm
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CSV Column Mapping Modal (Phase 2) */}
+      {csvMapperOpen && (
+        <div ref={csvMapperTrapRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-slideUp">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/30">
+              <div>
+                <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">
+                  Map CSV Columns
+                </h3>
+                <p className="font-body text-[10px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">
+                  Assign columns from your file to system fields
+                </p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setCsvMapperOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Fields List */}
+            <div className="p-6 overflow-y-auto flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-4 text-[9px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100 pb-2">
+                <span>CSV Column Header</span>
+                <span>System Field Destination</span>
+              </div>
+              
+              <div className="flex flex-col gap-3">
+                {csvRawHeaders.map((header) => {
+                  const DB_FIELDS = [
+                    { value: 'agency_name', label: "Nom de l'agence" },
+                    { value: 'phone', label: 'Téléphone Principal' },
+                    { value: 'phone_2', label: 'Téléphone Secondaire' },
+                    { value: 'area', label: 'Région / Wilaya' },
+                    { value: 'website', label: 'Site Web' },
+                    { value: 'google_rating', label: 'Note Google' },
+                    { value: 'review_count', label: "Nombre d'avis" },
+                    { value: 'maps_link', label: 'Lien Google Maps' },
+                    { value: 'address', label: 'Adresse Physique' },
+                    { value: 'email', label: 'Adresse Email' },
+                    { value: 'contact_person', label: 'Personne de contact' },
+                    { value: 'social_link', label: 'Lien Instagram / Réseau' },
+                    { value: 'notes', label: 'Notes / Commentaires' },
+                    { value: 'priority', label: 'Priorité (1-3)' },
+                  ];
+
+                  return (
+                    <div key={header} className="grid grid-cols-2 gap-4 items-center border-b border-slate-50 pb-2 last:border-0">
+                      <span className="font-body text-xs font-semibold text-slate-700 truncate" title={header}>
+                        {header}
+                      </span>
+                      <select
+                        value={columnMapping[header] || 'skip'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setColumnMapping(prev => ({ ...prev, [header]: val }));
+                        }}
+                        className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none cursor-pointer"
+                      >
+                        <option value="skip">-- Ignorer cette colonne --</option>
+                        {DB_FIELDS.map(f => (
+                          <option key={f.value} value={f.value}>{f.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2.5 bg-slate-50/50">
+              <button
+                type="button"
+                onClick={() => setCsvMapperOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleCsvMapperConfirm}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
+              >
+                Valider Mapping & Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New/Edit Deal Modal (Phase 2) */}
+      {dealModalOpen && (
+        <div ref={dealModalTrapRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-slideUp">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/30">
+              <div>
+                <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">
+                  {selectedDeal ? 'Modifier le Deal' : 'Créer une Opportunité'}
+                </h3>
+                <p className="font-body text-[10px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">
+                  {selectedDeal ? "Mettre à jour les paramètres de l'opportunité" : "Ajouter un nouveau deal qualifié au pipeline"}
+                </p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setDealModalOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={selectedDeal ? handleUpdateDealSubmit : handleCreateDealSubmit} className="p-6 flex flex-col gap-4 font-body text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Nom du Deal *</label>
+                <input
+                  type="text"
+                  required
+                  value={dealForm.deal_name}
+                  onChange={(e) => setDealForm(prev => ({ ...prev, deal_name: e.target.value }))}
+                  placeholder="Ex: Configuration CRM + Site Web"
+                  className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Lier à une Agence Qualifiée (Optionnel)</label>
+                <select
+                  value={dealForm.lead_id || ''}
+                  onChange={(e) => {
+                    const leadId = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                    const lead = linkableLeads.find(l => l.id === leadId);
+                    setDealForm(prev => ({ 
+                      ...prev, 
+                      lead_id: leadId,
+                      company_name: lead ? lead.agency_name : prev.company_name
+                    }));
+                  }}
+                  className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3 cursor-pointer text-slate-800 focus:outline-none"
+                >
+                  <option value="">-- Aucun lien ou taper manuellement ci-dessous --</option>
+                  {linkableLeads.map(l => (
+                    <option key={l.id} value={l.id}>{l.agency_name} ({l.area})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Nom de l'Entreprise / Agence</label>
+                <input
+                  type="text"
+                  value={dealForm.company_name}
+                  onChange={(e) => setDealForm(prev => ({ ...prev, company_name: e.target.value }))}
+                  placeholder="Ex: El Hourria Travel"
+                  className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none transition-all"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[9px] text-slate-400 uppercase font-bold">Installation (Setup DZD)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={dealForm.setup_value}
+                    onChange={(e) => setDealForm(prev => ({ ...prev, setup_value: parseInt(e.target.value, 10) || 0 }))}
+                    className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[9px] text-slate-400 uppercase font-bold">Mensuel Récurrent (MRR DZD)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={dealForm.recurring_value}
+                    onChange={(e) => setDealForm(prev => ({ ...prev, recurring_value: parseInt(e.target.value, 10) || 0 }))}
+                    className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Date de Clôture Estimée</label>
+                <input
+                  type="date"
+                  value={dealForm.expected_close_date}
+                  onChange={(e) => setDealForm(prev => ({ ...prev, expected_close_date: e.target.value }))}
+                  className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Notes sur l'opportunité</label>
+                <textarea
+                  value={dealForm.notes}
+                  onChange={(e) => setDealForm(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Ex: Intéressé par la formule premium, décision fin de semaine."
+                  rows={3}
+                  className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none resize-none"
+                />
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setDealModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
+                >
+                  {selectedDeal ? 'Mettre à jour' : 'Créer le Deal'}
                 </button>
               </div>
             </form>

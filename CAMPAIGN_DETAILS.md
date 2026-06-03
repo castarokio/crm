@@ -16,38 +16,39 @@ This file contains all critical information, paths, API keys, credentials, datab
 - **Server Actions**: [actions.ts](file:///C:/Users/elweh/Desktop/OS%20workflow/src/app/actions.ts)
 - **Main React Dashboard UI**: [Dashboard.tsx](file:///C:/Users/elweh/Desktop/OS%20workflow/src/components/Dashboard.tsx)
 - **Main NextJS Page**: [page.tsx](file:///C:/Users/elweh/Desktop/OS%20workflow/src/app/page.tsx)
-- **Database Connection Handler**: [db.ts](file:///C:/Users/elweh/Desktop/OS%20workflow/src/lib/db.ts)
-- **Supabase Client Setup**: [supabase.ts](file:///C:/Users/elweh/Desktop/OS%20workflow/src/lib/supabase.ts)
+- **Database Connection Handler**: `src/lib/supabase-admin.ts`
+- **Session Handler**: `src/lib/auth-session.ts`
 
 ---
 
 ## 2. API Keys, Passcodes & Environment Variables
 
-These variables are defined in the local `.env` file ([C:\Users\elweh\Desktop\OS workflow\.env](file:///C:/Users/elweh/Desktop/OS%20workflow/.env)):
+These variables must be defined in the local `.env` file and in the deployment environment. Never commit their values:
 
 ```env
-GLM_API_KEY=1894765db80f49ea80e7ab451dc39ffe.ZbWkA6Xyx8NSBlDQ
-DATABASE_URL=
-NEXT_PUBLIC_PORTAL_PIN=676869
-NEXT_PUBLIC_SUPABASE_URL=https://bpenacfdynhgcvdznygb.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZW5hY2ZkeW5oZ2N2ZHpueWdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNDQzMDcsImV4cCI6MjA5NTkyMDMwN30.jYwL19ffUiEWSJSkN0nclRsf5CQOd7EwUzNSLpUfxU4
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZW5hY2ZkeW5oZ2N2ZHpueWdiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDM0NDMwNywiZXhwIjoyMDk1OTIwMzA3fQ.BZs8y_hunwvNCX__LoDVUHfWSrATo_matUvThFLhZ6Q
+GLM_API_KEY=replace_me
+PORTAL_PIN=replace_me
+ADMIN_RESET_PIN=replace_me
+SESSION_SECRET=replace_me
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=replace_me
+SUPABASE_SERVICE_ROLE_KEY=replace_me
 ```
 
-* **CRM Gate Login PIN**: `676869`
-* **Hamid Admin PIN**: `343536`
+* **CRM Gate Login PIN**: private environment variable
+* **Caller PINs**: private environment variables or database values
 
 ---
 
 ## 3. Database Credentials & Pooler Configuration
 
 ### PostgreSQL (Supabase) Database
-- **Project ID**: `bpenacfdynhgcvdznygb`
-- **Host**: `aws-1-eu-central-1.pooler.supabase.com`
+- **Project ID**: stored in the deployment environment
+- **Host**: stored in the deployment environment
 - **Port**: `6543` (Transaction Pooler)
-- **User**: `postgres.bpenacfdynhgcvdznygb`
-- **Password**: `tA4J%nHKFLPdz.D`
-- **Connection URI**: `postgresql://postgres.bpenacfdynhgcvdznygb:tA4J%25nHKFLPdz.D@aws-1-eu-central-1.pooler.supabase.com:6543/postgres`
+- **User**: stored in the deployment environment
+- **Password**: stored in the deployment environment
+- **Connection URI**: stored in `DATABASE_URL`; never commit it
 
 ### SQLite Database (Local Scraper)
 - **Path**: `C:\Users\elweh\Desktop\WORK\travel_agency_scraper\algeria_travel_agencies.db`

@@ -6,15 +6,14 @@ This document provides a highly detailed, comprehensive technical guide to the d
 
 ## 1. Core Database Strategy
 
-The CRM uses a hybrid database strategy designed to support both remote production deployments on Supabase (PostgreSQL) and local standalone simulation/development using SQLite. 
+The CRM uses Supabase PostgreSQL through authenticated Next.js server actions. Browser clients do not receive privileged database credentials or direct table access.
 
 ```mermaid
 flowchart TD
     A[Next.js App Server Actions] --> B{Check Environment Variables}
-    B -- NEXT_PUBLIC_SUPABASE_URL exists --> C[Supabase Client Client & PG Connection Pooler]
-    B -- No environment variables --> D[Local SQLite Fallback]
+    B -- Supabase environment exists --> C[Server-only Supabase Client & PG Connection Pooler]
+    B -- No environment variables --> D[Configuration Error]
     C --> E[(Supabase Cloud Postgres)]
-    D --> F[(Local SQLite: algeria_travel_agencies.db)]
 ```
 
 ### 1.1 production Strategy: Supabase PostgreSQL
@@ -22,10 +21,8 @@ In production, the application connects to a cloud-hosted PostgreSQL database ma
 - **Pooler Connection**: Direct SQL operations (like migrations) connect via the Supabase connection pooler on port `6543` using transaction pooling. This handles high concurrency from Next.js serverless functions.
 - **REST Interface**: Standard runtime actions use the Supabase JS Client (`@supabase/supabase-js`) to access tables via the PostgREST API over HTTPS, reducing query latency and connection overhead.
 
-### 1.2 Development Strategy: SQLite Fallback
-For local development, scraper testing, and fallback scenarios when environment variables are missing, the CRM binds to a local SQLite database file:
-- **Location**: `C:\Users\elweh\Desktop\WORK\travel_agency_scraper\algeria_travel_agencies.db`
-- **Driver**: Powered by the native `sqlite3` node module, wrapping queries to match standard SQL syntax (mapping PostgreSQL-specific commands like `ILIKE` to `LIKE` on-the-fly).
+### 1.2 Development Strategy
+Local development uses the same Supabase-backed server actions as production. Missing environment variables are treated as configuration errors rather than silently switching databases.
 
 ---
 
@@ -36,10 +33,10 @@ For local development, scraper testing, and fallback scenarios when environment 
 * **Host Address**: `aws-1-eu-central-1.pooler.supabase.com`
 * **Port**: `6543` (Transaction Pooling Port)
 * **Master User**: `postgres.bpenacfdynhgcvdznygb`
-* **Master Password**: `tA4J%nHKFLPdz.D`
+* **Master Password**: stored outside the repository
 * **Database Name**: `postgres`
 * **Connection SSL Mode**: Enabled (`ssl={rejectUnauthorized: false}`)
-* **Direct URI**: `postgresql://postgres.bpenacfdynhgcvdznygb:tA4J%25nHKFLPdz.D@aws-1-eu-central-1.pooler.supabase.com:6543/postgres`
+* **Direct URI**: stored in `DATABASE_URL`; never commit it
 * **REST API Endpoint**: `https://bpenacfdynhgcvdznygb.supabase.co`
 
 ### 2.2 Local Database Path
@@ -112,52 +109,19 @@ CREATE TABLE IF NOT EXISTS call_history (
 
 ---
 
-## 4. Connection Management & Environment Fallback
+## 4. Connection Management
 
-The Next.js app connects dynamically using `src/lib/db.ts` ([C:\Users\elweh\Desktop\OS workflow\src\lib\db.ts](file:///C:/Users/elweh/Desktop/OS%20workflow/src/lib/db.ts)). The script inspects the runtime environment and selects the database target:
+The Next.js app connects to Supabase only from server actions through `src/lib/supabase-admin.ts`.
+The service-role key is never imported into client components, and the deleted SQLite fallback is no longer part of the runtime architecture.
 
-```javascript
-import { createClient } from '@supabase/supabase-js';
-import sqlite3 from 'sqlite3';
-import fs from 'fs';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-let supabase = null;
-let sqliteDb = null;
-
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: false },
-  });
-  console.log('[DB Config] Using Supabase cloud database.');
-} else {
-  const localDbPath = 'C:/Users/elweh/Desktop/WORK/travel_agency_scraper/algeria_travel_agencies.db';
-  console.log(`[DB Config] Connecting to local SQLite: ${localDbPath}`);
-
-  if (fs.existsSync(localDbPath)) {
-    sqliteDb = new sqlite3.Database(localDbPath, (err) => {
-      if (err) {
-        console.error('[DB Error] Failed to open local SQLite db:', err);
-      } else {
-        // Run sqlite column-verification checks to align schemas
-        sqliteDb.serialize(() => {
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN caller_name TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN meeting_date TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN contact_person TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN call_status TEXT DEFAULT 'Not Called'", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN call_notes TEXT DEFAULT ''", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN last_called_at TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN phone_2 TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN email_2 TEXT", () => {});
-          sqliteDb.run("ALTER TABLE leads ADD COLUMN social_link TEXT", () => {});
-        });
-      }
-    });
-  }
-}
+```text
+NEXT_PUBLIC_SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+SESSION_SECRET
+PORTAL_PIN
 ```
+
+Caller PINs are stored in `caller_profiles.pin` as salted scrypt hashes for newly created profiles. Existing plaintext PINs remain readable only as a migration compatibility path and should be replaced.
 
 ---
 
@@ -182,7 +146,7 @@ async function migratePostgres() {
     host,
     port: 6543,
     user: 'postgres.bpenacfdynhgcvdznygb',
-    password: 'tA4J%nHKFLPdz.D',
+    password: process.env.SUPABASE_DB_PASSWORD,
     database: 'postgres',
     ssl: { rejectUnauthorized: false }
   });
@@ -208,7 +172,7 @@ Initializes columns like `assigned_to` and creates the `call_history` log tables
 
 ```javascript
 const { Client } = require('pg');
-const connectionString = 'postgresql://postgres.bpenacfdynhgcvdznygb:tA4J%25nHKFLPdz.D@aws-1-eu-central-1.pooler.supabase.com:6543/postgres';
+const connectionString = process.env.DATABASE_URL;
 
 const client = new Client({
   connectionString,

@@ -13,7 +13,7 @@ An advanced, high-performance cold outreach dialer and lead management CRM tailo
 * **🛡️ Concurrency Locking system**: Heartbeat-based lease management preventing callers from dialing the same target lead concurrently, with automatic skipping and release features.
 * **📊 Team Leaderboards & Analytics**: Comprehensive stats tracking (call counts, warm deals, success rates) and real-time leaderboard rankings to incentivize team performance.
 * **📁 Admin Control Panel**: Centralized workspace for the team leader (**Hamid**) to distribute leads by region/priority, clear locks, reset campaigns, and download full database backups.
-* **💾 Hybrid Connection Engine**: Dual database pipeline operating cloud-hosted Supabase Cloud PostgreSQL in production, with automatic fallback to local SQLite for isolated offline/development environments.
+* **💾 Server-Mediated Database Access**: Supabase PostgreSQL is accessed only through authenticated Next.js server actions.
 
 ---
 
@@ -21,7 +21,7 @@ An advanced, high-performance cold outreach dialer and lead management CRM tailo
 
 * **Frontend**: [Next.js](https://nextjs.org/) (App Router, Server Actions), [React](https://react.dev/), [Framer Motion](https://www.framer.com/motion/) (Aesthetic transitions), [Lucide React](https://lucide.dev/) (Icons)
 * **Styling**: [Tailwind CSS](https://tailwindcss.com/) (curated dark/glassmorphic color systems)
-* **Databases**: [Supabase PostgreSQL](https://supabase.com/) (Production PostgREST), [SQLite](https://www.sqlite.org/) (Local Fallback)
+* **Database**: [Supabase PostgreSQL](https://supabase.com/) through server-side PostgREST
 * **AI Engine**: [Google Gemini 1.5 Flash API](https://ai.google.dev/) (Dynamic Copywriting & Note Parsing)
 * **Hosting**: [Vercel](https://vercel.com/) (Edge Serverless Functions)
 
@@ -44,8 +44,8 @@ An advanced, high-performance cold outreach dialer and lead management CRM tailo
 │   │   └── Sections.tsx          # Public informational landing page sections
 │   │
 │   └── lib/                      # Database Clients & Helpers
-│       ├── db.ts                 # Unified query router (Supabase <-> SQLite)
-│       └── supabase.ts           # Singleton Supabase Client configurations
+│       ├── auth-session.ts       # Signed HTTP-only application sessions
+│       └── supabase-admin.ts     # Server-only Supabase client
 │
 ├── public/                       # Static public assets (images, icons, etc.)
 ├── scripts/                      # Developer migration, test, and utility scripts
@@ -70,10 +70,12 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_public_key_here
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
 
 # Secure Portal & Caller Login PIN Codes
-NEXT_PUBLIC_PORTAL_PIN=676869
-NEXT_PUBLIC_HAMID_PIN=343536
-NEXT_PUBLIC_OUSSAMA_PIN=121314
-NEXT_PUBLIC_KAMEL_PIN=232425
+PORTAL_PIN=replace_with_a_private_portal_pin
+HAMID_PIN=replace_with_a_private_caller_pin
+OUSSAMA_PIN=replace_with_a_private_caller_pin
+KAMEL_PIN=replace_with_a_private_caller_pin
+ADMIN_RESET_PIN=replace_with_a_private_reset_pin
+SESSION_SECRET=replace_with_a_long_random_secret
 ```
 
 ---

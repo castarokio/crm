@@ -1,14 +1,24 @@
 const { Client } = require('pg');
+const { randomBytes, scryptSync } = require('crypto');
+
+function hashPin(pin) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(pin, salt, 32).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
 
 async function run() {
   const host = 'aws-1-eu-central-1.pooler.supabase.com';
   console.log(`Connecting to Supabase PG pooler at: ${host}...`);
 
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required');
+  }
   const client = new Client({
+    connectionString: process.env.DATABASE_URL,
     host,
     port: 6543,
     user: 'postgres.bpenacfdynhgcvdznygb',
-    password: 'tA4J%nHKFLPdz.D',
     database: 'postgres',
     ssl: { rejectUnauthorized: false }
   });
@@ -22,7 +32,7 @@ async function run() {
       CREATE TABLE IF NOT EXISTS caller_profiles (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) UNIQUE NOT NULL,
-        pin VARCHAR(20) NOT NULL,
+        pin TEXT NOT NULL,
         gender VARCHAR(20) NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
@@ -44,14 +54,16 @@ async function run() {
     console.log('team_applications table checked/created.');
 
     // 3. Seed default callers
+    const defaultPins = [process.env.HAMID_PIN, process.env.OUSSAMA_PIN, process.env.KAMEL_PIN];
+    if (defaultPins.some(pin => !pin)) throw new Error('HAMID_PIN, OUSSAMA_PIN, and KAMEL_PIN are required');
     await client.query(`
-      INSERT INTO caller_profiles (name, pin, gender) 
-      VALUES 
-        ('Hamid', '343536', 'Male'), 
-        ('Oussama', '121314', 'Male'), 
-        ('Kamel', '232425', 'Male')
+      INSERT INTO caller_profiles (name, pin, gender)
+      VALUES
+        ('Hamid', $1, 'Male'),
+        ('Oussama', $2, 'Male'),
+        ('Kamel', $3, 'Male')
       ON CONFLICT (name) DO NOTHING;
-    `);
+    `, defaultPins.map(hashPin));
     console.log('Default caller profiles seeded successfully.');
 
     await client.end();
