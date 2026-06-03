@@ -66,11 +66,13 @@ function parseCsvLine(line: string) {
   for (let i = 0; i < line.length; i += 1) {
     const char = line[i];
     const next = line[i + 1];
-    if (char === '"' && inQuotes && next === '"') {
-      current += '"';
-      i += 1;
-    } else if (char === '"') {
-      inQuotes = !inQuotes;
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === ',' && !inQuotes) {
       values.push(current.trim());
       current = '';
@@ -83,14 +85,50 @@ function parseCsvLine(line: string) {
 }
 
 function parseCsvText(csvText: string): Array<Record<string, any>> {
-  const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim());
-  if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map(header => {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let inQuotes = false;
+
+  const text = csvText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = '';
+    } else if (char === '\n' && !inQuotes) {
+      currentRow.push(currentField.trim());
+      rows.push(currentRow);
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    rows.push(currentRow);
+  }
+
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map(header => {
     const normalized = header.trim().toLowerCase().replace(/[\s-]+/g, '_');
     return IMPORT_HEADER_ALIASES[normalized] || normalized;
   });
-  return lines.slice(1).map((line, index) => {
-    const values = parseCsvLine(line);
+
+  return rows.slice(1).map((values, index) => {
     const row: Record<string, any> = {};
     headers.forEach((header, i) => {
       if (!IMPORTABLE_LEAD_FIELDS.includes(header)) return;
@@ -114,9 +152,13 @@ function normalizeForDuplicate(value?: string | null) {
 
 function normalizePhoneForDuplicate(phone?: string | null) {
   if (!phone) return '';
-  const digits = phone.replace(/\D/g, '');
+  let clean = phone.trim().replace(/^00/, '+');
+  const digits = clean.replace(/\D/g, '');
   if (!digits) return '';
-  if (digits.startsWith('0')) {
+  if (clean.startsWith('+')) {
+    return digits;
+  }
+  if (digits.startsWith('0') && digits.length === 10) {
     return '213' + digits.substring(1);
   }
   return digits;
@@ -305,6 +347,7 @@ export async function getDialerQueue(callerName?: string) {
       const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
       q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null`);
       
+      
       // Must not be locked by another caller (lease older than 5 minutes is expired)
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       q = q.or(`locked_by.is.null,locked_by.eq.${safeCaller},locked_at.lt.${fiveMinutesAgo}`);
@@ -330,6 +373,14 @@ export async function updateCallStatus(id: number, status: string, notes: string
     const session = await requireWritableSession();
     assertAllowedCallStatus(status);
     const supabase = requireSupabase();
+
+    // Fetch original status and notes for programmatic rollback
+    const { data: original, error: fetchErr } = await supabase
+      .from('leads')
+      .select('call_status, notes, call_notes, caller_name, assigned_to, last_called_at, last_updated, meeting_date')
+      .eq('id', id)
+      .single();
+    if (fetchErr) throw new Error(fetchErr.message);
     
     const updatePayload: any = {
       call_status: status,
@@ -405,10 +456,33 @@ export async function updateLeadDetails(id: number, fields: {
   try {
     const session = await requireWritableSession();
     if (fields.call_status) assertAllowedCallStatus(fields.call_status);
+    const supabase = requireSupabase();
+
+    // Fetch lead details to check authorization
+    const { data: currentLead, error: fetchErr } = await supabase
+      .from('leads')
+      .select('assigned_to, locked_by')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !currentLead) throw new Error(fetchErr?.message || 'LEAD_NOT_FOUND');
+
     if (session.role !== 'Admin') {
+      // Enforce caller can only update leads assigned to them or unassigned
+      if (currentLead.assigned_to && currentLead.assigned_to !== session.name) {
+        throw new Error('LEAD_ASSIGNED_TO_OTHER');
+      }
+
       const callerNameAllowed = !('caller_name' in fields) || fields.caller_name === session.name || fields.caller_name == null;
       const assignedToAllowed = !('assigned_to' in fields) || fields.assigned_to === session.name || fields.assigned_to == null;
       if (!callerNameAllowed || !assignedToAllowed) throw new Error('FORBIDDEN_FIELD_UPDATE');
+
+      const restrictedFields = ['google_rating', 'review_count'];
+      for (const field of restrictedFields) {
+        if (field in fields) {
+          throw new Error(`FORBIDDEN_FIELD_${field.toUpperCase()}`);
+        }
+      }
     }
     // Input Validations
     if ('email' in fields) {
@@ -441,7 +515,6 @@ export async function updateLeadDetails(id: number, fields: {
       }
     }
 
-    const supabase = requireSupabase();
     const finalFields = { ...fields };
     
     // Auto-calculate priority if website/socials change and priority isn't overridden
@@ -701,6 +774,15 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
 
   try {
     const supabase = requireSupabase();
+
+    // Fetch original status and notes for programmatic rollback
+    const { data: original, error: fetchErr } = await supabase
+      .from('leads')
+      .select('call_status, notes, call_notes, caller_name, assigned_to, last_called_at, last_updated, meeting_date, email')
+      .eq('id', leadId)
+      .single();
+    if (fetchErr) throw new Error(fetchErr.message);
+    
     const updatePayload: any = {
       call_status: data.call_status,
       call_notes: data.summary,
@@ -722,7 +804,11 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
       call_status: data.call_status,
       notes: data.summary || rawSummary
     });
-    if (historyError) throw new Error(historyError.message);
+    if (historyError) {
+      // Rollback lead status change on history insertion failure
+      await supabase.from('leads').update(original).eq('id', leadId);
+      throw new Error(`HISTORY_LOG_FAILED: ${historyError.message}`);
+    }
 
     return { success: true, extracted: data };
   } catch (error: any) {
@@ -922,23 +1008,25 @@ export async function splitLeadsEqually(adminCallerName: string) {
     const targetLeads = leads as Array<{ id: number }>;
     const totalLeads = targetLeads.length;
     
-    const promises = callers.map(async (caller, idx) => {
+    const results = [];
+    for (let idx = 0; idx < callers.length; idx++) {
+      const caller = callers[idx];
       const ids = targetLeads
         .filter((_, i) => i % callers.length === idx)
         .map(x => x.id);
 
-      if (ids.length === 0) return;
+      if (ids.length === 0) continue;
 
-      return supabase
+      const res = await supabase
         .from('leads')
         .update({ assigned_to: caller })
         .in('id', ids);
-    });
+      results.push(res);
+    }
 
-    const results = await Promise.all(promises);
     const updateError = results.find(result => result?.error)?.error;
     if (updateError) throw new Error(updateError.message);
-    await logAuditEvent(session.name, 'SPLIT_LEADS', `Divided ${totalLeads} unassigned uncalled leads equally among caller teams`);
+    await logAuditEvent(session.name, 'SPLIT_LEADS', `Divided ${totalLeads} unassigned uncalled leads equally among ${callers.length} callers`);
     return { success: true, totalAssigned: totalLeads };
   } catch (error: any) {
     console.error('[splitLeadsEqually]', error.message);
@@ -1117,171 +1205,6 @@ export async function downloadFullBackup(adminCallerName: string = 'Hamid') {
   }
 }
 
-export async function previewLeadImport(csvText: string) {
-  try {
-    await requireAdminSession();
-    const supabase = requireSupabase();
-    const parsedRows = parseCsvText(csvText).filter(row => row.agency_name || row.phone || row.maps_link);
-    if (!parsedRows.length) {
-      return { success: false, error: 'No usable rows found. Include headers like agency_name, area, phone, maps_link.', preview: null };
-    }
-
-    const existingRows = await getAllLeadDuplicateFields(supabase);
-    const seenImportKeys = new Set<string>();
-    const rows = parsedRows.map((row: any) => {
-      const reasons: string[] = [];
-      const phoneNormalized = normalizePhoneForDuplicate(row.phone);
-      const phone2Normalized = normalizePhoneForDuplicate(row.phone_2);
-      const mapsLink = normalizeForDuplicate(row.maps_link);
-      const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
-
-      if (!row.agency_name) reasons.push('Missing agency_name');
-      if (!row.phone && !row.maps_link && !row.website) reasons.push('Missing phone/maps_link/website');
-
-      if (phoneNormalized && existingRows.some((lead: any) =>
-        normalizePhoneValues(lead.phone).includes(phoneNormalized) ||
-        normalizePhoneValues(lead.phone_2).includes(phoneNormalized)
-      )) {
-        reasons.push('Duplicate phone');
-      } else if (phone2Normalized && existingRows.some((lead: any) =>
-        normalizePhoneValues(lead.phone).includes(phone2Normalized) ||
-        normalizePhoneValues(lead.phone_2).includes(phone2Normalized)
-      )) {
-        reasons.push('Duplicate phone');
-      }
-
-      if (mapsLink && existingRows.some((lead: any) => normalizeForDuplicate(lead.maps_link) === mapsLink)) reasons.push('Duplicate maps_link');
-      if (row.agency_name && row.area && existingRows.some((lead: any) => `${normalizeForDuplicate(lead.agency_name)}|${normalizeForDuplicate(lead.area)}` === agencyArea)) {
-        reasons.push('Duplicate agency + area');
-      }
-
-      const importKey = phoneNormalized || phone2Normalized || mapsLink || agencyArea;
-      if (importKey && seenImportKeys.has(importKey)) reasons.push('Duplicate inside import file');
-      if (importKey) seenImportKeys.add(importKey);
-
-      return {
-        ...row,
-        priority: row.priority || 3,
-        call_status: 'Not Called',
-        duplicate_reasons: reasons,
-        importable: reasons.length === 0,
-      };
-    });
-
-    const importable = rows.filter(row => row.importable).length;
-    return {
-      success: true,
-      preview: {
-        total_rows: rows.length,
-        importable_rows: importable,
-        skipped_rows: rows.length - importable,
-        rows,
-      },
-    };
-  } catch (error: any) {
-    console.error('[previewLeadImport]', error.message);
-    return { success: false, error: error.message, preview: null };
-  }
-}
-
-export async function commitLeadImport(rows: any[], fileName: string, createdBy: string) {
-  try {
-    const session = await requireAdminSession();
-    const supabase = requireSupabase();
-    const schema = await getDataSafetySchemaStatus();
-    if (!schema.ready) {
-      return { success: false, error: `MIGRATION_REQUIRED: ${schema.error || 'Run scripts/data_safety_migration.sql first.'}` };
-    }
-
-    const batchId = `batch_${Date.now()}`;
-    const importRows = rows.filter(row => row.importable).map(row => {
-      const clean: Record<string, any> = {};
-      IMPORTABLE_LEAD_FIELDS.forEach(field => {
-        if (row[field] !== undefined && row[field] !== '') clean[field] = row[field];
-      });
-      return {
-        ...clean,
-        priority: clean.priority || 3,
-        call_status: 'Not Called',
-        caller_name: null,
-        assigned_to: null,
-        call_notes: null,
-        meeting_date: null,
-        last_called_at: null,
-        import_batch_id: batchId,
-        source_file: fileName || 'manual-import.csv',
-      };
-    });
-
-    if (!importRows.length) return { success: false, error: 'No importable rows selected.' };
-
-    const { error: batchError } = await supabase.from('import_batches').insert({
-      id: batchId,
-      file_name: fileName || 'manual-import.csv',
-      total_rows: rows.length,
-      inserted_rows: importRows.length,
-      skipped_rows: rows.length - importRows.length,
-        created_by: session.name,
-    });
-    if (batchError) throw new Error(batchError.message);
-
-    for (let i = 0; i < importRows.length; i += 500) {
-      const { error } = await supabase.from('leads').insert(importRows.slice(i, i + 500));
-      if (error) throw new Error(error.message);
-    }
-
-    await logAuditEvent(session.name, 'COMMIT_IMPORT', `Imported ${importRows.length} leads from file: ${fileName} (skipped ${rows.length - importRows.length} duplicates)`);
-    return { success: true, batchId, inserted: importRows.length, skipped: rows.length - importRows.length };
-  } catch (error: any) {
-    console.error('[commitLeadImport]', error.message);
-    return { success: false, error: error.message };
-  }
-}
-
-export async function undoLastImport(adminCallerName: string) {
-  try {
-    const session = await requireAdminSession();
-    const supabase = requireSupabase();
-    const schema = await getDataSafetySchemaStatus();
-    if (!schema.ready) {
-      return { success: false, error: `MIGRATION_REQUIRED: ${schema.error || 'Run scripts/data_safety_migration.sql first.'}` };
-    }
-
-    const { data: batches, error: batchError } = await supabase
-      .from('import_batches')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    if (batchError) throw new Error(batchError.message);
-    const batch = batches?.[0];
-    if (!batch) return { success: false, error: 'No import batch found to undo.' };
-
-    const { count, error: countError } = await supabase
-      .from('leads')
-      .select('*', { count: 'exact', head: true })
-      .eq('import_batch_id', batch.id);
-    if (countError) throw new Error(countError.message);
-
-    const { error: deleteError } = await supabase
-      .from('leads')
-      .delete()
-      .eq('import_batch_id', batch.id);
-    if (deleteError) throw new Error(deleteError.message);
-
-    const { error: batchDeleteError } = await supabase
-      .from('import_batches')
-      .delete()
-      .eq('id', batch.id);
-    if (batchDeleteError) throw new Error(batchDeleteError.message);
-
-    await logAuditEvent(session.name, 'UNDO_IMPORT', `Undid import batch ${batch.id}, removing ${count || 0} leads`);
-    return { success: true, batchId: batch.id, removed: count || 0 };
-  } catch (error: any) {
-    console.error('[undoLastImport]', error.message);
-    return { success: false, error: error.message };
-  }
-}
-
 // ── 15. Active Dialer Locking System ──────────────────────────────────────────
 export async function lockLead(leadId: number, callerName: string) {
   try {
@@ -1372,8 +1295,8 @@ export async function recallLead(leadId: number, callerName: string) {
 export async function resetCampaign(pin: string, adminCallerName: string = 'Hamid') {
   try {
     const session = await requireAdminSession();
-    const adminPin = process.env.ADMIN_RESET_PIN;
-    if (!adminPin) throw new Error('ADMIN_RESET_PIN_NOT_CONFIGURED');
+    const adminPin = (process.env.ADMIN_RESET_PIN || '').trim();
+    if (!adminPin || adminPin.length < 6) throw new Error('ADMIN_RESET_PIN_NOT_CONFIGURED');
     if (!safeStringEqual(adminPin, pin)) {
       throw new Error('INVALID_ADMIN_PIN');
     }
@@ -1392,8 +1315,7 @@ export async function resetCampaign(pin: string, adminCallerName: string = 'Hami
         locked_by: null,
         locked_at: null,
         last_updated: new Date().toISOString()
-      })
-      .neq('id', 0); // Updates all rows
+      });
 
     if (resetErr) throw new Error(resetErr.message);
 
@@ -1401,7 +1323,7 @@ export async function resetCampaign(pin: string, adminCallerName: string = 'Hami
     const { error: historyErr } = await supabase
       .from('call_history')
       .delete()
-      .neq('id', 0);
+      .neq('id', -1); 
 
     if (historyErr) throw new Error(historyErr.message);
 
@@ -1413,7 +1335,6 @@ export async function resetCampaign(pin: string, adminCallerName: string = 'Hami
   }
 }
 
-// Helper to get all active callers from caller_profiles, falling back to Hamid, Oussama, Kamel
 async function getActiveCallers(supabase: any): Promise<string[]> {
   try {
     const { data, error } = await supabase.from('caller_profiles').select('name');
@@ -1465,32 +1386,11 @@ export async function getCallerProfiles() {
   try {
     if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
-    const { data, error } = await supabase.from('caller_profiles').select('name, gender, role, daily_call_target, weekly_appointment_target').order('name', { ascending: true });
+    const { data, error } = await supabase.from('caller_profiles').select('*');
     if (error) throw new Error(error.message);
-    
-    // Fallback if table is empty
-    if (!data || data.length === 0) {
-      return {
-        success: true,
-        profiles: [
-          { name: 'Hamid', gender: 'Male', role: 'Admin', daily_call_target: 80, weekly_appointment_target: 15 },
-          { name: 'Oussama', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 },
-          { name: 'Kamel', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 }
-        ]
-      };
-    }
-    return { success: true, profiles: data };
+    return { success: true, profiles: data || [] };
   } catch (error: any) {
-    console.error('[getCallerProfiles]', error.message);
-    return {
-      success: true,
-      dbOffline: true,
-      profiles: [
-        { name: 'Hamid', gender: 'Male', role: 'Admin', daily_call_target: 80, weekly_appointment_target: 15 },
-        { name: 'Oussama', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 },
-        { name: 'Kamel', gender: 'Male', role: 'Caller', daily_call_target: 80, weekly_appointment_target: 15 }
-      ]
-    };
+    return { success: false, error: error.message, profiles: [] };
   }
 }
 
@@ -1499,7 +1399,6 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
     
-    // Check custom profiles first
     const { data, error } = await supabase
       .from('caller_profiles')
       .select('pin, role')
@@ -1509,13 +1408,10 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     if (!error && data) {
       if (verifyCallerPin(data.pin, pin)) {
         if (!data.pin.startsWith(`${PIN_HASH_PREFIX}$`)) {
-          const { error: upgradeError } = await supabase
+          await supabase
             .from('caller_profiles')
             .update({ pin: hashCallerPin(pin) })
             .eq('name', name);
-          if (upgradeError) {
-            console.warn('[verifyCallerPinAction] Unable to upgrade legacy caller PIN hash:', upgradeError.message);
-          }
         }
         const role = (data.role || 'Caller') as CallerRole;
         await setCallerSession(name, role);
@@ -1524,7 +1420,6 @@ export async function verifyCallerPinAction(name: string, pin: string) {
       return { success: false };
     }
     
-    // Fallback to env variables if not found in DB
     let expectedPin = '';
     let role = 'Caller';
     if (name === 'Hamid') {
@@ -1566,7 +1461,7 @@ export async function submitTeamApplication(name: string, email: string, phone: 
       .eq('status', 'Pending')
       .limit(1);
     if (existingError) throw new Error(existingError.message);
-    if (existing?.length) throw new Error('APPLICATION_ALREADY_PENDING');
+    if (existing?.length) return { success: true };
 
     const { error } = await supabase.from('team_applications').insert({
       name: normalizedName,
@@ -1604,7 +1499,6 @@ export async function handleApplicationDecision(applicationId: number, status: '
     await requireAdminSession();
     const supabase = requireSupabase();
     
-    // 1. Fetch application details
     const { data: app, error: fetchErr } = await supabase
       .from('team_applications')
       .select('*')
@@ -1613,7 +1507,6 @@ export async function handleApplicationDecision(applicationId: number, status: '
       
     if (fetchErr || !app) throw new Error(fetchErr?.message || 'Application not found');
     
-    // 2. If accepted, create the caller profile before marking the application accepted.
     if (status === 'Accepted') {
       if (!pin) throw new Error('PIN is required for caller creation.');
       const { error: profileErr } = await supabase
@@ -1626,12 +1519,19 @@ export async function handleApplicationDecision(applicationId: number, status: '
       if (profileErr) throw new Error(profileErr.message);
     }
 
-    // 3. Update application status only after all prerequisites succeed.
-    const { error: updateErr } = await supabase
-      .from('team_applications')
-      .update({ status })
-      .eq('id', applicationId);
-    if (updateErr) throw new Error(updateErr.message);
+    if (status === 'Rejected') {
+      const { error: deleteErr } = await supabase
+        .from('team_applications')
+        .delete()
+        .eq('id', applicationId);
+      if (deleteErr) throw new Error(deleteErr.message);
+    } else {
+      const { error: updateErr } = await supabase
+        .from('team_applications')
+        .update({ status })
+        .eq('id', applicationId);
+      if (updateErr) throw new Error(updateErr.message);
+    }
     
     return { success: true };
   } catch (error: any) {
@@ -1648,14 +1548,12 @@ export async function deleteCallerProfile(name: string) {
     }
     const supabase = requireSupabase();
     
-    // 1. Delete the profile row
     const { error } = await supabase
       .from('caller_profiles')
       .delete()
       .eq('name', name);
     if (error) throw new Error(error.message);
     
-    // 2. Unassign active uncalled leads assigned to this caller
     const { error: unassignErr } = await supabase
       .from('leads')
       .update({ assigned_to: null })
@@ -1686,19 +1584,47 @@ export async function verifyPortalPinAction(pin: string) {
   }
 }
 
-async function getAllLeadDuplicateFields(supabase: any) {
-  const rows: any[] = [];
-  const pageSize = 1000;
-  for (let offset = 0; ; offset += pageSize) {
-    const { data, error } = await supabase
-      .from('leads')
-      .select('id, agency_name, area, phone, phone_2, maps_link, website')
-      .range(offset, offset + pageSize - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...(data || []));
-    if (!data || data.length < pageSize) break;
+async function findDuplicateLeadsInDb(supabase: any, importRows: any[]) {
+  const phones = new Set<string>();
+  const mapsLinks = new Set<string>();
+  const names = new Set<string>();
+
+  importRows.forEach(row => {
+    if (row.phone) phones.add(normalizePhoneForDuplicate(row.phone));
+    if (row.phone_2) phones.add(normalizePhoneForDuplicate(row.phone_2));
+    if (row.maps_link) mapsLinks.add(normalizeForDuplicate(row.maps_link));
+    if (row.agency_name) names.add(normalizeForDuplicate(row.agency_name));
+  });
+
+  const phoneList = Array.from(phones).filter(Boolean);
+  const mapsList = Array.from(mapsLinks).filter(Boolean);
+  const nameList = Array.from(names).filter(Boolean);
+
+  if (phoneList.length === 0 && mapsList.length === 0 && nameList.length === 0) {
+    return [];
   }
-  return rows;
+
+  const orConditions: string[] = [];
+  if (phoneList.length > 0) {
+    const escapedPhones = phoneList.map(p => `"${escapePostgrestFilterValue(p)}"`).join(',');
+    orConditions.push(`phone.in.(${escapedPhones})`, `phone_2.in.(${escapedPhones})`);
+  }
+  if (mapsList.length > 0) {
+    const escapedMaps = mapsList.map(m => `"${escapePostgrestFilterValue(m)}"`).join(',');
+    orConditions.push(`maps_link.in.(${escapedMaps})`);
+  }
+  if (nameList.length > 0) {
+    const escapedNames = nameList.map(n => `"${escapePostgrestFilterValue(n)}"`).join(',');
+    orConditions.push(`agency_name.in.(${escapedNames})`);
+  }
+
+  const { data, error } = await supabase
+    .from('leads')
+    .select('id, agency_name, area, phone, phone_2, maps_link, website')
+    .or(orConditions.join(','));
+
+  if (error) throw new Error(error.message);
+  return data || [];
 }
 
 export async function getCurrentSessionAction() {
@@ -1721,24 +1647,17 @@ export async function logoutAction() {
   return { success: true };
 }
 
-
-// ── Phase 2: CSV Header Extraction ───────────────────────────────────────────
-export async function extractCsvHeaders(csvText: string) {
-  try {
-    await requireAdminSession();
-    const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l: string) => l.trim());
-    if (lines.length < 1) return { success: false, error: 'Empty file', headers: [] };
-    const headers = parseCsvLine(lines[0]).map((h: string) => h.trim());
-    return { success: true, headers };
-  } catch (error: any) {
-    return { success: false, error: error.message, headers: [] };
-  }
-}
-
-// ── Phase 2: Preview with explicit column mapping ─────────────────────────────
 export async function previewLeadImportWithMapping(csvText: string, columnMapping: Record<string, string>) {
   try {
     await requireAdminSession();
+    
+    // Check for column mapping collisions
+    const mappedFields = Object.values(columnMapping).filter(field => field && field !== 'skip');
+    const uniqueMappedFields = new Set(mappedFields);
+    if (mappedFields.length !== uniqueMappedFields.size) {
+      return { success: false, error: 'COLLIDING_COLUMN_MAPPING: Multiple CSV columns cannot be mapped to the same database field.', preview: null };
+    }
+
     const supabase = requireSupabase();
     const lines = csvText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l: string) => l.trim());
     if (lines.length < 2) return { success: false, error: 'No data rows found.', preview: null };
@@ -1769,20 +1688,15 @@ export async function previewLeadImportWithMapping(csvText: string, columnMappin
 
     const cleanPhone = (raw?: string): { normalized: string; display: string; warning: string | null } => {
       if (!raw) return { normalized: '', display: '', warning: 'Missing phone' };
-      const stripped = raw.replace(/[\s\-().]/g, '');
-      const digits = stripped.replace(/\D/g, '');
-      if (!digits) return { normalized: '', display: raw, warning: 'Invalid phone format' };
-      if (digits.length < 8) return { normalized: digits, display: raw, warning: 'Phone too short' };
-      if (digits.length > 15) return { normalized: digits, display: raw, warning: 'Phone too long' };
-      let normalized = digits;
-      if (digits.startsWith('0') && digits.length === 10) {
-        normalized = '213' + digits.substring(1);
-      }
-      const display = digits.startsWith('0') ? digits : ('+' + normalized);
+      const normalized = normalizePhoneForDuplicate(raw);
+      if (!normalized) return { normalized: '', display: raw, warning: 'Invalid phone format' };
+      if (normalized.length < 8) return { normalized, display: raw, warning: 'Phone too short' };
+      if (normalized.length > 15) return { normalized, display: raw, warning: 'Phone too long' };
+      const display = raw.trim().startsWith('+') || raw.trim().startsWith('00') ? ('+' + normalized) : raw.trim();
       return { normalized, display, warning: null };
     };
 
-    const existingRows = await getAllLeadDuplicateFields(supabase);
+    const existingRows = await findDuplicateLeadsInDb(supabase, parsedRows);
     const seenKeys = new Set<string>();
 
     const rows = parsedRows.map((row: any) => {
@@ -1947,5 +1861,201 @@ export async function getCallerTarget(callerName: string) {
     };
   } catch (error: any) {
     return { success: false, error: error.message, daily_call_target: 80, weekly_appointment_target: 15, calls_today: 0 };
+  }
+}
+
+// -- 19. CSV Import Workflow ---------------------------------------------------
+
+/**
+ * Returns raw CSV column headers without importing data.
+ * Used by the column mapper UI in the Admin panel.
+ */
+export async function extractCsvHeaders(csvText: string) {
+  try {
+    await requireAdminSession();
+    const text = csvText.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const firstLine = text.split('\n')[0] || '';
+    const headers = parseCsvLine(firstLine).map((h: string) => h.trim()).filter(Boolean);
+    return { success: true, headers };
+  } catch (error: any) {
+    return { success: false, error: error.message, headers: [] };
+  }
+}
+
+/**
+ * Legacy single-step preview (no column mapper). Uses RFC-compliant parser
+ * and DB-based duplicate detection. Kept for backward compatibility.
+ */
+export async function previewLeadImport(csvText: string) {
+  try {
+    await requireAdminSession();
+    const supabase = requireSupabase();
+
+    const parsedRows = parseCsvText(csvText);
+    if (parsedRows.length === 0) {
+      return { success: false, error: 'No data rows found or empty file.', preview: null };
+    }
+
+    const cleanPhone = (raw?: string): { normalized: string; display: string; warning: string | null } => {
+      if (!raw) return { normalized: '', display: '', warning: 'Missing phone' };
+      const normalized = normalizePhoneForDuplicate(raw);
+      if (!normalized) return { normalized: '', display: raw, warning: 'Invalid phone format' };
+      if (normalized.length < 8) return { normalized, display: raw, warning: 'Phone too short' };
+      if (normalized.length > 15) return { normalized, display: raw, warning: 'Phone too long' };
+      const display = raw.trim().startsWith('+') || raw.trim().startsWith('00') ? ('+' + normalized) : raw.trim();
+      return { normalized, display, warning: null };
+    };
+
+    const existingRows = await findDuplicateLeadsInDb(supabase, parsedRows);
+    const seenKeys = new Set<string>();
+
+    const rows = parsedRows.map((row: any) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+      if (!row.agency_name) warnings.push('Missing business name');
+      if (!row.phone && !row.maps_link && !row.website) warnings.push('Missing phone/maps/website');
+      const phoneResult = cleanPhone(row.phone);
+      if (phoneResult.warning) warnings.push(phoneResult.warning);
+      const pn = phoneResult.normalized;
+      const mapN = normalizeForDuplicate(row.maps_link);
+      const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
+      if (pn && existingRows.some((l: any) => normalizePhoneValues(l.phone).includes(pn) || normalizePhoneValues(l.phone_2).includes(pn))) reasons.push('Duplicate phone in DB');
+      if (mapN && existingRows.some((l: any) => normalizeForDuplicate(l.maps_link) === mapN)) reasons.push('Duplicate maps_link');
+      if (row.agency_name && row.area && existingRows.some((l: any) => `${normalizeForDuplicate(l.agency_name)}|${normalizeForDuplicate(l.area)}` === agencyArea)) reasons.push('Duplicate name+area');
+      const key = pn || mapN || agencyArea;
+      if (key && seenKeys.has(key)) reasons.push('Duplicate in file');
+      if (key) seenKeys.add(key);
+      return {
+        ...row,
+        phone_display: phoneResult.display || row.phone,
+        phone_normalized: phoneResult.normalized,
+        priority: row.priority || 3,
+        call_status: 'Not Called',
+        duplicate_reasons: reasons,
+        warnings,
+        importable: reasons.length === 0,
+      };
+    });
+
+    return {
+      success: true,
+      preview: {
+        total_rows: rows.length,
+        importable_rows: rows.filter((r: any) => r.importable).length,
+        skipped_rows: rows.filter((r: any) => !r.importable).length,
+        warning_rows: rows.filter((r: any) => r.warnings.length > 0).length,
+        rows,
+      },
+    };
+  } catch (error: any) {
+    console.error('[previewLeadImport]', error.message);
+    return { success: false, error: error.message, preview: null };
+  }
+}
+
+/**
+ * Commits a set of previewed importable rows to the database.
+ * Creates an import_batches record for undo support.
+ */
+export async function commitLeadImport(rows: any[], sourceFileName: string, adminCallerName: string) {
+  try {
+    const session = await requireAdminSession();
+    const supabase = requireSupabase();
+
+    const importableRows = rows.filter((r: any) => r.importable !== false);
+    if (importableRows.length === 0) {
+      return { success: true, inserted: 0, skipped: rows.length };
+    }
+
+    const { data: batch, error: batchErr } = await supabase
+      .from('import_batches')
+      .insert({
+        source_file: sourceFileName,
+        row_count: importableRows.length,
+        imported_by: session.name,
+        imported_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (batchErr) throw new Error(batchErr.message);
+    const batchId = batch.id;
+
+    const toInsert = importableRows.map((row: any) => {
+      const { row_number, duplicate_reasons, warnings, importable, phone_display, phone_normalized, ...clean } = row;
+      return {
+        ...clean,
+        import_batch_id: batchId,
+        source_file: sourceFileName,
+        call_status: 'Not Called',
+        priority: clean.priority ?? 3,
+      };
+    });
+
+    const CHUNK_SIZE = 200;
+    let inserted = 0;
+    for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+      const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase.from('leads').insert(chunk);
+      if (error) throw new Error(error.message);
+      inserted += chunk.length;
+    }
+
+    await logAuditEvent(session.name, 'IMPORT_LEADS', `Imported ${inserted} leads from "${sourceFileName}" (batch #${batchId})`);
+    return { success: true, inserted, skipped: rows.length - inserted, batchId };
+  } catch (error: any) {
+    console.error('[commitLeadImport]', error.message);
+    return { success: false, error: error.message, inserted: 0, skipped: 0 };
+  }
+}
+
+/**
+ * Removes all leads from the most recent import batch, but only if none
+ * of those leads have been called or treated (data safety guard).
+ */
+export async function undoLastImport(adminCallerName: string) {
+  try {
+    const session = await requireAdminSession();
+    const supabase = requireSupabase();
+
+    const { data: batches, error: batchErr } = await supabase
+      .from('import_batches')
+      .select('id, source_file, row_count, imported_at')
+      .order('imported_at', { ascending: false })
+      .limit(1);
+
+    if (batchErr) throw new Error(batchErr.message);
+    if (!batches || batches.length === 0) {
+      return { success: false, error: 'No import batches found to undo.' };
+    }
+
+    const batch = batches[0];
+
+    const { count: calledCount, error: calledErr } = await supabase
+      .from('leads')
+      .select('id', { count: 'exact', head: true })
+      .eq('import_batch_id', batch.id)
+      .not('call_status', 'in', '("Not Called",null)');
+
+    if (calledErr) throw new Error(calledErr.message);
+    if (calledCount && calledCount > 0) {
+      return {
+        success: false,
+        error: `Cannot undo: ${calledCount} leads from this batch have already been called or treated.`,
+      };
+    }
+
+    const { error: deleteErr } = await supabase
+      .from('leads')
+      .delete()
+      .eq('import_batch_id', batch.id);
+
+    if (deleteErr) throw new Error(deleteErr.message);
+
+    await logAuditEvent(session.name, 'UNDO_IMPORT', `Removed ${batch.row_count} leads from batch #${batch.id} (${batch.source_file})`);
+    return { success: true, removed: batch.row_count, batchId: batch.id, sourceFile: batch.source_file };
+  } catch (error: any) {
+    console.error('[undoLastImport]', error.message);
+    return { success: false, error: error.message, removed: 0 };
   }
 }

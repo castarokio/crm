@@ -84,7 +84,7 @@ import {
   deleteDeal,
   getCallerTarget,
 } from '@/app/actions';
-import { getSupabase } from '@/lib/supabase';
+
 
 // Custom SVG components for brand icons that are missing in newer lucide-react versions
 const FacebookIcon = ({ className }: { className?: string }) => (
@@ -455,12 +455,14 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
       const editsToSync = [...pendingEdits];
       let successCount = 0;
+      const syncedIds = new Set<string>();
 
       for (const edit of editsToSync) {
         try {
           const res = await updateLeadDetails(edit.leadId, { [edit.field]: edit.value });
           if (res.success) {
             successCount++;
+            syncedIds.add(`${edit.leadId}:${edit.field}:${edit.timestamp}`);
           } else {
             console.error('[Sync] Failed to upload offline edit:', edit, res.error);
           }
@@ -470,11 +472,13 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       }
 
       setPendingEdits(prev => {
-        const remaining = prev.slice(successCount);
+        // Keep only edits that were NOT successfully synced (identified by leadId:field:timestamp key).
+        // This correctly handles cases where early edits fail and later ones succeed.
+        const remaining = prev.filter(e => !syncedIds.has(`${e.leadId}:${e.field}:${e.timestamp}`));
         if (remaining.length === 0) {
           localStorage.removeItem('crm_pending_edits');
         } else {
-          localStorage.setItem('crm_pending_edits', JSON.stringify(remaining));
+          try { localStorage.setItem('crm_pending_edits', JSON.stringify(remaining)); } catch { /* quota */ }
         }
         return remaining;
       });
@@ -558,17 +562,23 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     });
   }, [callerName]);
 
-  // Supabase Real-Time Client Subscription for live database syncing
+  // Server-Mediated SSE Realtime Stream (replaces direct Supabase client subscription
+  // which no longer works after database hardening revoked public anon read access).
   useEffect(() => {
-    const supabase = getSupabase();
-    if (!supabase || !dbConfigured) return;
+    if (!dbConfigured) return;
 
-    const channel = supabase
-      .channel('realtime-leads-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'leads' },
-        (payload: any) => {
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource('/api/realtime');
+
+      es.onopen = () => setRealtimeStatus('SUBSCRIBED');
+
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.status === 'connected') return; // initial handshake ping
           updatesBufferRef.current.push(payload);
           if (!batchTimeoutRef.current) {
             batchTimeoutRef.current = setTimeout(() => {
@@ -576,15 +586,22 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
               batchTimeoutRef.current = null;
             }, 600);
           }
-        }
-      );
+        } catch { /* ignore malformed SSE frames */ }
+      };
 
-    channel.subscribe((status: string) => {
-      setRealtimeStatus(status);
-    });
+      es.onerror = () => {
+        setRealtimeStatus('CLOSED');
+        es?.close();
+        // Reconnect after 5 seconds
+        reconnectTimer = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
 
     return () => {
-      supabase.removeChannel(channel);
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (batchTimeoutRef.current) {
         clearTimeout(batchTimeoutRef.current);
         batchTimeoutRef.current = null;
@@ -659,7 +676,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
   // Added States for visual improvements and locking system
   const [dialerCardTab, setDialerCardTab] = useState<'info' | 'pitch' | 'history'>('info');
-  const [lockedLeadId, setLockedLeadId] = useState<number | null>(null);
+  // lockedLeadId removed — locking uses lockedLeadIdRef (a ref, not state) to avoid re-renders on lock acquisition.
   const [sidebarSearch, setSidebarSearch] = useState<string>('');
   const [currentCallHistory, setCurrentCallHistory] = useState<any[]>([]);
 
@@ -671,8 +688,13 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   useEffect(() => {
     const activeLead = dialerQueue[currentQueueIndex];
     if (activeLead) {
-      // Check if a draft exists in localStorage first (Weakness 13)
-      const draft = localStorage.getItem(`pitch_draft_${activeLead.id}`);
+      // Check if a draft exists in localStorage first — with quota safety
+      let draft: string | null = null;
+      try {
+        draft = localStorage.getItem(`pitch_draft_${activeLead.id}`);
+      } catch {
+        // localStorage may be unavailable in private browsing or if quota exceeded
+      }
       if (draft) {
         setCustomPitchText(draft);
         setCustomInstructionInput('');
@@ -681,7 +703,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
       const agencyName = activeLead.agency_name || '';
       const isNoWeb = !activeLead.website || activeLead.website === 'Not found' || activeLead.website.toLowerCase() === 'none';
-      const defaultPitch = isNoWeb 
+      const defaultPitch = isNoWeb
         ? `Salam ${agencyName}, c'est ${callerName} de Web-OS. Nous avons remarqué que vous aviez une excellente présence sur les réseaux sociaux mais pas encore de site internet. Nous concevons des sites web premium et ultra-rapides pour les agences de voyages algériennes afin de générer des réservations directes. Dites-moi si nous pouvons en discuter !`
         : `Salam ${agencyName}, c'est ${callerName} de Web-OS. Nous avons analysé votre site web et avons constaté qu'il pourrait être optimisé pour le mobile et la vitesse de chargement. Nous aidons les agences de voyages à augmenter leurs ventes en modernisant leur portail. Seriez-vous intéressé par un audit gratuit de votre site ?`;
       setCustomPitchText(defaultPitch);
@@ -693,6 +715,8 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   }, [dialerQueue, currentQueueIndex, callerName]);
 
   const lockedLeadIdRef = React.useRef<number | null>(null);
+  // Track selected lead by ID so queue reorders/updates don't lose the selection.
+  const selectedLeadIdRef = React.useRef<number | null>(null);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -709,12 +733,16 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   }, [activeTab, initialLoadDone]);
 
   // Leaderboard cards staggered load animation using GSAP
+  // Scoped to workspaceRef container to prevent global selector collisions.
   useEffect(() => {
-    if (initialLoadDone) {
-      gsap.fromTo('.gsap-leaderboard-card',
-        { opacity: 0, scale: 0.95, y: 15 },
-        { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'power2.out', stagger: 0.08 }
-      );
+    if (initialLoadDone && workspaceRef.current) {
+      const ctx = gsap.context(() => {
+        gsap.fromTo('.gsap-leaderboard-card',
+          { opacity: 0, scale: 0.95, y: 15 },
+          { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'power2.out', stagger: 0.08 }
+        );
+      }, workspaceRef);
+      return () => ctx.revert();
     }
   }, [initialLoadDone]);
 
@@ -728,11 +756,19 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     }
   }, [dialerQueue, currentQueueIndex]);
 
-  // Concurrency locking lease effect with 2-minute heartbeat interval
+  // Concurrency locking lease effect with 2-minute heartbeat interval.
+  // Depends only on the active lead ID (not the full dialerQueue array) so that
+  // SSE realtime updates to the queue do NOT re-trigger locking and cause snap-back.
+  const activeLeadId = dialerQueue[currentQueueIndex]?.id ?? null;
+
   useEffect(() => {
     if (!dbConfigured || !callerName) return;
 
-    const activeLead = dialerQueue[currentQueueIndex];
+    // Find the active lead by ID to get the current snapshot
+    const activeLead = activeLeadId != null
+      ? dialerQueue.find((l: any) => l.id === activeLeadId) ?? dialerQueue[currentQueueIndex]
+      : null;
+
     if (!activeLead) {
       if (lockedLeadIdRef.current) {
         const toUnlock = lockedLeadIdRef.current;
@@ -742,6 +778,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       return;
     }
 
+    // Don't re-lock if we already hold the lock for this lead
     if (activeLead.id === lockedLeadIdRef.current) return;
 
     let isSubscribed = true;
@@ -759,7 +796,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
       if (res.success) {
         lockedLeadIdRef.current = activeLead.id;
-        
+
         // Start heartbeat to refresh lock every 2 minutes
         heartbeatInterval = setInterval(async () => {
           if (lockedLeadIdRef.current === activeLead.id) {
@@ -771,6 +808,8 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
         setSkippedLeadNotice(`"${activeLead.agency_name}" is locked by another caller; skipped.`);
         setTimeout(() => setSkippedLeadNotice(''), 4500);
         setDialerQueue(prev => prev.filter(lead => lead.id !== activeLead.id));
+        // Clear the selected ID so next lead in queue gets focus
+        selectedLeadIdRef.current = null;
       } else {
         lockedLeadIdRef.current = activeLead.id;
       }
@@ -784,22 +823,54 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
         clearInterval(heartbeatInterval);
       }
     };
-  }, [currentQueueIndex, dialerQueue, callerName, dbConfigured]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLeadId, callerName, dbConfigured]);
 
-  // Release lock on unmount or tab close
+  // Release lock on unmount or tab close.
+  // Uses navigator.sendBeacon for reliable fire-and-forget unlocking on tab close.
+  // Also listens to visibilitychange/focus to renew locks when the tab regains focus.
   useEffect(() => {
+    const sendUnlock = (leadId: number) => {
+      try {
+        const payload = JSON.stringify({ leadId });
+        // sendBeacon survives page unload; fetch does not
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon('/api/unlock-lead', new Blob([payload], { type: 'application/json' }));
+        }
+      } catch { /* ignore */ }
+    };
+
     const handleBeforeUnload = () => {
       if (lockedLeadIdRef.current && callerName && dbConfigured) {
-        unlockLead(lockedLeadIdRef.current, callerName);
+        sendUnlock(lockedLeadIdRef.current);
+      }
+    };
+
+    // Renew lock when tab regains visibility (handles background tab throttling)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && lockedLeadIdRef.current && callerName && dbConfigured) {
+        lockLead(lockedLeadIdRef.current, callerName).catch(() => {});
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (lockedLeadIdRef.current && callerName && dbConfigured) {
+        lockLead(lockedLeadIdRef.current, callerName).catch(() => {});
       }
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      // Also release lock on React unmount (e.g. logout)
       if (lockedLeadIdRef.current && callerName && dbConfigured) {
-        unlockLead(lockedLeadIdRef.current, callerName);
+        sendUnlock(lockedLeadIdRef.current);
+        unlockLead(lockedLeadIdRef.current, callerName).catch(() => {});
       }
     };
   }, [callerName, dbConfigured]);
@@ -821,11 +892,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     });
   }, [dialerQueue, currentQueueIndex, dbConfigured]);
 
-  // Reset page and search query on tab changes
-  useEffect(() => {
-    setCurrentPage(1);
-    setSearchQuery('');
-  }, [activeTab]);
+  // NOTE: page and search resets on tab change are handled directly in handleMainTabChange below.
 
   // Fetch Team Scores
   const fetchLeaderboardData = async () => {
@@ -987,12 +1054,25 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       setDbConfigured(false);
       setDialerQueue(MOCK_LEADS);
       setFreshTargetCount(MOCK_LEADS.length);
+      setCurrentQueueIndex(0);
+      selectedLeadIdRef.current = null;
     } else {
       setDbConfigured(true);
       setDialerQueue(res.queue);
       setFreshTargetCount(res.total ?? res.queue.length);
+      // Restore selection: if the previously selected lead is still in the
+      // refreshed queue, stay on it. Only reset to 0 on a fresh load.
+      const prevId = selectedLeadIdRef.current;
+      const restoredIndex = prevId != null
+        ? (res.queue as any[]).findIndex((l: any) => l.id === prevId)
+        : -1;
+      if (restoredIndex >= 0) {
+        setCurrentQueueIndex(restoredIndex);
+      } else {
+        setCurrentQueueIndex(0);
+        selectedLeadIdRef.current = (res.queue as any[])[0]?.id ?? null;
+      }
     }
-    setCurrentQueueIndex(0);
   }, [callerName]);
 
   const setSectionTotal = useCallback((tab: string, total: number) => {
@@ -1113,7 +1193,9 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       if (dealsRes.success) {
         setDeals(dealsRes.deals || []);
       }
+      // On initial mount always start at index 0
       setCurrentQueueIndex(0);
+      selectedLeadIdRef.current = (queueRes.success ? (queueRes.queue as any[]) : MOCK_LEADS)[0]?.id ?? null;
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     } catch (err) {
       console.error("[fetchAllData] Error:", err)
@@ -1132,7 +1214,8 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setCurrentPage(1);
+      // Only reset page if not already on page 1 to avoid same-value re-renders on every keystroke
+      if (currentPage !== 1) setCurrentPage(1);
     }, 350);
 
     return () => {
@@ -1401,7 +1484,10 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     setDialerQueue(prev => {
       const skipped = prev.find(lead => lead.id === currentLead.id);
       if (!skipped) return prev;
-      return [...prev.filter(lead => lead.id !== currentLead.id), skipped];
+      const next = [...prev.filter(lead => lead.id !== currentLead.id), skipped];
+      // Sync the ref to the new front-of-queue lead
+      selectedLeadIdRef.current = next[0]?.id ?? null;
+      return next;
     });
     setCurrentQueueIndex(0);
   };
@@ -2620,14 +2706,22 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                             <div className="flex gap-2">
                               <button
                                 disabled={currentQueueIndex === 0}
-                                onClick={() => setCurrentQueueIndex(currentQueueIndex - 1)}
+                                onClick={() => {
+                                  const newIdx = currentQueueIndex - 1;
+                                  setCurrentQueueIndex(newIdx);
+                                  selectedLeadIdRef.current = dialerQueue[newIdx]?.id ?? null;
+                                }}
                                 className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none hover:bg-slate-100 transition-all cursor-pointer"
                               >
                                 <ChevronLeft className="w-4 h-4" />
                               </button>
                               <button
                                 disabled={currentQueueIndex === dialerQueue.length - 1}
-                                onClick={() => setCurrentQueueIndex(currentQueueIndex + 1)}
+                                onClick={() => {
+                                  const newIdx = currentQueueIndex + 1;
+                                  setCurrentQueueIndex(newIdx);
+                                  selectedLeadIdRef.current = dialerQueue[newIdx]?.id ?? null;
+                                }}
                                 className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none hover:bg-slate-100 transition-all cursor-pointer"
                               >
                                 <ChevronRight className="w-4 h-4" />
@@ -3627,7 +3721,10 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                             return (
                               <button
                                 key={item.id}
-                                onClick={() => setCurrentQueueIndex(originalIndex)}
+                                onClick={() => {
+                  setCurrentQueueIndex(originalIndex);
+                  selectedLeadIdRef.current = item.id;
+                }}
                                 className={`w-full text-left p-3 rounded-2xl border transition-all duration-200 flex flex-col gap-1 cursor-pointer hover:bg-slate-50/50 ${
                                   isActive
                                     ? 'border-blue-500 bg-blue-50/30 ring-2 ring-blue-50/20'
@@ -4136,6 +4233,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                             assigned_to: callerName,
                                           };
                                           setDialerQueue(prev => [updatedLead, ...prev.filter(q => q.id !== lead.id)]);
+                                          selectedLeadIdRef.current = updatedLead.id;
                                           setCurrentQueueIndex(0);
                                           setActiveTab('dialer');
                                         } else {
@@ -4147,6 +4245,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                           setCurrentQueueIndex(foundIndex);
                                         } else {
                                           setDialerQueue([lead, ...dialerQueue]);
+                                          selectedLeadIdRef.current = lead.id;
                                           setCurrentQueueIndex(0);
                                         }
                                         setActiveTab('dialer');
@@ -4893,6 +4992,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                       assigned_to: callerName,
                                     };
                                     setDialerQueue(prev => [updatedLead, ...prev.filter(x => x.id !== lead.id)]);
+                                    selectedLeadIdRef.current = updatedLead.id;
                                     setCurrentQueueIndex(0);
                                     setActiveTab('dialer');
                                     setLeadsList(prev => prev.filter(x => x.id !== lead.id));
@@ -5067,6 +5167,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                       assigned_to: callerName,
                                     };
                                     setDialerQueue(prev => [updatedLead, ...prev.filter(q => q.id !== lead.id)]);
+                                    selectedLeadIdRef.current = updatedLead.id;
                                     setCurrentQueueIndex(0);
                                     setActiveTab('dialer');
                                   } else {

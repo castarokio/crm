@@ -18,6 +18,9 @@ const SESSION_TTL_SECONDS = 60 * 60 * 12;
 function getSessionSecret() {
   const secret = process.env.SESSION_SECRET;
   if (!secret) throw new Error('SESSION_SECRET_NOT_CONFIGURED');
+  if (secret.length < 32) {
+    console.warn('[Security Warning] SESSION_SECRET is too short. It should be at least 32 characters long.');
+  }
   return secret;
 }
 
