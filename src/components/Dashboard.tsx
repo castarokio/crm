@@ -682,6 +682,8 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
   // Added States for visual improvements and locking system
   const [dialerCardTab, setDialerCardTab] = useState<'info' | 'pitch' | 'history'>('info');
+  const [isSavingChecklist, setIsSavingChecklist] = useState<boolean>(false);
+  const [checklistSavedAlert, setChecklistSavedAlert] = useState<boolean>(false);
   // lockedLeadId removed — locking uses lockedLeadIdRef (a ref, not state) to avoid re-renders on lock acquisition.
   const [sidebarSearch, setSidebarSearch] = useState<string>('');
   const [currentCallHistory, setCurrentCallHistory] = useState<any[]>([]);
@@ -1988,6 +1990,12 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       contact_person: editingLead.contact_person,
       meeting_date: editingLead.meeting_date,
       call_status: editingLead.call_status,
+      called: editingLead.called,
+      message_whatsapp: editingLead.message_whatsapp,
+      message_facebook: editingLead.message_facebook,
+      message_instagram: editingLead.message_instagram,
+      message_tiktok: editingLead.message_tiktok,
+      message_email: editingLead.message_email,
     }).then(res => {
       if (!res.success && dbConfigured) {
         // Rollback on failure
@@ -2990,6 +2998,135 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                     Add new phone
                                   </button>
                                 )}
+                              </div>
+                            </div>
+
+                            {/* Outreach Checklist section */}
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col gap-4">
+                              <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Outreach Checklist</span>
+                                  <span className="text-[10px] text-slate-500">Track contacted channels for this lead</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!currentLead) return;
+                                    setIsSavingChecklist(true);
+                                    const res = await updateLeadDetails(currentLead.id, {
+                                      called: !!currentLead.called,
+                                      message_whatsapp: !!currentLead.message_whatsapp,
+                                      message_facebook: !!currentLead.message_facebook,
+                                      message_instagram: !!currentLead.message_instagram,
+                                      message_tiktok: !!currentLead.message_tiktok,
+                                      message_email: !!currentLead.message_email,
+                                    });
+                                    setIsSavingChecklist(false);
+                                    if (res.success) {
+                                      setChecklistSavedAlert(true);
+                                      setTimeout(() => setChecklistSavedAlert(false), 2000);
+                                    } else {
+                                      alert("Failed to save checklist: " + res.error);
+                                    }
+                                  }}
+                                  disabled={isSavingChecklist}
+                                  className="h-8 px-4 rounded-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-body text-[10px] font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                                >
+                                  {isSavingChecklist ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                                  ) : checklistSavedAlert ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                  ) : (
+                                    <Database className="w-3.5 h-3.5" />
+                                  )}
+                                  {checklistSavedAlert ? 'Saved!' : 'Save Outreach'}
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                {/* Called Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.called}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'called', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">Called</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Voice Call</span>
+                                  </div>
+                                </label>
+
+                                {/* WhatsApp Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.message_whatsapp}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'message_whatsapp', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">WhatsApp</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Messaged</span>
+                                  </div>
+                                </label>
+
+                                {/* Facebook Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.message_facebook}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'message_facebook', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">Facebook</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Messaged</span>
+                                  </div>
+                                </label>
+
+                                {/* Instagram Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.message_instagram}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'message_instagram', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-pink-600 focus:ring-pink-500 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">Instagram</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Messaged</span>
+                                  </div>
+                                </label>
+
+                                {/* TikTok Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.message_tiktok}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'message_tiktok', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-black focus:ring-black cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">TikTok</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Messaged</span>
+                                  </div>
+                                </label>
+
+                                {/* Email Checkbox */}
+                                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-100/85 hover:border-slate-200 transition-all cursor-pointer shadow-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!currentLead?.message_email}
+                                    onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'message_email', e.target.checked)}
+                                    className="h-4.5 w-4.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-body text-xs font-bold text-slate-700">Email</span>
+                                    <span className="text-[8px] text-slate-400 uppercase">Messaged</span>
+                                  </div>
+                                </label>
                               </div>
                             </div>
 
@@ -4583,6 +4720,66 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                               <option value={4}>Priority 4 (Low)</option>
                               <option value={5}>Priority 5 (Minimal)</option>
                             </select>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                          <span className="font-body text-[9px] text-slate-400 tracking-wider uppercase font-bold mb-1">Outreach Status</span>
+                          <div className="grid grid-cols-2 gap-3.5">
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.called}
+                                onChange={(e) => setEditingLead({ ...editingLead, called: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              />
+                              Called
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.message_whatsapp}
+                                onChange={(e) => setEditingLead({ ...editingLead, message_whatsapp: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              />
+                              WhatsApp
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.message_facebook}
+                                onChange={(e) => setEditingLead({ ...editingLead, message_facebook: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600 cursor-pointer"
+                              />
+                              Facebook
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.message_instagram}
+                                onChange={(e) => setEditingLead({ ...editingLead, message_instagram: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-pink-600 focus:ring-pink-500 cursor-pointer"
+                              />
+                              Instagram
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.message_tiktok}
+                                onChange={(e) => setEditingLead({ ...editingLead, message_tiktok: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-black focus:ring-black cursor-pointer"
+                              />
+                              TikTok
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!editingLead.message_email}
+                                onChange={(e) => setEditingLead({ ...editingLead, message_email: e.target.checked })}
+                                className="h-4.5 w-4.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              />
+                              Email
+                            </label>
                           </div>
                         </div>
 

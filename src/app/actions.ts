@@ -241,6 +241,12 @@ const LEAD_LIST_COLUMNS = [
   'instagram_followers',
   'running_ads',
   'services',
+  'called',
+  'message_whatsapp',
+  'message_facebook',
+  'message_instagram',
+  'message_tiktok',
+  'message_email',
 ].join(',');
 
 async function getDataSafetySchemaStatus() {
@@ -452,6 +458,12 @@ export async function updateLeadDetails(id: number, fields: {
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
   address?: string; maps_link?: string; call_status?: string; caller_name?: string | null; assigned_to?: string | null;
   review_count?: number; google_rating?: number;
+  called?: boolean;
+  message_whatsapp?: boolean;
+  message_facebook?: boolean;
+  message_instagram?: boolean;
+  message_tiktok?: boolean;
+  message_email?: boolean;
 }, editorName?: string) {
   try {
     const session = await requireWritableSession();
