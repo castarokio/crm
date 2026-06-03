@@ -8,6 +8,12 @@ function requireSupabase() {
   return supabase;
 }
 
+function requireAdmin(adminCallerName?: string) {
+  if (!adminCallerName || adminCallerName !== 'Hamid') {
+    throw new Error('UNAUTHORIZED_ADMIN_ACTION');
+  }
+}
+
 const CONVERTED_STATUSES = ['Accepted', 'Client Configured'];
 const WARM_STATUSES = ['Interested'];
 const FOLLOWUP_STATUSES = ['Callback', 'Busy', 'No Answer'];
@@ -93,6 +99,16 @@ function parseCsvText(csvText: string): Array<Record<string, any>> {
 
 function normalizeForDuplicate(value?: string | null) {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizePhoneForDuplicate(phone?: string | null) {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) {
+    return '213' + digits.substring(1);
+  }
+  return digits;
 }
 
 const LEAD_LIST_COLUMNS = [
@@ -286,6 +302,36 @@ export async function updateCallStatus(id: number, status: string, notes: string
   }
 }
 
+function computeLeadPriority(lead: {
+  website?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  review_count?: number | null;
+}) {
+  const websiteVal = lead.website ? String(lead.website).trim().toLowerCase() : '';
+  const hasWebsite = websiteVal !== '' && websiteVal !== 'not found' && websiteVal !== 'none';
+  
+  const fbVal = lead.facebook ? String(lead.facebook).trim().toLowerCase() : '';
+  const hasFb = fbVal !== '' && fbVal !== 'not found' && fbVal !== 'none';
+
+  const igVal = lead.instagram ? String(lead.instagram).trim().toLowerCase() : '';
+  const hasIg = igVal !== '' && igVal !== 'not found' && igVal !== 'none';
+  
+  const hasSocials = hasFb || hasIg;
+  const reviewCount = lead.review_count || 0;
+
+  if (!hasWebsite && hasSocials) {
+    return 1; // P1: High Socials, No Web
+  }
+  if (hasWebsite && reviewCount >= 30) {
+    return 2; // P2: High Reviews, Low Web
+  }
+  if (!hasWebsite && !hasSocials) {
+    return 4; // P4: Low
+  }
+  return 3; // P3: Standard
+}
+
 // ── 4. Update Lead Details ────────────────────────────────────────────────────
 export async function updateLeadDetails(id: number, fields: {
   agency_name?: string; phone?: string; phone_2?: string; email?: string; email_2?: string; website?: string;
@@ -293,11 +339,72 @@ export async function updateLeadDetails(id: number, fields: {
   facebook?: string; instagram?: string; tiktok?: string; linkedin?: string; social_link?: string;
   priority?: number; area?: string; notes?: string; contact_person?: string; meeting_date?: string;
   address?: string; maps_link?: string; call_status?: string; caller_name?: string; assigned_to?: string;
+  review_count?: number; google_rating?: number;
 }) {
   try {
+    // Input Validations
+    if ('email' in fields) {
+      const email = fields.email ? String(fields.email).trim() : '';
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error('INVALID_EMAIL_FORMAT');
+      }
+    }
+    if ('email_2' in fields) {
+      const email_2 = fields.email_2 ? String(fields.email_2).trim() : '';
+      if (email_2) {
+        const emails = email_2.split(/\r?\n|[,;]/).map(e => e.trim()).filter(Boolean);
+        for (const email of emails) {
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            throw new Error('INVALID_ALT_EMAIL_FORMAT');
+          }
+        }
+      }
+    }
+    if ('priority' in fields && fields.priority !== undefined) {
+      const prio = Number(fields.priority);
+      if (isNaN(prio) || prio < 1 || prio > 5) {
+        throw new Error('INVALID_PRIORITY_RANGE');
+      }
+    }
+    if ('google_rating' in fields && fields.google_rating !== undefined) {
+      const rating = Number(fields.google_rating);
+      if (isNaN(rating) || rating < 0 || rating > 5) {
+        throw new Error('INVALID_RATING_RANGE');
+      }
+    }
+
     const supabase = requireSupabase();
+    let finalFields = { ...fields };
+    
+    // Auto-calculate priority if website/socials change and priority isn't overridden
+    const hasWebsite = 'website' in fields;
+    const hasFacebook = 'facebook' in fields;
+    const hasInstagram = 'instagram' in fields;
+    const hasReviews = 'review_count' in fields;
+    
+    if ((hasWebsite || hasFacebook || hasInstagram || hasReviews) && !('priority' in fields)) {
+      const { data: leadData } = await supabase
+        .from('leads')
+        .select('website, facebook, instagram, review_count, priority')
+        .eq('id', id)
+        .single();
+        
+      if (leadData) {
+        const merged = {
+          website: hasWebsite ? fields.website : leadData.website,
+          facebook: hasFacebook ? fields.facebook : leadData.facebook,
+          instagram: hasInstagram ? fields.instagram : leadData.instagram,
+          review_count: hasReviews ? fields.review_count : leadData.review_count,
+        };
+        const computed = computeLeadPriority(merged);
+        if (computed !== leadData.priority) {
+          finalFields.priority = computed;
+        }
+      }
+    }
+
     const { error } = await supabase.from('leads').update({
-      ...fields,
+      ...finalFields,
       last_updated: new Date().toISOString(),
     }).eq('id', id);
     if (error) throw new Error(error.message);
@@ -548,20 +655,54 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
 
 // ── 8. Team Leaderboard ───────────────────────────────────────────────────────
 export async function getTeamLeaderboard() {
-  const callers = ['Hamid', 'Oussama', 'Kamel'];
   try {
     const supabase = requireSupabase();
-    const promises = callers.map(async (name) => {
-      const [totalRes, warmRes, lostRes] = await Promise.all([
-        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name),
-        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name).in('call_status', ['Interested', 'Accepted', 'Client Configured']),
-        supabase.from('leads').select('id', { count: 'planned', head: true }).eq('caller_name', name).in('call_status', ['Not Interested', 'Wrong Number']),
-      ]);
-      const total = totalRes.count || 0;
-      const warm = warmRes.count || 0;
-      const lost = lostRes.count || 0;
+    
+    // Fetch all profiles first
+    const { data: profiles, error: profErr } = await supabase.from('caller_profiles').select('name, gender');
+    const callers = (profiles && !profErr && profiles.length > 0)
+      ? profiles
+      : [{ name: 'Hamid', gender: 'Male' }, { name: 'Oussama', gender: 'Male' }, { name: 'Kamel', gender: 'Male' }];
+
+    // Query called leads in ONE query
+    const { data: leads, error: leadsErr } = await supabase
+      .from('leads')
+      .select('caller_name, call_status')
+      .not('caller_name', 'is', null);
+
+    if (leadsErr) throw new Error(leadsErr.message);
+
+    const countsMap: Record<string, { total: number; warm: number; lost: number }> = {};
+    callers.forEach((c: any) => {
+      countsMap[c.name] = { total: 0, warm: 0, lost: 0 };
+    });
+
+    if (leads) {
+      leads.forEach((lead: any) => {
+        const name = lead.caller_name;
+        if (!name) return;
+        if (!countsMap[name]) {
+          countsMap[name] = { total: 0, warm: 0, lost: 0 };
+        }
+        const status = lead.call_status;
+        countsMap[name].total++;
+        if (['Interested', 'Accepted', 'Client Configured'].includes(status)) {
+          countsMap[name].warm++;
+        } else if (['Not Interested', 'Wrong Number'].includes(status)) {
+          countsMap[name].lost++;
+        }
+      });
+    }
+
+    const leaderboard = callers.map((caller: any) => {
+      const name = caller.name;
+      const stats = countsMap[name] || { total: 0, warm: 0, lost: 0 };
+      const total = stats.total;
+      const warm = stats.warm;
+      const lost = stats.lost;
       return {
         name,
+        gender: caller.gender || 'Male',
         total_calls: total,
         warm_deals: warm,
         lost_deals: lost,
@@ -569,8 +710,7 @@ export async function getTeamLeaderboard() {
       };
     });
 
-    const leaderboard = await Promise.all(promises);
-    leaderboard.sort((a, b) => b.warm_deals - a.warm_deals || b.total_calls - a.total_calls);
+    leaderboard.sort((a: any, b: any) => b.warm_deals - a.warm_deals || b.total_calls - a.total_calls);
     return { success: true, leaderboard };
   } catch (error: any) {
     console.error('[getTeamLeaderboard]', error.message);
@@ -625,8 +765,9 @@ export async function getLeadAreas() {
 }
 
 // ── 10. Admin Lead Distribution ──────────────────────────────────────────────
-export async function assignLeadsByRegion(caller: string, region: string) {
+export async function assignLeadsByRegion(adminCallerName: string, caller: string, region: string) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -642,8 +783,9 @@ export async function assignLeadsByRegion(caller: string, region: string) {
   }
 }
 
-export async function assignLeadsByPriority(caller: string, priority: number) {
+export async function assignLeadsByPriority(adminCallerName: string, caller: string, priority: number) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -659,8 +801,9 @@ export async function assignLeadsByPriority(caller: string, priority: number) {
   }
 }
 
-export async function clearAssignments() {
+export async function clearAssignments(adminCallerName: string) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('leads')
@@ -674,8 +817,9 @@ export async function clearAssignments() {
   }
 }
 
-export async function splitLeadsEqually() {
+export async function splitLeadsEqually(adminCallerName: string) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     const { data: leads, error: fetchErr } = await supabase
       .from('leads')
@@ -686,7 +830,7 @@ export async function splitLeadsEqually() {
     if (fetchErr) throw new Error(fetchErr.message);
     if (!leads || leads.length === 0) return { success: true, totalAssigned: 0 };
 
-    const callers = ['Hamid', 'Oussama', 'Kamel'];
+    const callers = await getActiveCallers(supabase);
     const targetLeads = leads as Array<{ id: number }>;
     const totalLeads = targetLeads.length;
     
@@ -730,8 +874,9 @@ export async function getCallHistory(leadId: number) {
 }
 
 // ── 11b. Permanently Delete Bad Lead ─────────────────────────────────────────
-export async function deleteLeadPermanently(leadId: number) {
+export async function deleteLeadPermanently(adminCallerName: string, leadId: number) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
 
     const { error: historyError } = await supabase
@@ -808,8 +953,9 @@ export async function getAssignmentStats() {
 }
 
 // ── 13. Admin Lead Range Assignment ──────────────────────────────────────────
-export async function assignLeadsByRange(caller: string, startId: number, endId: number, forceReassign: boolean = false) {
+export async function assignLeadsByRange(adminCallerName: string, caller: string, startId: number, endId: number, forceReassign: boolean = false) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     let q = supabase
       .from('leads')
@@ -882,7 +1028,7 @@ export async function previewLeadImport(csvText: string) {
 
     const { data: existing, error } = await supabase
       .from('leads')
-      .select('id, agency_name, area, phone, maps_link, website')
+      .select('id, agency_name, area, phone, phone_2, maps_link, website')
       .limit(10000);
     if (error) throw new Error(error.message);
 
@@ -890,6 +1036,8 @@ export async function previewLeadImport(csvText: string) {
     const seenImportKeys = new Set<string>();
     const rows = parsedRows.map((row: any) => {
       const reasons: string[] = [];
+      const phoneNormalized = normalizePhoneForDuplicate(row.phone);
+      const phone2Normalized = normalizePhoneForDuplicate(row.phone_2);
       const phone = normalizeForDuplicate(row.phone);
       const mapsLink = normalizeForDuplicate(row.maps_link);
       const agencyArea = `${normalizeForDuplicate(row.agency_name)}|${normalizeForDuplicate(row.area)}`;
@@ -897,13 +1045,24 @@ export async function previewLeadImport(csvText: string) {
       if (!row.agency_name) reasons.push('Missing agency_name');
       if (!row.phone && !row.maps_link && !row.website) reasons.push('Missing phone/maps_link/website');
 
-      if (phone && existingRows.some((lead: any) => normalizeForDuplicate(lead.phone) === phone)) reasons.push('Duplicate phone');
+      if (phoneNormalized && existingRows.some((lead: any) => 
+        normalizePhoneForDuplicate(lead.phone) === phoneNormalized || 
+        normalizePhoneForDuplicate(lead.phone_2) === phoneNormalized
+      )) {
+        reasons.push('Duplicate phone');
+      } else if (phone2Normalized && existingRows.some((lead: any) => 
+        normalizePhoneForDuplicate(lead.phone) === phone2Normalized || 
+        normalizePhoneForDuplicate(lead.phone_2) === phone2Normalized
+      )) {
+        reasons.push('Duplicate phone');
+      }
+
       if (mapsLink && existingRows.some((lead: any) => normalizeForDuplicate(lead.maps_link) === mapsLink)) reasons.push('Duplicate maps_link');
       if (row.agency_name && row.area && existingRows.some((lead: any) => `${normalizeForDuplicate(lead.agency_name)}|${normalizeForDuplicate(lead.area)}` === agencyArea)) {
         reasons.push('Duplicate agency + area');
       }
 
-      const importKey = phone || mapsLink || agencyArea;
+      const importKey = phoneNormalized || phone2Normalized || mapsLink || agencyArea;
       if (importKey && seenImportKeys.has(importKey)) reasons.push('Duplicate inside import file');
       if (importKey) seenImportKeys.add(importKey);
 
@@ -934,6 +1093,7 @@ export async function previewLeadImport(csvText: string) {
 
 export async function commitLeadImport(rows: any[], fileName: string, createdBy: string) {
   try {
+    requireAdmin(createdBy);
     const supabase = requireSupabase();
     const schema = await getDataSafetySchemaStatus();
     if (!schema.ready) {
@@ -984,8 +1144,9 @@ export async function commitLeadImport(rows: any[], fileName: string, createdBy:
   }
 }
 
-export async function undoLastImport() {
+export async function undoLastImport(adminCallerName: string) {
   try {
+    requireAdmin(adminCallerName);
     const supabase = requireSupabase();
     const schema = await getDataSafetySchemaStatus();
     if (!schema.ready) {
@@ -1111,8 +1272,12 @@ export async function recallLead(leadId: number, callerName: string) {
 }
 
 // ── 17. Reset Campaign to Zero ────────────────────────────────────────────────
-export async function resetCampaign() {
+export async function resetCampaign(pin: string) {
   try {
+    const adminPin = process.env.ADMIN_RESET_PIN || '676869';
+    if (pin !== adminPin) {
+      throw new Error('INVALID_ADMIN_PIN');
+    }
     const supabase = requireSupabase();
     
     // Reset all leads to fresh status
@@ -1144,6 +1309,199 @@ export async function resetCampaign() {
     return { success: true };
   } catch (error: any) {
     console.error('[resetCampaign]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Helper to get all active callers from caller_profiles, falling back to Hamid, Oussama, Kamel
+async function getActiveCallers(supabase: any): Promise<string[]> {
+  try {
+    const { data, error } = await supabase.from('caller_profiles').select('name');
+    if (error || !data || data.length === 0) {
+      return ['Hamid', 'Oussama', 'Kamel'];
+    }
+    return data.map((p: any) => p.name);
+  } catch {
+    return ['Hamid', 'Oussama', 'Kamel'];
+  }
+}
+
+// ── 18. Dynamic Caller Profiles & Team Applications Actions ──────────────────
+export async function getCallerProfiles() {
+  try {
+    const supabase = requireSupabase();
+    const { data, error } = await supabase.from('caller_profiles').select('name, gender').order('name', { ascending: true });
+    if (error) throw new Error(error.message);
+    
+    // Fallback if table is empty
+    if (!data || data.length === 0) {
+      return {
+        success: true,
+        profiles: [
+          { name: 'Hamid', gender: 'Male' },
+          { name: 'Oussama', gender: 'Male' },
+          { name: 'Kamel', gender: 'Male' }
+        ]
+      };
+    }
+    return { success: true, profiles: data };
+  } catch (error: any) {
+    console.error('[getCallerProfiles]', error.message);
+    return {
+      success: true,
+      dbOffline: true,
+      profiles: [
+        { name: 'Hamid', gender: 'Male' },
+        { name: 'Oussama', gender: 'Male' },
+        { name: 'Kamel', gender: 'Male' }
+      ]
+    };
+  }
+}
+
+export async function verifyCallerPinAction(name: string, pin: string) {
+  try {
+    const supabase = requireSupabase();
+    
+    // Check custom profiles first
+    const { data, error } = await supabase
+      .from('caller_profiles')
+      .select('pin')
+      .eq('name', name)
+      .single();
+      
+    if (!error && data) {
+      return { success: data.pin === pin };
+    }
+    
+    // Fallback to env variables if not found in DB
+    let expectedPin = '';
+    if (name === 'Hamid') {
+      expectedPin = (process.env.NEXT_PUBLIC_HAMID_PIN || '343536').trim();
+    } else if (name === 'Oussama') {
+      expectedPin = (process.env.NEXT_PUBLIC_OUSSAMA_PIN || '121314').trim();
+    } else if (name === 'Kamel') {
+      expectedPin = (process.env.NEXT_PUBLIC_KAMEL_PIN || '232425').trim();
+    }
+    
+    return { success: pin === expectedPin && expectedPin !== '' };
+  } catch (error: any) {
+    console.error('[verifyCallerPinAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function submitTeamApplication(name: string, email: string, phone: string, gender: string) {
+  try {
+    const supabase = requireSupabase();
+    const { error } = await supabase.from('team_applications').insert({
+      name,
+      email,
+      phone,
+      gender,
+      status: 'Pending'
+    });
+    if (error) throw new Error(error.message);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[submitTeamApplication]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getTeamApplications() {
+  try {
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('team_applications')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return { success: true, applications: data || [] };
+  } catch (error: any) {
+    console.error('[getTeamApplications]', error.message);
+    return { success: false, error: error.message, applications: [] };
+  }
+}
+
+export async function handleApplicationDecision(applicationId: number, status: 'Accepted' | 'Rejected', pin?: string) {
+  try {
+    const supabase = requireSupabase();
+    
+    // 1. Fetch application details
+    const { data: app, error: fetchErr } = await supabase
+      .from('team_applications')
+      .select('*')
+      .eq('id', applicationId)
+      .single();
+      
+    if (fetchErr || !app) throw new Error(fetchErr?.message || 'Application not found');
+    
+    // 2. Update application status
+    const { error: updateErr } = await supabase
+      .from('team_applications')
+      .update({ status })
+      .eq('id', applicationId);
+    if (updateErr) throw new Error(updateErr.message);
+    
+    // 3. If accepted, create profile
+    if (status === 'Accepted') {
+      if (!pin) throw new Error('PIN is required for caller creation.');
+      const { error: profileErr } = await supabase
+        .from('caller_profiles')
+        .insert({
+          name: app.name,
+          pin,
+          gender: app.gender
+        });
+      if (profileErr) throw new Error(profileErr.message);
+    }
+    
+    return { success: true };
+  } catch (error: any) {
+    console.error('[handleApplicationDecision]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function deleteCallerProfile(name: string) {
+  try {
+    if (name === 'Hamid') {
+      throw new Error('ADMIN_CANNOT_BE_DELETED');
+    }
+    const supabase = requireSupabase();
+    
+    // 1. Delete the profile row
+    const { error } = await supabase
+      .from('caller_profiles')
+      .delete()
+      .eq('name', name);
+    if (error) throw new Error(error.message);
+    
+    // 2. Unassign active uncalled leads assigned to this caller
+    const { error: unassignErr } = await supabase
+      .from('leads')
+      .update({ assigned_to: null })
+      .eq('assigned_to', name)
+      .or(ACTIVE_ASSIGNMENT_FILTER);
+      
+    if (unassignErr) {
+      console.warn('[deleteCallerProfile unassign warning]', unassignErr.message);
+    }
+    
+    return { success: true };
+  } catch (error: any) {
+    console.error('[deleteCallerProfile]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function verifyPortalPinAction(pin: string) {
+  try {
+    const expectedPortalPin = (process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN || '676869').trim();
+    return { success: pin === expectedPortalPin };
+  } catch (error: any) {
+    console.error('[verifyPortalPinAction]', error.message);
     return { success: false, error: error.message };
   }
 }

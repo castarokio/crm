@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { gsap } from 'gsap';
 import {
   Phone,
   Mail,
@@ -38,6 +39,7 @@ import {
   RefreshCw,
   Plus,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   getLeads,
@@ -69,7 +71,11 @@ import {
   unlockLead,
   recallLead,
   resetCampaign,
+  getTeamApplications,
+  handleApplicationDecision,
+  deleteCallerProfile,
 } from '@/app/actions';
+import { getSupabase } from '@/lib/supabase';
 
 // Custom SVG components for brand icons that are missing in newer lucide-react versions
 const FacebookIcon = ({ className }: { className?: string }) => (
@@ -167,6 +173,7 @@ interface DashboardProps {
 
 export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<'dialer' | 'deadlines' | 'database' | 'lost' | 'admin' | 'followups' | 'warm_leads' | 'good_clients' | 'treated'>('dialer');
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const [dbConfigured, setDbConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [assignmentStats, setAssignmentStats] = useState<{ stats: any[]; unassigned: number }>({ stats: [], unassigned: 0 });
@@ -215,6 +222,269 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const [copiedPhone, setCopiedPhone] = useState<boolean>(false);
   const [skippedLeadNotice, setSkippedLeadNotice] = useState<string>('');
 
+  // Toast Notification States
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Real-time Throttling & Status States
+  const [realtimeStatus, setRealtimeStatus] = useState<string>('CONNECTING');
+  const updatesBufferRef = useRef<any[]>([]);
+  const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ValueInputModal States
+  const [valueModalOpen, setValueModalOpen] = useState<boolean>(false);
+  const [valueModalTitle, setValueModalTitle] = useState<string>('');
+  const [valueModalInput, setValueModalInput] = useState<string>('');
+  const [valueModalPlaceholder, setValueModalPlaceholder] = useState<string>('');
+  const [valueModalCallback, setValueModalCallback] = useState<((val: string) => Promise<void> | void) | null>(null);
+
+  // Custom Scheduler Date/Time Picker States
+  const [schedulerOpen, setSchedulerOpen] = useState<boolean>(false);
+  const [schedulerTitle, setSchedulerTitle] = useState<string>('Schedule Event');
+  const [schedulerDate, setSchedulerDate] = useState<Date>(new Date());
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
+  const [schedulerHour, setSchedulerHour] = useState<string>('09');
+  const [schedulerMinute, setSchedulerMinute] = useState<string>('00');
+  const [schedulerCallback, setSchedulerCallback] = useState<((val: string) => void) | null>(null);
+
+  // Deadlines View Mode (Calendar vs List)
+  const [deadlinesViewMode, setDeadlinesViewMode] = useState<'list' | 'calendar'>('calendar');
+  const [deadlinesMonth, setDeadlinesMonth] = useState<Date>(new Date());
+
+  // Offline Synchronization States
+  const [pendingEdits, setPendingEdits] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('crm_pending_edits');
+      return stored ? JSON.parse(stored) : [];
+    }
+    return [];
+  });
+  const [isOnline, setIsOnline] = useState<boolean>(() => 
+    typeof window !== 'undefined' ? window.navigator.onLine : true
+  );
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // Helper to add an edit to offline cache
+  const bufferOfflineEdit = (leadId: number, field: string, value: any) => {
+    setPendingEdits(prev => {
+      const filtered = prev.filter(item => !(item.leadId === leadId && item.field === field));
+      const next = [...filtered, { leadId, field, value, timestamp: Date.now() }];
+      localStorage.setItem('crm_pending_edits', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Offline listeners
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleOnlineStatus = () => {
+      setIsOnline(window.navigator.onLine);
+    };
+
+    window.addEventListener('online', handleOnlineStatus);
+    window.addEventListener('offline', handleOnlineStatus);
+
+    return () => {
+      window.removeEventListener('online', handleOnlineStatus);
+      window.removeEventListener('offline', handleOnlineStatus);
+    };
+  }, []);
+
+  // Sync edits when back online
+  useEffect(() => {
+    const syncOfflineEdits = async () => {
+      if (!isOnline || pendingEdits.length === 0 || isSyncing) return;
+      setIsSyncing(true);
+
+      const editsToSync = [...pendingEdits];
+      let successCount = 0;
+
+      for (const edit of editsToSync) {
+        try {
+          const res = await updateLeadDetails(edit.leadId, { [edit.field]: edit.value });
+          if (res.success) {
+            successCount++;
+          } else {
+            console.error('[Sync] Failed to upload offline edit:', edit, res.error);
+          }
+        } catch (err) {
+          console.error('[Sync] Error processing edit:', edit, err);
+        }
+      }
+
+      setPendingEdits(prev => {
+        const remaining = prev.slice(successCount);
+        if (remaining.length === 0) {
+          localStorage.removeItem('crm_pending_edits');
+        } else {
+          localStorage.setItem('crm_pending_edits', JSON.stringify(remaining));
+        }
+        return remaining;
+      });
+
+      setIsSyncing(false);
+
+      if (successCount > 0) {
+        alert(`Connection restored! ${successCount} offline edits synced successfully.`);
+        refreshDashboardMetrics().catch(e => console.error(e));
+      }
+    };
+
+    syncOfflineEdits();
+  }, [isOnline, pendingEdits, isSyncing]);
+
+  // Apply batch updates from buffer to prevent browser re-render locks
+  const applyBatchUpdates = useCallback(() => {
+    if (updatesBufferRef.current.length === 0) return;
+    const updates = [...updatesBufferRef.current];
+    updatesBufferRef.current = [];
+
+    // Process all updates in the batch for dialer queue
+    setDialerQueue(prev => {
+      let next = [...prev];
+      for (const payload of updates) {
+        const { eventType, new: newLead, old: oldLead } = payload;
+        if (eventType === 'UPDATE' && newLead) {
+          const shouldBeInQueue = newLead.call_status !== 'Treated' && 
+            (newLead.assigned_to === callerName || !newLead.assigned_to);
+          const exists = next.some(item => item.id === newLead.id);
+          if (exists) {
+            if (!shouldBeInQueue) {
+              next = next.filter(item => item.id !== newLead.id);
+            } else {
+              next = next.map(item => item.id === newLead.id ? { ...item, ...newLead } : item);
+            }
+          }
+        } else if (eventType === 'DELETE' && oldLead) {
+          next = next.filter(item => item.id !== oldLead.id);
+        }
+      }
+      return next;
+    });
+
+    // Process leads list
+    setLeadsList(prev => {
+      let next = [...prev];
+      for (const payload of updates) {
+        const { eventType, new: newLead, old: oldLead } = payload;
+        if (eventType === 'UPDATE' && newLead) {
+          next = next.map(item => item.id === newLead.id ? { ...item, ...newLead } : item);
+        } else if (eventType === 'DELETE' && oldLead) {
+          next = next.filter(item => item.id !== oldLead.id);
+        }
+      }
+      return next;
+    });
+
+    // Process meetings list
+    setMeetingsList(prev => {
+      let next = [...prev];
+      for (const payload of updates) {
+        const { eventType, new: newLead, old: oldLead } = payload;
+        if (eventType === 'UPDATE' && newLead) {
+          const hasMeeting = !!newLead.meeting_date;
+          const alreadyIn = next.some(item => item.id === newLead.id);
+          if (hasMeeting) {
+            if (alreadyIn) {
+              next = next.map(item => item.id === newLead.id ? { ...item, ...newLead } : item);
+            } else {
+              next = [newLead, ...next];
+            }
+          } else {
+            next = next.filter(item => item.id !== newLead.id);
+          }
+        } else if (eventType === 'DELETE' && oldLead) {
+          next = next.filter(item => item.id !== oldLead.id);
+        }
+      }
+      return next;
+    });
+  }, [callerName]);
+
+  // Supabase Real-Time Client Subscription for live database syncing
+  useEffect(() => {
+    const supabase = getSupabase();
+    if (!supabase || !dbConfigured) return;
+
+    const channel = supabase
+      .channel('realtime-leads-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leads' },
+        (payload: any) => {
+          updatesBufferRef.current.push(payload);
+          if (!batchTimeoutRef.current) {
+            batchTimeoutRef.current = setTimeout(() => {
+              applyBatchUpdates();
+              batchTimeoutRef.current = null;
+            }, 600);
+          }
+        }
+      );
+
+    channel.subscribe((status: string) => {
+      setRealtimeStatus(status);
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current);
+        batchTimeoutRef.current = null;
+      }
+    };
+  }, [dbConfigured, applyBatchUpdates]);
+
+  // Helper to parse existing meeting date strings
+  const parseInitialDateTime = (val: string) => {
+    const defaultDate = new Date();
+    let parsedDate = defaultDate;
+    let parsedHour = '09';
+    let parsedMinute = '00';
+
+    if (!val) {
+      return { date: parsedDate, hour: parsedHour, minute: parsedMinute };
+    }
+
+    const match = val.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}))?/);
+    if (match) {
+      const [_, y, m, d, hr, min] = match;
+      const year = parseInt(y, 10);
+      const month = parseInt(m, 10) - 1;
+      const day = parseInt(d, 10);
+      const dateObj = new Date(year, month, day);
+      if (!isNaN(dateObj.getTime())) {
+        parsedDate = dateObj;
+      }
+      if (hr) parsedHour = hr;
+      if (min) parsedMinute = min;
+    } else {
+      const dateObj = new Date(val);
+      if (!isNaN(dateObj.getTime())) {
+        parsedDate = dateObj;
+        parsedHour = String(dateObj.getHours()).padStart(2, '0');
+        parsedMinute = String(dateObj.getMinutes()).padStart(2, '0');
+      }
+    }
+    return { date: parsedDate, hour: parsedHour, minute: parsedMinute };
+  };
+
+  const openSchedulerForLead = (
+    initialVal: string,
+    onSave: (val: string) => void,
+    title: string = 'Schedule Meeting Date & Time'
+  ) => {
+    const { date, hour, minute } = parseInitialDateTime(initialVal);
+    setSchedulerDate(date);
+    setCalendarViewDate(new Date(date.getFullYear(), date.getMonth(), 1));
+    setSchedulerHour(hour);
+    setSchedulerMinute(minute);
+    setSchedulerCallback(() => onSave);
+    setSchedulerTitle(title);
+    setSchedulerOpen(true);
+  };
+
   // New States for Dialed Number Tracking & Admin Analytics
   const [dialedNumber, setDialedNumber] = useState<string>('');
   const [analyticsData, setAnalyticsData] = useState<any | null>(null);
@@ -227,6 +497,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   const activeTabRef = useRef(activeTab);
   const leadsListRequestRef = useRef(0);
   const skipNextListEffectRef = useRef(false);
+  const [teamApplications, setTeamApplications] = useState<any[]>([]);
+  const [isAppsLoading, setIsAppsLoading] = useState<boolean>(false);
+  const lastLoadedTabRef = useRef<string>('');
 
   // Added States for visual improvements and locking system
   const [dialerCardTab, setDialerCardTab] = useState<'info' | 'pitch' | 'history'>('info');
@@ -260,6 +533,26 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  // Tab-switching transitions using GSAP
+  useEffect(() => {
+    if (!initialLoadDone || !workspaceRef.current) return;
+    
+    gsap.fromTo(workspaceRef.current,
+      { opacity: 0.35, y: 10 },
+      { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }
+    );
+  }, [activeTab, initialLoadDone]);
+
+  // Leaderboard cards staggered load animation using GSAP
+  useEffect(() => {
+    if (initialLoadDone) {
+      gsap.fromTo('.gsap-leaderboard-card',
+        { opacity: 0, scale: 0.95, y: 15 },
+        { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'power2.out', stagger: 0.08 }
+      );
+    }
+  }, [initialLoadDone]);
 
   // Sync dialedNumber with active lead
   useEffect(() => {
@@ -329,9 +622,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     };
   }, [currentQueueIndex, dialerQueue, callerName, dbConfigured]);
 
-  // Release lock on unmount
+  // Release lock on unmount or tab close
   useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (lockedLeadIdRef.current && callerName && dbConfigured) {
+        unlockLead(lockedLeadIdRef.current, callerName);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       if (lockedLeadIdRef.current && callerName && dbConfigured) {
         unlockLead(lockedLeadIdRef.current, callerName);
       }
@@ -376,6 +678,16 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       setMeetingsList(res.meetings);
     }
   };
+
+  // Fetch Team Join Applications
+  const fetchApplications = useCallback(async () => {
+    setIsAppsLoading(true);
+    const res = await getTeamApplications();
+    if (res.success && res.applications) {
+      setTeamApplications(res.applications);
+    }
+    setIsAppsLoading(false);
+  }, []);
 
   // Fetch Assignment stats for Hamid
   const fetchAssignmentStats = useCallback(async () => {
@@ -525,7 +837,10 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     leadsListRequestRef.current = requestId;
 
     setIsLeadsListLoading(true);
-    setLeadsList([]);
+    if (lastLoadedTabRef.current !== tab) {
+      setLeadsList([]);
+      lastLoadedTabRef.current = tab;
+    }
 
     void (async () => {
       try {
@@ -645,14 +960,16 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       fetchMeetingsData();
     } else if (activeTab === 'admin') {
       fetchAssignmentStats();
+      fetchApplications();
     } else if (activeTab === 'database') {
       if (['Lost', 'Followups', 'WarmLeads', 'GoodClients', 'Treated'].includes(filterStatus)) {
         setFilterStatus('');
       }
     }
-  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus]);
+  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus, fetchApplications]);
 
   const currentLead = dialerQueue[currentQueueIndex];
+  const activeCallers = leaderboard.length > 0 ? leaderboard.map(x => x.name) : ['Hamid', 'Oussama', 'Kamel'];
   const displayCount = (count: number) => inventoryCountsReady ? count : '...';
 
   const handleMainTabChange = (tabId: typeof activeTab) => {
@@ -693,10 +1010,24 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
   };
 
   const saveLeadFieldToServer = async (leadId: number, field: string, value: any) => {
-    const res = await updateLeadDetails(leadId, { [field]: value });
-    if (!res.success && dbConfigured) {
-      console.error('Failed to auto-save field:', field, res.error);
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      bufferOfflineEdit(leadId, field, value);
+      return true;
     }
+
+    const res = await updateLeadDetails(leadId, { [field]: value });
+    if (!res.success) {
+      if (dbConfigured) {
+        console.error('Failed to auto-save field:', field, res.error);
+        if (res.error?.includes('fetch') || res.error?.includes('Network') || res.error?.includes('Failed to fetch')) {
+          bufferOfflineEdit(leadId, field, value);
+          return true;
+        }
+        alert(`Failed to auto-save field '${field}': ${res.error || 'Unknown error'}`);
+      }
+      return false;
+    }
+    return true;
   };
 
   const splitMultiValue = (value?: string | null) =>
@@ -727,21 +1058,44 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     updateLeadFieldInQueue(leadId, field, values.join('\n'));
   };
 
-  const promptAddMultiValue = async (lead: any, field: string, label: string) => {
-    const value = window.prompt(`Add ${label}`);
-    if (!value?.trim()) return;
-    const values = [...splitMultiValue(lead?.[field]), value.trim()];
-    const nextValue = joinMultiValue(values);
-    updateLeadFieldInQueue(lead.id, field, nextValue);
-    await saveLeadFieldToServer(lead.id, field, nextValue);
+  const promptAddMultiValue = (lead: any, field: string, label: string) => {
+    setValueModalTitle(`Add ${label}`);
+    setValueModalPlaceholder(`Enter ${label.toLowerCase()}...`);
+    setValueModalInput('');
+    setValueModalCallback(() => async (val: string) => {
+      if (!val.trim()) return;
+      const currentLead = dialerQueue.find(item => item.id === lead.id) || leadsList.find(item => item.id === lead.id) || editingLead || lead;
+      const originalValue = currentLead?.[field] ?? '';
+      const values = [...splitMultiValue(originalValue), val.trim()];
+      const nextValue = joinMultiValue(values);
+      updateLeadFieldInQueue(lead.id, field, nextValue);
+      const success = await saveLeadFieldToServer(lead.id, field, nextValue);
+      if (!success) {
+        updateLeadFieldInQueue(lead.id, field, originalValue);
+      }
+    });
+    setValueModalOpen(true);
+  };
+
+  const handleValueModalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (valueModalCallback) {
+      await valueModalCallback(valueModalInput);
+    }
+    setValueModalOpen(false);
+    setValueModalInput('');
   };
 
   const removeMultiValueField = async (leadId: number, field: string, index: number) => {
     const lead = dialerQueue.find(item => item.id === leadId) || leadsList.find(item => item.id === leadId) || editingLead;
-    const values = splitMultiValue(lead?.[field]).filter((_, itemIndex) => itemIndex !== index);
+    const originalValue = lead?.[field] ?? '';
+    const values = splitMultiValue(originalValue).filter((_, itemIndex) => itemIndex !== index);
     const nextValue = joinMultiValue(values);
     updateLeadFieldInQueue(leadId, field, nextValue);
-    await saveLeadFieldToServer(leadId, field, nextValue);
+    const success = await saveLeadFieldToServer(leadId, field, nextValue);
+    if (!success) {
+      updateLeadFieldInQueue(leadId, field, originalValue);
+    }
   };
 
   const setLeadTreated = async (lead: any, checked: boolean, meetingDate?: string) => {
@@ -807,7 +1161,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setTotalLeadsCount(prev => Math.max(0, prev - 1));
     setCurrentQueueIndex(index => Math.max(0, Math.min(index, dialerQueue.length - 2)));
 
-    const res = await deleteLeadPermanently(currentLead.id);
+    const res = await deleteLeadPermanently(callerName, currentLead.id);
     if (!res.success) {
       setDialerQueue(prevQueue);
       setLeadsList(prevLeadsList);
@@ -838,7 +1192,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setTotalLeadsCount(prev => Math.max(0, prev - 1));
     setEditingLead(null);
 
-    const res = await deleteLeadPermanently(editingLead.id);
+    const res = await deleteLeadPermanently(callerName, editingLead.id);
     if (!res.success) {
       setDialerQueue(prevQueue);
       setLeadsList(prevLeadsList);
@@ -919,7 +1273,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     if (!confirm('Undo the most recent import batch? This removes only leads from that import batch.')) return;
 
     setIsDataSafetyBusy(true);
-    const res = await undoLastImport();
+    const res = await undoLastImport(callerName);
     setIsDataSafetyBusy(false);
     if (!res.success) {
       alert('Undo failed: ' + res.error);
@@ -1145,6 +1499,34 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
   };
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 2500);
+  }, []);
+
+  const dialPhone = useCallback((phone: string) => {
+    if (!phone || phone === 'Not found') return;
+    copyToClipboard(phone);
+
+    let isDesktop = true;
+    if (typeof window !== 'undefined' && window.navigator?.userAgent) {
+      const ua = window.navigator.userAgent.toLowerCase();
+      const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
+      isDesktop = !isMobileDevice;
+    }
+
+    if (isDesktop) {
+      showToast("Number copied! Dial on your handset.");
+    } else {
+      showToast("Opening dialer...");
+    }
+
+    window.open(`tel:${phone}`, '_self');
+  }, [showToast]);
 
   const normalizeExternalUrl = (value?: string | null) => {
     const raw = splitMultiValue(value)[0] || value?.trim();
@@ -1396,15 +1778,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       
       {/* DB Config Warning Alert */}
       {!dbConfigured && (
-        <div className="w-full bg-amber-50 border border-amber-200 rounded-3xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="w-full bg-rose-50 border border-rose-200 rounded-3xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-pulse shadow-md">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-700">
-              <AlertCircle className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-700 shrink-0">
+              <AlertCircle className="w-5 h-5 text-rose-600" />
             </div>
             <div>
-              <p className="font-body text-xs font-bold text-amber-800">PORTAL OFFLINE - RUNNING LOCAL SIMULATION</p>
-              <p className="font-body text-[11px] text-amber-600">
-                PostgreSQL database (`DATABASE_URL`) is not configured. Visualizing local simulated mock data for Hamid, Oussama, and Kamel.
+              <p className="font-body text-xs font-bold text-rose-800 tracking-wider">DATABASE CONNECTION FAILED — LOCAL SIMULATION MODE ACTIVE</p>
+              <p className="font-body text-[11px] text-rose-600 font-semibold mt-0.5">
+                PostgreSQL database connection is currently unavailable. Running in local simulation mode — changes will not be saved.
               </p>
             </div>
           </div>
@@ -1423,7 +1805,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
               <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold tracking-widest uppercase">ACTIVE</span>
             </div>
             <p className="font-body text-[10px] text-slate-400 tracking-widest uppercase font-semibold">
-              Campaign: Hamid • Oussama • Kamel
+              Campaign: {activeCallers.join(' • ')}
             </p>
           </div>
         </div>
@@ -1462,6 +1844,31 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
           ))}
         </div>
 
+        {/* Connection & Sync Status Indicator */}
+        <div className="flex items-center gap-2 pr-3 hidden md:flex font-body text-[9px] uppercase tracking-wider font-bold">
+          {!isOnline ? (
+            <div className="flex items-center gap-1.5 text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-full animate-pulse shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse" />
+              <span>Offline ({pendingEdits.length} Unsaved)</span>
+            </div>
+          ) : isSyncing ? (
+            <div className="flex items-center gap-1.5 text-amber-600 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full animate-pulse shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+              <span>Syncing edits...</span>
+            </div>
+          ) : (realtimeStatus === 'CHANNEL_ERROR' || realtimeStatus === 'CLOSED') ? (
+            <div className="flex items-center gap-1.5 text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-full animate-pulse shadow-sm" title={`Realtime Status: ${realtimeStatus}`}>
+              <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse" />
+              <span>Live Sync Lost (Retrying...)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Online synced</span>
+            </div>
+          )}
+        </div>
+
         {/* Active Caller details */}
         <div className="flex items-center gap-3 md:border-l border-slate-200 md:pl-6">
           <div className="w-9 h-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
@@ -1483,13 +1890,22 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
       {/* Team score Leaderboard widgets */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {['Hamid', 'Oussama', 'Kamel'].map((name) => {
-          const stats = leaderboard.find(x => x.name === name) || { total_calls: 0, warm_deals: 0, lost_deals: 0, success_rate: 0.0 };
+        {activeCallers.map((name) => {
+          const stats = leaderboard.find(x => x.name === name) || { total_calls: 0, warm_deals: 0, lost_deals: 0, success_rate: 0.0, gender: 'Male' };
           const isActive = callerName === name;
+          const style = stats.gender === 'Female'
+            ? 'bg-rose-50 text-rose-600'
+            : name === 'Hamid'
+            ? 'bg-blue-50 text-blue-600'
+            : name === 'Oussama'
+            ? 'bg-indigo-50 text-indigo-600'
+            : name === 'Kamel'
+            ? 'bg-cyan-50 text-cyan-600'
+            : 'bg-slate-50 text-slate-600';
           return (
             <div
               key={name}
-              className={`bg-white border rounded-3xl p-5 shadow-sm flex items-center justify-between transition-all duration-300 relative overflow-hidden ${
+              className={`gsap-leaderboard-card bg-white border rounded-3xl p-5 shadow-sm flex items-center justify-between transition-all duration-300 relative overflow-hidden ${
                 isActive ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200/80'
               }`}
             >
@@ -1499,9 +1915,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 </div>
               )}
               <div className="flex items-center gap-3.5">
-                <div className={`w-11 h-11 rounded-full flex items-center justify-center ${
-                  name === 'Hamid' ? 'bg-blue-50 text-blue-600' : name === 'Oussama' ? 'bg-indigo-50 text-indigo-600' : 'bg-cyan-50 text-cyan-600'
-                }`}>
+                <div className={`w-11 h-11 rounded-full flex items-center justify-center ${style}`}>
                   <User className="w-5 h-5" />
                 </div>
                 <div>
@@ -1522,7 +1936,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
       </div>
 
       {/* Main Workspace Panels */}
-      <div className="w-full min-h-[500px]">
+      <div ref={workspaceRef} className="w-full min-h-[500px]">
         {isLoading && activeTab === 'dialer' ? (
           <div className="w-full min-h-[400px] flex flex-col items-center justify-center gap-4 bg-white border border-slate-200/80 rounded-3xl p-10">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
@@ -1545,7 +1959,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     <div>
                       <h3 className="font-display text-base tracking-widest text-slate-800 uppercase font-black mb-1">Queue Completed</h3>
                       <p className="font-body text-xs text-slate-400 max-w-sm mx-auto">
-                        Amazing job Hamid, Oussama, and Kamel! There are no remaining uncalled targets matching active priorities.
+                        Amazing job {activeCallers.join(', ')}! There are no remaining uncalled targets matching active priorities.
                       </p>
                     </div>
                     <button
@@ -1644,11 +2058,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-indigo-400" />
                               <input
                                 type="text"
+                                readOnly
                                 value={currentLead?.meeting_date || ''}
-                                onChange={(e) => updateLeadFieldInQueue(currentLead.id, 'meeting_date', e.target.value)}
-                                onBlur={(e) => saveLeadFieldToServer(currentLead.id, 'meeting_date', e.target.value)}
-                                placeholder="Meeting day/time if scheduled"
-                                className="w-full bg-white border border-indigo-100 focus:border-indigo-300 rounded-xl py-2.5 pl-9 pr-3 font-body text-xs text-slate-800 focus:outline-none"
+                                onClick={() => currentLead && openSchedulerForLead(
+                                  currentLead.meeting_date || '',
+                                  (val) => {
+                                    updateLeadFieldInQueue(currentLead.id, 'meeting_date', val);
+                                    saveLeadFieldToServer(currentLead.id, 'meeting_date', val);
+                                  },
+                                  "Schedule Meeting"
+                                )}
+                                placeholder="Select date & time..."
+                                className="w-full bg-white border border-indigo-100 focus:border-indigo-300 rounded-xl py-2.5 pl-9 pr-3 font-body text-xs text-slate-800 focus:outline-none cursor-pointer"
                               />
                             </div>
                             <button
@@ -1740,7 +2161,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       disabled={!currentLead?.phone || currentLead?.phone === 'Not found'}
                                       onClick={() => {
                                         setDialedNumber(currentLead.phone);
-                                        window.open(`tel:${currentLead.phone}`, '_self');
+                                        dialPhone(currentLead.phone);
                                       }}
                                       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                                     >
@@ -1782,7 +2203,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       <button
                                         onClick={() => {
                                           setDialedNumber(phoneValue);
-                                          window.open(`tel:${phoneValue}`, '_self');
+                                          dialPhone(phoneValue);
                                         }}
                                         className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-body text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all disabled:opacity-40"
                                       >
@@ -1966,10 +2387,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <span className="font-body text-[9px] text-slate-400 tracking-widest uppercase font-bold">Priority (Manual)</span>
                                     <select
                                       value={currentLead?.priority || 3}
-                                      onChange={(e) => {
+                                      onChange={async (e) => {
                                         const val = parseInt(e.target.value, 10);
+                                        const oldVal = currentLead?.priority;
                                         updateLeadFieldInQueue(currentLead.id, 'priority', val);
-                                        saveLeadFieldToServer(currentLead.id, 'priority', val);
+                                        const success = await saveLeadFieldToServer(currentLead.id, 'priority', val);
+                                        if (!success && oldVal !== undefined) {
+                                          updateLeadFieldInQueue(currentLead.id, 'priority', oldVal);
+                                        }
                                       }}
                                       className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2 font-body text-xs text-slate-800 focus:outline-none cursor-pointer"
                                     >
@@ -2066,6 +2491,60 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                       className="w-full bg-slate-50 border border-slate-200 focus:border-blue-300 focus:bg-white rounded-2xl p-4 font-body text-xs text-slate-700 leading-relaxed h-[110px] outline-none shadow-inner transition-all"
                                       placeholder="Le script s'affichera ici..."
                                     />
+                                  </div>
+
+                                  {/* Quick Outreach Templates Selector */}
+                                  <div className="flex flex-col gap-1.5 bg-slate-50/50 border border-slate-100 p-3 rounded-2xl">
+                                    <span className="font-body text-[8px] text-slate-400 uppercase font-black tracking-widest block">
+                                      Quick Templates (Click to apply)
+                                    </span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (currentLead) {
+                                            const date = currentLead.meeting_date || "[Date]";
+                                            const txt = `Bonjour, je vous confirme notre rendez-vous téléphonique le ${date} avec l'équipe de Call-OS. Cordialement, ${callerName}.`;
+                                            setCustomPitchText(txt);
+                                          }
+                                        }}
+                                        className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
+                                        title="Confirm Meeting (French)"
+                                      >
+                                        Meeting Confirmation
+                                      </button>
+                                      
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (currentLead) {
+                                            const site = currentLead.website || 'https://call-os.com';
+                                            const contact = currentLead.contact_person || 'Madame, Monsieur';
+                                            const txt = `Bonjour ${contact}, suite à notre appel, voici le lien pour configurer vos services : ${site}. À votre entière disposition.`;
+                                            setCustomPitchText(txt);
+                                          }
+                                        }}
+                                        className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
+                                        title="Config Link (French)"
+                                      >
+                                        Config Link / Pitch
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (currentLead) {
+                                            const date = currentLead.meeting_date || "[Date]";
+                                            const txt = `Hello, following our discussion, I am locking in our session on ${date}. Best, ${callerName}.`;
+                                            setCustomPitchText(txt);
+                                          }
+                                        }}
+                                        className="py-1.5 px-2 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 rounded-xl text-[9px] font-bold font-body transition-colors cursor-pointer text-center truncate"
+                                        title="Referral Pitch (English)"
+                                      >
+                                        English Referral
+                                      </button>
+                                    </div>
                                   </div>
 
                                   {/* AI Customization Prompt Bar */}
@@ -2168,7 +2647,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <button
                                       onClick={() => {
                                         writeClipboardText(customPitchText);
-                                        alert('Pitch copié dans le presse-papier ! Ouverture de Instagram DMs...');
+                                        showToast('Pitch copié dans le presse-papier ! Ouverture de Instagram DMs...');
                                         window.open(normalizeInstagramDmUrl(currentLead?.instagram), '_blank');
                                       }}
                                       className="px-3 py-2.5 rounded-xl bg-pink-50 text-pink-700 hover:bg-pink-600 hover:text-white border border-pink-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
@@ -2179,7 +2658,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                     <button
                                       onClick={() => {
                                         writeClipboardText(customPitchText);
-                                        alert('Pitch copié dans le presse-papier ! Ouverture de Facebook Messenger...');
+                                        showToast('Pitch copié dans le presse-papier ! Ouverture de Facebook Messenger...');
                                         window.open(normalizeMessengerUrl(currentLead?.facebook), '_blank');
                                       }}
                                       className="px-3 py-2.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-100 text-[11px] font-bold tracking-wide transition-all flex items-center justify-center gap-1 cursor-pointer"
@@ -2261,9 +2740,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                               <button
                                 onClick={() => {
-                                  const dt = prompt("Enter Meeting date/time (e.g. Friday 3PM):");
-                                  if (dt) {
-                                    handleQuickOutcome('Accepted', dt);
+                                  if (currentLead) {
+                                    openSchedulerForLead(
+                                      currentLead.meeting_date || '',
+                                      (val) => handleQuickOutcome('Accepted', val),
+                                      "Schedule Meeting (Accepted)"
+                                    );
                                   }
                                 }}
                                 className="py-2 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
@@ -2290,9 +2772,12 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
 
                               <button
                                 onClick={() => {
-                                  const dt = prompt("Enter Callback date/time (e.g. Tomorrow 2PM):");
-                                  if (dt) {
-                                    handleQuickOutcome('Callback', dt);
+                                  if (currentLead) {
+                                    openSchedulerForLead(
+                                      currentLead.meeting_date || '',
+                                      (val) => handleQuickOutcome('Callback', val),
+                                      "Schedule Callback"
+                                    );
                                   }
                                 }}
                                 className="py-2 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-600 hover:text-white border border-amber-100 font-body text-[10px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer flex items-center justify-center gap-1"
@@ -2538,74 +3023,210 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                     {meetingsList.length} Active Deadlines
                   </span>
                 </div>
-
-                <div className="w-full overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs font-body">
-                    <thead>
-                      <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Target Agency</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Contact Person</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Meeting Date/Time</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Scheduled By</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Call Status</th>
-                        <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {meetingsList.map((m) => (
-                        <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-4">
-                            <span className="font-semibold text-slate-900 block">{m.agency_name}</span>
-                          </td>
-                          <td className="p-4 text-slate-600 font-mono font-semibold">{m.phone}</td>
-                          <td className="p-4 text-slate-700 font-semibold">{m.contact_person || 'Secretary'}</td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-1.5 text-blue-700 font-bold">
-                              <Clock className="w-3.5 h-3.5" />
-                              {m.meeting_date}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border">
-                              {m.caller_name || '-'}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${getStatusStyle(m.call_status)}`}>
-                              {m.call_status}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => window.open(`tel:${m.phone}`, '_self')}
-                                className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 transition-all cursor-pointer"
-                                title="Call Now"
-                              >
-                                <Phone className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setEditingLead({ ...m })}
-                                className="p-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-600 transition-all cursor-pointer"
-                                title="Edit Date/Details"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {meetingsList.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
-                            No accepted meetings or callbacks scheduled.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+ 
+                {/* View Mode Toggle Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between bg-slate-50 border border-slate-100 p-2.5 rounded-2xl gap-3">
+                  <div className="flex bg-slate-200/60 p-1 rounded-xl gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setDeadlinesViewMode('calendar')}
+                      className={`px-4 py-1.5 rounded-lg font-display text-[9px] font-bold tracking-wider uppercase transition-all cursor-pointer ${
+                        deadlinesViewMode === 'calendar'
+                          ? 'bg-white text-slate-900 shadow-sm border border-slate-200/50'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Calendar View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeadlinesViewMode('list')}
+                      className={`px-4 py-1.5 rounded-lg font-display text-[9px] font-bold tracking-wider uppercase transition-all cursor-pointer ${
+                        deadlinesViewMode === 'list'
+                          ? 'bg-white text-slate-900 shadow-sm border border-slate-200/50'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      List Table
+                    </button>
+                  </div>
+ 
+                  {deadlinesViewMode === 'calendar' && (
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                        {deadlinesMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setDeadlinesMonth(new Date(deadlinesMonth.getFullYear(), deadlinesMonth.getMonth() - 1, 1))}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 cursor-pointer shadow-sm"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeadlinesMonth(new Date(deadlinesMonth.getFullYear(), deadlinesMonth.getMonth() + 1, 1))}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 cursor-pointer shadow-sm"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
+ 
+                {deadlinesViewMode === 'calendar' ? (
+                  <div className="w-full flex flex-col gap-3 select-none animate-fadeIn">
+                    {/* Calendar grid headers */}
+                    <div className="grid grid-cols-7 text-center font-display text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2">
+                      <div>Mo</div>
+                      <div>Tu</div>
+                      <div>We</div>
+                      <div>Th</div>
+                      <div>Fr</div>
+                      <div>Sa</div>
+                      <div>Su</div>
+                    </div>
+ 
+                    {/* Calendar month grid */}
+                    <div className="grid grid-cols-7 gap-2 bg-slate-50/20 p-2 border border-slate-100 rounded-3xl min-h-[500px]">
+                      {(() => {
+                        const days = [];
+                        const year = deadlinesMonth.getFullYear();
+                        const month = deadlinesMonth.getMonth();
+                        const totalDays = new Date(year, month + 1, 0).getDate();
+                        let startDay = new Date(year, month, 1).getDay();
+                        startDay = startDay === 0 ? 6 : startDay - 1;
+ 
+                        for (let i = 0; i < startDay; i++) {
+                          days.push(<div key={`deadlines-empty-${i}`} className="bg-slate-50/5 border border-dashed border-slate-200/40 rounded-2xl min-h-[100px]" />);
+                        }
+ 
+                        for (let d = 1; d <= totalDays; d++) {
+                          const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                          const isToday = new Date().getDate() === d && new Date().getMonth() === month && new Date().getFullYear() === year;
+                          const dayMeetings = meetingsList.filter(m => m.meeting_date && m.meeting_date.startsWith(dateKey));
+ 
+                          days.push(
+                            <div 
+                              key={`deadlines-day-${d}`} 
+                              className={`bg-white border rounded-2xl p-2.5 min-h-[110px] flex flex-col gap-1.5 transition-all hover:shadow-md ${
+                                isToday ? 'border-blue-300 ring-2 ring-blue-50/30' : 'border-slate-200/70'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className={`font-mono text-[10px] font-black ${isToday ? 'text-blue-600' : 'text-slate-400'}`}>
+                                  {d}
+                                </span>
+                                {dayMeetings.length > 0 && (
+                                  <span className="w-4.5 h-4.5 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center font-mono text-[8px] text-blue-600 font-bold">
+                                    {dayMeetings.length}
+                                  </span>
+                                )}
+                              </div>
+ 
+                              <div className="flex-1 overflow-y-auto max-h-[85px] flex flex-col gap-1.5 scrollbar-thin">
+                                {dayMeetings.map(m => {
+                                  const timeMatch = m.meeting_date.match(/\s+(\d{2}):(\d{2})/);
+                                  const timeStr = timeMatch ? timeMatch[0].trim() : 'All day';
+                                  const isCallback = m.call_status === 'Callback';
+ 
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      onClick={() => setEditingLead({ ...m })}
+                                      className={`w-full text-left p-1.5 rounded-lg border text-[8px] font-bold tracking-wide uppercase transition-all hover:scale-[1.02] flex flex-col gap-0.5 cursor-pointer ${
+                                        isCallback 
+                                          ? 'bg-amber-50 text-amber-800 border-amber-100 hover:bg-amber-100 hover:border-amber-200' 
+                                          : 'bg-emerald-50 text-emerald-800 border-emerald-100 hover:bg-emerald-100 hover:border-emerald-200'
+                                      }`}
+                                    >
+                                      <span className="font-mono text-[7px] text-slate-400 font-extrabold">{timeStr}</span>
+                                      <span className="truncate block font-display leading-tight">{m.agency_name}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return days;
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full overflow-x-auto animate-fadeIn">
+                    <table className="w-full border-collapse text-left text-xs font-body">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Target Agency</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Contact Person</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Meeting Date/Time</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Scheduled By</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Call Status</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {meetingsList.map((m) => (
+                          <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-4">
+                              <span className="font-semibold text-slate-900 block">{m.agency_name}</span>
+                            </td>
+                            <td className="p-4 text-slate-600 font-mono font-semibold">{m.phone}</td>
+                            <td className="p-4 text-slate-700 font-semibold">{m.contact_person || 'Secretary'}</td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-1.5 text-blue-700 font-bold">
+                                <Clock className="w-3.5 h-3.5" />
+                                {m.meeting_date}
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border">
+                                {m.caller_name || '-'}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${getStatusStyle(m.call_status)}`}>
+                                {m.call_status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => dialPhone(m.phone)}
+                                  className="p-2 bg-blue-50 border border-blue-100 hover:bg-blue-600 hover:text-white rounded-lg text-blue-600 transition-all cursor-pointer"
+                                  title="Call Now"
+                                >
+                                  <Phone className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingLead({ ...m })}
+                                  className="p-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-600 transition-all cursor-pointer"
+                                  title="Edit Date/Details"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {meetingsList.length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                              No accepted meetings or callbacks scheduled.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -2731,7 +3352,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                           {leadsList.map((lead) => (
                             <tr key={lead.id} className="hover:bg-slate-50/30 transition-colors group">
                               <td className="p-4">
@@ -2790,9 +3411,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                                   value={lead.priority || 3}
                                   onChange={async (e) => {
                                     const val = parseInt(e.target.value, 10);
-                                    // Update local state optimistically
-                                    setLeadsList(prev => prev.map(x => x.id === lead.id ? { ...x, priority: val } : x));
-                                    await saveLeadFieldToServer(lead.id, 'priority', val);
+                                    const oldVal = lead.priority;
+                                    // Sync change across all lists optimistically
+                                    updateLeadFieldInQueue(lead.id, 'priority', val);
+                                    const success = await saveLeadFieldToServer(lead.id, 'priority', val);
+                                    if (!success && oldVal !== undefined) {
+                                      // Revert on database write failure
+                                      updateLeadFieldInQueue(lead.id, 'priority', oldVal);
+                                    }
                                   }}
                                   className={`rounded font-bold px-2 py-1 text-[9px] cursor-pointer focus:outline-none ${
                                     lead.priority === 1
@@ -2869,14 +3495,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                               </td>
                             </tr>
                           ))}
-                          {isLeadsListLoading ? (
+                          {isLeadsListLoading && leadsList.length === 0 ? (
                             <tr>
                               <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
                                 <Loader2 className="w-5 h-5 animate-spin text-blue-600 mx-auto mb-2" />
                                 Loading section records...
                               </td>
                             </tr>
-                          ) : leadsList.length === 0 && (
+                          ) : leadsList.length === 0 && !isLeadsListLoading && (
                             <tr>
                               <td colSpan={7} className="p-12 text-center text-slate-400 font-body text-xs">
                                 No records found matching filters.
@@ -3014,10 +3640,15 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                             <label className="text-[9px] text-slate-400 tracking-wider uppercase font-bold">Meeting Date / Time</label>
                             <input
                               type="text"
+                              readOnly
                               value={editingLead.meeting_date || ''}
-                              onChange={(e) => setEditingLead({ ...editingLead, meeting_date: e.target.value })}
-                              placeholder="e.g. Next Tuesday at 10 AM"
-                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none"
+                              onClick={() => openSchedulerForLead(
+                                editingLead.meeting_date || '',
+                                (val) => setEditingLead({ ...editingLead, meeting_date: val }),
+                                "Set Meeting Date & Time"
+                              )}
+                              placeholder="Select date & time..."
+                              className="bg-slate-50 border border-slate-200 focus:border-blue-300 rounded-xl p-2.5 text-slate-800 focus:outline-none cursor-pointer"
                             />
                           </div>
                         </div>
@@ -3248,7 +3879,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                       {leadsList.map((lead) => (
                         <tr key={lead.id} className="hover:bg-slate-50/50">
                           <td className="p-4">
@@ -3272,11 +3903,18 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           <td className="p-4">
                             <input
                               type="text"
+                              readOnly
                               value={lead.meeting_date || ''}
-                              onChange={(e) => setLeadsList(prev => prev.map(item => item.id === lead.id ? { ...item, meeting_date: e.target.value } : item))}
-                              onBlur={(e) => saveLeadFieldToServer(lead.id, 'meeting_date', e.target.value)}
+                              onClick={() => openSchedulerForLead(
+                                lead.meeting_date || '',
+                                (val) => {
+                                  updateLeadFieldInQueue(lead.id, 'meeting_date', val);
+                                  saveLeadFieldToServer(lead.id, 'meeting_date', val);
+                                },
+                                "Set Meeting Date & Time"
+                              )}
                               placeholder="No meeting"
-                              className="w-full min-w-[180px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-300"
+                              className="w-full min-w-[180px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-300 cursor-pointer"
                             />
                           </td>
                           <td className="p-4 text-right">
@@ -3298,14 +3936,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {isLeadsListLoading ? (
+                      {isLeadsListLoading && leadsList.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="p-12 text-center text-slate-400 text-xs">
                             <Loader2 className="w-5 h-5 animate-spin text-indigo-600 mx-auto mb-2" />
                             Loading treated agencies...
                           </td>
                         </tr>
-                      ) : leadsList.length === 0 && (
+                      ) : leadsList.length === 0 && !isLeadsListLoading && (
                         <tr>
                           <td colSpan={5} className="p-12 text-center text-slate-300 text-xs">
                             No treated agencies found.
@@ -3377,7 +4015,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                       {leadsList.map((lead) => (
                         <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="p-4">
@@ -3433,14 +4071,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {isLeadsListLoading ? (
+                      {isLeadsListLoading && leadsList.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             <Loader2 className="w-5 h-5 animate-spin text-rose-500 mx-auto mb-2" />
                             Loading lost leads...
                           </td>
                         </tr>
-                      ) : leadsList.length === 0 && (
+                      ) : leadsList.length === 0 && !isLeadsListLoading && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No lost deals found. Keep calling!
@@ -3541,7 +4179,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                       {leadsList.map((lead) => (
                         <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="p-4">
@@ -3606,14 +4244,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {isLeadsListLoading ? (
+                      {isLeadsListLoading && leadsList.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             <Loader2 className="w-5 h-5 animate-spin text-blue-600 mx-auto mb-2" />
                             Loading followups...
                           </td>
                         </tr>
-                      ) : leadsList.length === 0 && (
+                      ) : leadsList.length === 0 && !isLeadsListLoading && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No followups pending. Great job!
@@ -3714,7 +4352,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                       {leadsList.map((lead) => (
                         <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="p-4">
@@ -3778,14 +4416,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {isLeadsListLoading ? (
+                      {isLeadsListLoading && leadsList.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             <Loader2 className="w-5 h-5 animate-spin text-emerald-600 mx-auto mb-2" />
                             Loading warm leads...
                           </td>
                         </tr>
-                      ) : leadsList.length === 0 && (
+                      ) : leadsList.length === 0 && !isLeadsListLoading && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No warm leads waiting for close.
@@ -3885,7 +4523,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y divide-slate-100 transition-opacity duration-200 ${isLeadsListLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                       {leadsList.map((lead) => (
                         <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="p-4">
@@ -3933,14 +4571,14 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           </td>
                         </tr>
                       ))}
-                      {isLeadsListLoading ? (
+                      {isLeadsListLoading && leadsList.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             <Loader2 className="w-5 h-5 animate-spin text-emerald-600 mx-auto mb-2" />
                             Loading converted clients...
                           </td>
                         </tr>
-                      ) : leadsList.length === 0 && (
+                      ) : leadsList.length === 0 && !isLeadsListLoading && (
                         <tr>
                           <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
                             No converted clients logged yet.
@@ -4001,7 +4639,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   </div>
                   
                   {/* Assigned Leads counts */}
-                  {['Hamid', 'Oussama', 'Kamel'].map((name) => {
+                  {activeCallers.map((name) => {
                     const stats = assignmentStats.stats.find((x: any) => x.name === name) || { count: 0 };
                     return (
                       <div key={name} className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-1 relative overflow-hidden">
@@ -4014,47 +4652,278 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                 </div>
 
                 {/* Campaign Analytics Section */}
-                {analyticsData && (
-                  <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
-                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                      <TrendingUp className="w-4.5 h-4.5 text-blue-600" />
-                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
-                        Campaign Outreach Analytics & Status Breakdown
-                      </h3>
-                    </div>
+                {analyticsData && (() => {
+                  const total = analyticsData.totalLeads || 0;
+                  const called = analyticsData.totalCalled || 0;
+                  const today = analyticsData.callsToday || 0;
+                  const warm = analyticsData.statuses.interested || 0;
+                  const converted = analyticsData.statuses.converted || 0;
+                  const callback = analyticsData.statuses.callback || 0;
+                  const noAnswer = analyticsData.statuses.noAnswer || 0;
+                  const wrongNumber = analyticsData.statuses.wrongNumber || 0;
+                  const notInterested = analyticsData.statuses.notInterested || 0;
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Leads</span>
-                        <span className="font-display text-xl font-bold text-slate-800 mt-1">{analyticsData.totalLeads}</span>
+                  const coverageRate = total > 0 ? ((called / total) * 100).toFixed(1) : '0.0';
+                  const positiveOutcomeRate = called > 0 ? (((warm + converted) / called) * 100).toFixed(1) : '0.0';
+                  const conversionRate = called > 0 ? ((converted / called) * 100).toFixed(1) : '0.0';
+                  const unreachableRate = called > 0 ? (((noAnswer + wrongNumber) / called) * 100).toFixed(1) : '0.0';
+                  const refusalRate = called > 0 ? ((notInterested / called) * 100).toFixed(1) : '0.0';
+
+                  return (
+                    <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                      <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                        <TrendingUp className="w-4.5 h-4.5 text-blue-600" />
+                        <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                          Campaign Outreach Analytics & Detailed Efficiency
+                        </h3>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Called</span>
-                        <span className="font-display text-xl font-bold text-blue-600 mt-1">{analyticsData.totalCalled}</span>
+
+                      {/* Main counters */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Leads</span>
+                          <span className="font-display text-lg font-bold text-slate-800 mt-1">{total}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Total Called</span>
+                          <span className="font-display text-lg font-bold text-blue-600 mt-1">{called}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Calls Today</span>
+                          <span className="font-display text-lg font-bold text-indigo-600 mt-1">{today}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Warm Leads</span>
+                          <span className="font-display text-lg font-bold text-emerald-600 mt-1">{warm}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Converted</span>
+                          <span className="font-display text-lg font-bold text-indigo-600 mt-1">{converted}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Busy / No Ans</span>
+                          <span className="font-display text-lg font-bold text-amber-600 mt-1">{noAnswer}</span>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
+                          <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Not Interested</span>
+                          <span className="font-display text-lg font-bold text-rose-600 mt-1">{notInterested}</span>
+                        </div>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Calls Today</span>
-                        <span className="font-display text-xl font-bold text-indigo-600 mt-1">{analyticsData.callsToday}</span>
+
+                      {/* Detailed Percentages & Progress Indicators */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 border-t border-slate-100 pt-6">
+                        
+                        {/* 1. Coverage Rate */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between font-body text-xs font-semibold">
+                            <span className="text-slate-500 uppercase tracking-wide">Outreach Coverage</span>
+                            <span className="text-slate-800 font-bold">{coverageRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-blue-600 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, parseFloat(coverageRate))}%` }} />
+                          </div>
+                          <p className="font-body text-[9px] text-slate-400 mt-0.5 leading-normal">
+                            Ratio of leads contacted out of the total campaign databases.
+                          </p>
+                        </div>
+
+                        {/* 2. Positive Outcome Rate */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between font-body text-xs font-semibold">
+                            <span className="text-slate-500 uppercase tracking-wide">Outreach Success</span>
+                            <span className="text-slate-800 font-bold">{positiveOutcomeRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, parseFloat(positiveOutcomeRate))}%` }} />
+                          </div>
+                          <p className="font-body text-[9px] text-slate-400 mt-0.5 leading-normal">
+                            Percentage of calls resulting in Warm Leads or fully Converted clients.
+                          </p>
+                        </div>
+
+                        {/* 3. Conversion Rate */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between font-body text-xs font-semibold">
+                            <span className="text-slate-500 uppercase tracking-wide">Client Conversion</span>
+                            <span className="text-slate-800 font-bold">{conversionRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-indigo-600 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, parseFloat(conversionRate))}%` }} />
+                          </div>
+                          <p className="font-body text-[9px] text-slate-400 mt-0.5 leading-normal">
+                            Percentage of called targets successfully closed and configured.
+                          </p>
+                        </div>
+
+                        {/* 4. Unreachable Rate */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between font-body text-xs font-semibold">
+                            <span className="text-slate-500 uppercase tracking-wide">Unreachable / Busy</span>
+                            <span className="text-slate-800 font-bold">{unreachableRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-amber-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, parseFloat(unreachableRate))}%` }} />
+                          </div>
+                          <p className="font-body text-[9px] text-slate-400 mt-0.5 leading-normal">
+                            Ratio of calls encountering busy lines, wrong numbers, or no answer.
+                          </p>
+                        </div>
+
+                        {/* 5. Refusal Rate */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between font-body text-xs font-semibold">
+                            <span className="text-slate-500 uppercase tracking-wide">Refusal Rate</span>
+                            <span className="text-slate-800 font-bold">{refusalRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="bg-rose-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, parseFloat(refusalRate))}%` }} />
+                          </div>
+                          <p className="font-body text-[9px] text-slate-400 mt-0.5 leading-normal">
+                            Percentage of contacted leads declaring no interest in outreach services.
+                          </p>
+                        </div>
+
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Warm Leads</span>
-                        <span className="font-display text-xl font-bold text-emerald-600 mt-1">{analyticsData.statuses.interested}</span>
+
+                      {/* Visual Funnel and Distribution Charts */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 border-t border-slate-100 pt-6">
+                        
+                        {/* 1. Status Distribution Bar Chart */}
+                        <div className="flex flex-col gap-4">
+                          <div>
+                            <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest block">
+                              Call Status Distribution
+                            </span>
+                            <span className="font-body text-[9px] text-slate-400 mt-0.5 block uppercase tracking-wider">
+                              Visual representation of call outcomes
+                            </span>
+                          </div>
+                          
+                          <div className="border border-slate-100 bg-slate-50/30 rounded-2xl p-4 flex items-end justify-between h-48 gap-3 pt-8">
+                            {[
+                              { label: 'Warm', value: warm, color: 'bg-emerald-500 hover:bg-emerald-600', text: 'text-emerald-600' },
+                              { label: 'Converted', value: converted, color: 'bg-indigo-600 hover:bg-indigo-700', text: 'text-indigo-600' },
+                              { label: 'Callback', value: callback, color: 'bg-blue-500 hover:bg-blue-600', text: 'text-blue-600' },
+                              { label: 'No Ans', value: noAnswer, color: 'bg-amber-500 hover:bg-amber-600', text: 'text-amber-600' },
+                              { label: 'Busy', value: today, labelText: 'Today', color: 'bg-slate-400 hover:bg-slate-500', text: 'text-slate-500' },
+                              { label: 'Rejected', value: notInterested, color: 'bg-rose-500 hover:bg-rose-600', text: 'text-rose-600' },
+                            ].map((item, index) => {
+                              const maxVal = Math.max(1, warm, converted, callback, noAnswer, today, notInterested);
+                              const heightPct = (item.value / maxVal) * 100;
+                              return (
+                                <div key={index} className="flex flex-col items-center flex-1 h-full justify-end group cursor-pointer">
+                                  <div className="relative w-full flex justify-center">
+                                    <span className="absolute -top-6 bg-slate-800 text-white font-mono text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-bold pointer-events-none z-10">
+                                      {item.value}
+                                    </span>
+                                  </div>
+                                  <div 
+                                    className={`w-full rounded-t-lg transition-all duration-500 shadow-sm ${item.color}`}
+                                    style={{ height: `${heightPct}%` }}
+                                  />
+                                  <span className={`font-mono text-[9px] font-bold mt-1.5 ${item.text}`}>{item.value}</span>
+                                  <span className="font-body text-[8px] text-slate-400 font-bold uppercase tracking-wide mt-1 text-center truncate w-full">
+                                    {item.labelText || item.label}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* 2. Pipeline Conversion Funnel */}
+                        <div className="flex flex-col gap-4">
+                          <div>
+                            <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest block">
+                              Outreach Conversion Funnel
+                            </span>
+                            <span className="font-body text-[9px] text-slate-400 mt-0.5 block uppercase tracking-wider">
+                              Lead progression efficiency layers
+                            </span>
+                          </div>
+                          
+                          <div className="border border-slate-100 bg-slate-50/30 rounded-2xl p-4 flex flex-col gap-2.5 justify-center h-48">
+                            {[
+                              { stage: 'Total Database', count: total, pct: 100, color: 'bg-slate-200 text-slate-700' },
+                              { stage: 'Outreach Attempted', count: called, pct: total > 0 ? Math.round((called / total) * 100) : 0, color: 'bg-blue-100 text-blue-800 border-l-4 border-blue-500' },
+                              { stage: 'Warm Deals', count: warm, pct: called > 0 ? Math.round((warm / called) * 100) : 0, color: 'bg-emerald-100 text-emerald-800 border-l-4 border-emerald-500' },
+                              { stage: 'Converted Clients', count: converted, pct: warm > 0 ? Math.round((converted / warm) * 100) : 0, color: 'bg-indigo-100 text-indigo-800 border-l-4 border-indigo-500' },
+                            ].map((row, rIndex) => (
+                              <div key={rIndex} className="flex items-center justify-between text-[10px] font-semibold font-body">
+                                <span className="text-slate-500 w-28 uppercase text-[9px] font-bold">{row.stage}</span>
+                                <div className="flex-1 mx-3 relative">
+                                  <div className="w-full bg-slate-100 h-5 rounded-lg overflow-hidden flex items-center pl-2 border border-slate-200/40">
+                                    <div 
+                                      className={`h-full rounded-l-lg absolute left-0 top-0 transition-all duration-500 opacity-60 ${row.color}`}
+                                      style={{ width: `${row.pct}%` }}
+                                    />
+                                    <span className="z-10 font-mono text-[9px] font-bold text-slate-700 pl-1">{row.pct}% efficiency</span>
+                                  </div>
+                                </div>
+                                <span className="font-mono text-slate-800 font-bold w-12 text-right">{row.count} leads</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Converted</span>
-                        <span className="font-display text-xl font-bold text-indigo-600 mt-1">{analyticsData.statuses.converted}</span>
-                      </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Busy / No Answer</span>
-                        <span className="font-display text-xl font-bold text-amber-600 mt-1">{analyticsData.statuses.noAnswer}</span>
-                      </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col items-center text-center shadow-sm">
-                        <span className="font-body text-[8px] text-slate-400 uppercase font-bold">Not Interested</span>
-                        <span className="font-display text-xl font-bold text-rose-600 mt-1">{analyticsData.statuses.notInterested}</span>
-                      </div>
+
                     </div>
+                  );
+                })()}
+
+                {/* Team Member Management Card */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Users className="w-4.5 h-4.5 text-blue-600" />
+                    <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                      Team Member Management
+                    </h3>
                   </div>
-                )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {leaderboard.map((caller) => {
+                      const isSelf = caller.name === 'Hamid';
+                      return (
+                        <div key={caller.name} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${
+                              caller.gender === 'Female' ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
+                            }`}>
+                              {caller.name.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-display text-xs font-bold text-slate-800 uppercase tracking-wide">{caller.name}</p>
+                              <p className="font-body text-[9px] text-slate-400 mt-0.5 uppercase tracking-wider font-semibold">
+                                {isSelf ? 'Administrator' : 'Caller Agent'}
+                              </p>
+                            </div>
+                          </div>
+                          {!isSelf && (
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Are you absolutely sure you want to remove ${caller.name} from the team? This will delete their profile and unassign all their uncalled leads. This action cannot be undone.`)) return;
+                                setIsAdminActionPending(true);
+                                const res = await deleteCallerProfile(caller.name);
+                                setIsAdminActionPending(false);
+                                if (res.success) {
+                                  alert(`Successfully removed ${caller.name} from the team.`);
+                                  refreshDashboardMetrics().catch(e => console.error(e));
+                                } else {
+                                  alert(`Failed to remove caller: ${res.error}`);
+                                }
+                              }}
+                              disabled={isAdminActionPending}
+                              className="p-2 text-rose-500 hover:text-white hover:bg-rose-600 border border-rose-100 hover:border-rose-600 rounded-xl transition-all duration-300 cursor-pointer disabled:opacity-40"
+                              title={`Remove ${caller.name}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 {/* Data Safety / Import Controls */}
                 <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
@@ -4187,7 +5056,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           if (!confirm(`Assign currently unassigned uncalled ${region} leads to ${caller}? Warm and converted leads will stay locked.`)) return;
 
                           setIsAdminActionPending(true);
-                          const res = await assignLeadsByRegion(caller, region);
+                          const res = await assignLeadsByRegion(callerName, caller, region);
                           setIsAdminActionPending(false);
                           
                           if (res.success) {
@@ -4204,21 +5073,29 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <div className="flex flex-col gap-1">
                           <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
                           <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
-                            <option value="Hamid">Hamid</option>
-                            <option value="Oussama">Oussama</option>
-                            <option value="Kamel">Kamel</option>
+                            {activeCallers.map(name => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
                           </select>
                         </div>
 
                         <div className="flex flex-col gap-1">
                           <label className="text-[9px] text-slate-400 uppercase font-bold">Region Name</label>
                           <select name="region" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
-                            <option value="Algiers">Algiers</option>
-                            <option value="Oran">Oran</option>
-                            <option value="Constantine">Constantine</option>
-                            <option value="Sétif">Sétif</option>
-                            <option value="Tlemcen">Tlemcen</option>
-                            <option value="Blida">Blida</option>
+                            {areaOptions.length > 0 ? (
+                              areaOptions.map(area => (
+                                <option key={area} value={area}>{area}</option>
+                              ))
+                            ) : (
+                              <>
+                                <option value="Algiers">Algiers</option>
+                                <option value="Oran">Oran</option>
+                                <option value="Constantine">Constantine</option>
+                                <option value="Sétif">Sétif</option>
+                                <option value="Tlemcen">Tlemcen</option>
+                                <option value="Blida">Blida</option>
+                              </>
+                            )}
                           </select>
                         </div>
 
@@ -4242,7 +5119,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           if (!confirm(`Assign currently unassigned uncalled Priority ${priorityVal} leads to ${caller}? Warm and converted leads will stay locked.`)) return;
 
                           setIsAdminActionPending(true);
-                          const res = await assignLeadsByPriority(caller, parseInt(priorityVal, 10));
+                          const res = await assignLeadsByPriority(callerName, caller, parseInt(priorityVal, 10));
                           setIsAdminActionPending(false);
 
                           if (res.success) {
@@ -4259,9 +5136,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <div className="flex flex-col gap-1">
                           <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
                           <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
-                            <option value="Hamid">Hamid</option>
-                            <option value="Oussama">Oussama</option>
-                            <option value="Kamel">Kamel</option>
+                            {activeCallers.map(name => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
                           </select>
                         </div>
 
@@ -4303,7 +5180,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                           if (!confirm(confirmMsg)) return;
 
                           setIsAdminActionPending(true);
-                          const res = await assignLeadsByRange(caller, startId, endId, forceReassign);
+                          const res = await assignLeadsByRange(callerName, caller, startId, endId, forceReassign);
                           setIsAdminActionPending(false);
 
                           if (res.success) {
@@ -4320,9 +5197,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         <div className="flex flex-col gap-1">
                           <label className="text-[9px] text-slate-400 uppercase font-bold">Select Caller</label>
                           <select name="caller" className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none" required>
-                            <option value="Hamid">Hamid</option>
-                            <option value="Oussama">Oussama</option>
-                            <option value="Kamel">Kamel</option>
+                            {activeCallers.map(name => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
                           </select>
                         </div>
 
@@ -4385,9 +5262,9 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                       {/* Equal Split Button */}
                       <button
                         onClick={async () => {
-                          if (!confirm("Divide all unassigned uncalled targets equally among Hamid, Oussama, and Kamel? Warm and converted leads will stay locked.")) return;
+                          if (!confirm("Divide all unassigned uncalled targets equally among " + activeCallers.join(', ') + "? Warm and converted leads will stay locked.")) return;
                           setIsAdminActionPending(true);
-                          const res = await splitLeadsEqually();
+                          const res = await splitLeadsEqually(callerName);
                           setIsAdminActionPending(false);
                           
                           if (res.success) {
@@ -4409,7 +5286,7 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         onClick={async () => {
                           if (!confirm("Clear caller allocations only for uncalled targets? Warm, followup, lost, and converted leads will keep their owner.")) return;
                           setIsAdminActionPending(true);
-                          const res = await clearAssignments();
+                          const res = await clearAssignments(callerName);
                           setIsAdminActionPending(false);
 
                           if (res.success) {
@@ -4431,21 +5308,21 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                         onClick={async () => {
                           const pin = prompt("Enter Admin PIN to confirm complete campaign reset (wipe call logs, status, owner assignment, call history. Scraper metadata will be preserved):");
                           if (!pin) return;
-                          if (pin !== '676869') {
-                            alert("Incorrect PIN. Action aborted.");
-                            return;
-                          }
                           if (!confirm("CRITICAL WARNING: Are you absolutely sure you want to RESET THE ENTIRE CAMPAIGN? This will wipe all call statuses, caller assignments, and history for all 3,500 leads, setting them back to 'Not Called'. This action is irreversible.")) return;
 
                           setIsAdminActionPending(true);
-                          const res = await resetCampaign();
+                          const res = await resetCampaign(pin);
                           setIsAdminActionPending(false);
 
                           if (res.success) {
                             alert("Success! The campaign has been reset to zero.");
                             fetchAllData(true);
                           } else {
-                            alert(`Error resetting campaign: ${res.error}`);
+                            if (res.error === 'INVALID_ADMIN_PIN') {
+                              alert("Incorrect PIN. Action aborted.");
+                            } else {
+                              alert(`Error resetting campaign: ${res.error}`);
+                            }
                           }
                         }}
                         disabled={isAdminActionPending}
@@ -4459,12 +5336,428 @@ export default function Dashboard({ callerName, onLogoutCaller }: DashboardProps
                   </div>
 
                 </div>
+
+                {/* Team Join Applications Section */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4.5 h-4.5 text-blue-600" />
+                      <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                        Team Join Applications ({teamApplications.filter(a => a.status === 'Pending').length} Pending)
+                      </h3>
+                    </div>
+                    <button
+                      onClick={fetchApplications}
+                      disabled={isAppsLoading}
+                      className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border text-slate-500 cursor-pointer disabled:opacity-40"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isAppsLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+
+                  <div className="w-full overflow-x-auto text-xs font-body">
+                    <table className="w-full border-collapse text-left min-w-[760px]">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50 text-slate-400">
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Name</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Email</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Phone</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Gender</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Submitted</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase">Status</th>
+                          <th className="p-4 font-display text-[9px] font-bold tracking-widest uppercase text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {teamApplications.map((app) => (
+                          <tr key={app.id} className="hover:bg-slate-50/50">
+                            <td className="p-4 font-semibold text-slate-900">{app.name}</td>
+                            <td className="p-4 text-slate-600">{app.email}</td>
+                            <td className="p-4 text-slate-500 font-mono">{app.phone}</td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${
+                                app.gender === 'Female' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-blue-50 text-blue-600 border border-blue-100'
+                              }`}>
+                                {app.gender}
+                              </span>
+                            </td>
+                            <td className="p-4 text-slate-400 text-[10px]">
+                              {app.created_at ? new Date(app.created_at).toLocaleString() : 'N/A'}
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold tracking-wide uppercase ${
+                                app.status === 'Accepted'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                  : app.status === 'Rejected'
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-100'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-100'
+                              }`}>
+                                {app.status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              {app.status === 'Pending' && (
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={async () => {
+                                      const pin = prompt(`Enter 6-digit access PIN for ${app.name}:`, "123456");
+                                      if (!pin) return;
+                                      if (pin.length !== 6 || isNaN(Number(pin))) {
+                                        alert("PIN must be exactly 6 numeric digits.");
+                                        return;
+                                      }
+                                      setIsAdminActionPending(true);
+                                      const res = await handleApplicationDecision(app.id, 'Accepted', pin);
+                                      setIsAdminActionPending(false);
+                                      if (res.success) {
+                                        alert(`${app.name} has been approved as a caller!`);
+                                        fetchApplications();
+                                        refreshDashboardMetrics().catch(e => console.error(e));
+                                      } else {
+                                        alert(`Error accepting application: ${res.error}`);
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-600 border border-emerald-100 hover:text-white text-emerald-700 font-bold uppercase rounded text-[9px] transition-all cursor-pointer"
+                                  >
+                                    Accept
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm(`Are you sure you want to reject ${app.name}'s application?`)) return;
+                                      setIsAdminActionPending(true);
+                                      const res = await handleApplicationDecision(app.id, 'Rejected');
+                                      setIsAdminActionPending(false);
+                                      if (res.success) {
+                                        fetchApplications();
+                                      } else {
+                                        alert(`Error rejecting application: ${res.error}`);
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-rose-50 hover:bg-rose-600 border border-rose-100 hover:text-white text-rose-700 font-bold uppercase rounded text-[9px] transition-all cursor-pointer"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {teamApplications.length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="p-12 text-center text-slate-300 text-xs">
+                              No team join applications logged yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </motion.div>
             )}
 
           </>
         )}
       </div>
+
+      {/* Visual Scheduler (Date & Time Picker) Modal */}
+      {schedulerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-slideUp">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-indigo-50/30">
+              <div>
+                <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">
+                  {schedulerTitle}
+                </h3>
+                <p className="font-body text-[10px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">
+                  Select a date & time
+                </p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setSchedulerOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            {/* Content: Scrollable */}
+            <div className="p-6 overflow-y-auto flex flex-col gap-5">
+              
+              {/* Calendar Section */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                    {calendarViewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() - 1, 1))}
+                      className="w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 1))}
+                      className="w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Calendar Grid */}
+                <div className="border border-slate-100 bg-slate-50/30 rounded-2xl p-3 flex flex-col gap-1.5">
+                  {/* Days headers */}
+                  <div className="grid grid-cols-7 text-center font-display text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    <div>Mo</div>
+                    <div>Tu</div>
+                    <div>We</div>
+                    <div>Th</div>
+                    <div>Fr</div>
+                    <div>Sa</div>
+                    <div>Su</div>
+                  </div>
+                  
+                  {/* Days grid */}
+                  <div className="grid grid-cols-7 gap-1 text-center font-body text-xs font-semibold">
+                    {(() => {
+                      const days = [];
+                      const year = calendarViewDate.getFullYear();
+                      const month = calendarViewDate.getMonth();
+                      const totalDays = new Date(year, month + 1, 0).getDate();
+                      let startDay = new Date(year, month, 1).getDay(); // Sun = 0, Mon = 1, etc.
+                      // Adjust startDay to align with Monday as 0
+                      startDay = startDay === 0 ? 6 : startDay - 1;
+
+                      for (let i = 0; i < startDay; i++) {
+                        days.push(<div key={`empty-${i}`} className="p-2" />);
+                      }
+
+                      for (let d = 1; d <= totalDays; d++) {
+                        const cellDate = new Date(year, month, d);
+                        const isSelected = schedulerDate && 
+                          schedulerDate.getDate() === d && 
+                          schedulerDate.getMonth() === month && 
+                          schedulerDate.getFullYear() === year;
+                        const isToday = new Date().getDate() === d && 
+                          new Date().getMonth() === month && 
+                          new Date().getFullYear() === year;
+
+                        days.push(
+                          <button
+                            key={`day-${d}`}
+                            type="button"
+                            onClick={() => setSchedulerDate(cellDate)}
+                            className={`p-2 rounded-xl text-center transition-all cursor-pointer font-mono font-bold hover:bg-indigo-50 hover:text-indigo-900 ${
+                              isSelected 
+                                ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white shadow-md shadow-indigo-500/20' 
+                                : isToday 
+                                ? 'border border-indigo-200 text-indigo-700 bg-indigo-50/20' 
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            {d}
+                          </button>
+                        );
+                      }
+                      return days;
+                    })()}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Twin scroll columns time picker */}
+              <div className="flex flex-col gap-2">
+                <span className="font-display text-[10px] font-black text-slate-700 uppercase tracking-widest px-1">
+                  Time Picker (Scroll & Select)
+                </span>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Hours scroll */}
+                  <div className="flex flex-col gap-1 border border-slate-100 rounded-2xl bg-slate-50/40 p-2.5">
+                    <span className="font-display text-[8px] font-black text-slate-400 uppercase tracking-wider text-center border-b border-slate-100 pb-1">
+                      Hour
+                    </span>
+                    <div className="overflow-y-auto max-h-36 flex flex-col gap-1 pr-1 font-mono font-bold text-xs scrollbar-thin">
+                      {Array.from({ length: 24 }).map((_, h) => {
+                        const hrStr = String(h).padStart(2, '0');
+                        const isSelected = schedulerHour === hrStr;
+                        return (
+                          <button
+                            key={`hr-${hrStr}`}
+                            type="button"
+                            onClick={() => setSchedulerHour(hrStr)}
+                            className={`w-full py-1.5 rounded-lg text-center cursor-pointer transition-all ${
+                              isSelected 
+                                ? 'bg-indigo-600 text-white shadow-sm font-bold scale-[1.03]' 
+                                : 'text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {hrStr}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  
+                  {/* Minutes scroll */}
+                  <div className="flex flex-col gap-1 border border-slate-100 rounded-2xl bg-slate-50/40 p-2.5">
+                    <span className="font-display text-[8px] font-black text-slate-400 uppercase tracking-wider text-center border-b border-slate-100 pb-1">
+                      Minute
+                    </span>
+                    <div className="overflow-y-auto max-h-36 flex flex-col gap-1 pr-1 font-mono font-bold text-xs scrollbar-thin">
+                      {Array.from({ length: 60 }).map((_, m) => {
+                        const minStr = String(m).padStart(2, '0');
+                        const isSelected = schedulerMinute === minStr;
+                        return (
+                          <button
+                            key={`min-${minStr}`}
+                            type="button"
+                            onClick={() => setSchedulerMinute(minStr)}
+                            className={`w-full py-1.5 rounded-lg text-center cursor-pointer transition-all ${
+                              isSelected 
+                                ? 'bg-indigo-600 text-white shadow-sm font-bold scale-[1.03]' 
+                                : 'text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {minStr}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+            </div>
+            
+            {/* Footer buttons */}
+            <div className="px-6 py-4.5 border-t border-slate-100 flex gap-3 bg-slate-50/50 justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  if (schedulerCallback) {
+                    schedulerCallback('');
+                  }
+                  setSchedulerOpen(false);
+                }}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+              >
+                Clear Date
+              </button>
+              
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSchedulerOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date();
+                    const formattedDate = schedulerDate
+                      ? `${schedulerDate.getFullYear()}-${String(schedulerDate.getMonth() + 1).padStart(2, '0')}-${String(schedulerDate.getDate()).padStart(2, '0')}`
+                      : `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                    const finalVal = `${formattedDate} ${schedulerHour}:${schedulerMinute}`;
+                    if (schedulerCallback) {
+                      schedulerCallback(finalVal);
+                    }
+                    setSchedulerOpen(false);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-indigo-700 shadow-md shadow-indigo-500/10 cursor-pointer"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
+      {/* Custom elegant Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            className="fixed bottom-6 right-6 z-50 max-w-sm bg-slate-900/90 backdrop-blur-md border border-slate-800 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3.5 font-body text-xs"
+          >
+            <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-3 h-3" />
+            </div>
+            <span className="font-semibold tracking-wide leading-relaxed">{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Custom ValueInputModal prompt replacement */}
+      {valueModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-slideUp">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/30">
+              <div>
+                <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">
+                  {valueModalTitle}
+                </h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setValueModalOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            {/* Form */}
+            <form onSubmit={handleValueModalSubmit} className="p-6 flex flex-col gap-4 font-body text-xs">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">
+                  Value Input
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={valueModalInput}
+                  onChange={(e) => setValueModalInput(e.target.value)}
+                  placeholder={valueModalPlaceholder}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-3 px-4 text-xs text-slate-800 focus:outline-none transition-all placeholder-slate-300"
+                />
+              </div>
+              
+              {/* Footer buttons */}
+              <div className="flex justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setValueModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
+                >
+                  Confirm
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

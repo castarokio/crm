@@ -3,6 +3,8 @@
 :root {
   --background: #010101;
   --foreground: #f1f1f1;
+  --font-oswald: 'Oswald';
+  --font-space-grotesk: 'Space Grotesk';
 }
 
 @theme inline {
@@ -44,6 +46,49 @@ body {
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-oswald), sans-serif;
 }
+
+@keyframes float-orb-1 {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(40px, -50px) scale(1.1); }
+  66% { transform: translate(-30px, 30px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+@keyframes float-orb-2 {
+  0% { transform: translate(0px, 0px) scale(1); }
+  50% { transform: translate(-50px, 60px) scale(0.85); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+@keyframes float-orb-3 {
+  0% { transform: translate(0px, 0px) scale(1); }
+  40% { transform: translate(50px, 40px) scale(1.15); }
+  80% { transform: translate(-40px, -30px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+.animate-float-1 {
+  animation: float-orb-1 15s infinite ease-in-out;
+}
+.animate-float-2 {
+  animation: float-orb-2 18s infinite ease-in-out;
+}
+.animate-float-3 {
+  animation: float-orb-3 12s infinite ease-in-out;
+}
+
+.cyber-grid {
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.light-cyber-grid {
+  background-image: 
+    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
 
 
 

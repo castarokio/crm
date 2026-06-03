@@ -1,18 +1,5 @@
 import type { Metadata } from "next";
-import { Oswald, Space_Grotesk } from "next/font/google";
 import "./globals.css";
-
-const oswald = Oswald({
-  variable: "--font-oswald",
-  subsets: ["latin"],
-  weight: ["300", "400", "700"],
-});
-
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-});
 
 export const metadata: Metadata = {
   title: "travelnextlvl.de | Cinematic Travel Booking OS",
@@ -27,9 +14,14 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${oswald.variable} ${spaceGrotesk.variable} h-full antialiased dark`}
+      className="h-full antialiased dark"
       style={{ colorScheme: "dark" }}
     >
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+      </head>
       <body className="min-h-full flex flex-col bg-[#010101] text-[#f1f1f1] selection:bg-white selection:text-black">
         {children}
       </body>
