@@ -1812,6 +1812,32 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     setIsDealsLoading(false);
   };
 
+  // Auto-create a pipeline deal when status changes to Accepted or Client Configured
+  const triggerAutoDealCreation = async (leadId: number, leadName: string, status: string, notes?: string) => {
+    if (!['Accepted', 'Client Configured'].includes(status)) return;
+    
+    // Check if a deal already exists for this lead
+    const hasExistingDeal = deals.some((deal: any) => deal.lead_id === leadId);
+    if (hasExistingDeal) return;
+    
+    try {
+      const res = await createDeal({
+        deal_name: `${leadName} - ${status} Package`,
+        company_name: leadName,
+        caller_name: callerName,
+        lead_id: leadId,
+        notes: notes || `Auto-created from Call Outcome: ${status}`
+      });
+      if (res.success) {
+        fetchDeals();
+      } else {
+        console.error('Failed to auto-create deal:', res.error);
+      }
+    } catch (err: any) {
+      console.error('Failed to auto-create deal:', err.message);
+    }
+  };
+
   // Quick Outcome status button handler
   const handleQuickOutcome = async (status: string, meetingDate?: string) => {
     if (!currentLead) return;
@@ -1868,6 +1894,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
       alert('Failed to log outcome: ' + res.error);
     } else {
       setCallsToday(prev => prev + 1);
+      triggerAutoDealCreation(currentLead.id, currentLead.agency_name || '', status, `Created via quick buttons. Outcome: ${status}`);
       refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
     }
   };
@@ -1944,6 +1971,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     setExtractedData(null);
     setRawNotesInput('');
     setCallsToday(prev => prev + 1);
+    triggerAutoDealCreation(currentLead.id, currentLead.agency_name || '', extractedData.call_status, extractedData.summary);
     refreshDashboardMetrics().catch(err => console.error('[refreshDashboardMetrics]', err));
   };
 
@@ -2003,6 +2031,8 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
         setMeetingsList(prevMeetingsList);
         setDialerQueue(prevDialerQueue);
         alert('Failed to save changes to the database: ' + res.error);
+      } else if (res.success && editingLead.call_status) {
+        triggerAutoDealCreation(editingLead.id, editingLead.agency_name || '', editingLead.call_status, editingLead.notes);
       }
     });
   };
@@ -3886,13 +3916,14 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                           })
                           .map(({ item, originalIndex }) => {
                             const isActive = originalIndex === currentQueueIndex;
+                            const isLockedByOther = item.locked_by && item.locked_by !== callerName;
                             return (
                               <button
                                 key={item.id}
                                 onClick={() => {
-                  setCurrentQueueIndex(originalIndex);
-                  selectedLeadIdRef.current = item.id;
-                }}
+                                  setCurrentQueueIndex(originalIndex);
+                                  selectedLeadIdRef.current = item.id;
+                                }}
                                 className={`w-full text-left p-3 rounded-2xl border transition-all duration-200 flex flex-col gap-1 cursor-pointer hover:bg-slate-50/50 ${
                                   isActive
                                     ? 'border-blue-500 bg-blue-50/30 ring-2 ring-blue-50/20'
@@ -3900,11 +3931,18 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                                 }`}
                               >
                                 <div className="flex items-start justify-between gap-2 w-full">
-                                  <span className={`font-display text-[10px] font-bold tracking-wide uppercase truncate ${
-                                    isActive ? 'text-blue-700' : 'text-slate-800'
-                                  }`}>
-                                    {originalIndex + 1}. {item.agency_name}
-                                  </span>
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                    <span className={`font-display text-[10px] font-bold tracking-wide uppercase truncate ${
+                                      isActive ? 'text-blue-700' : 'text-slate-800'
+                                    }`}>
+                                      {originalIndex + 1}. {item.agency_name}
+                                    </span>
+                                    {isLockedByOther && (
+                                      <span title={`Locked by ${item.locked_by}`} className="flex-shrink-0">
+                                        <Lock className="w-2.5 h-2.5 text-amber-600 animate-pulse" />
+                                      </span>
+                                    )}
+                                  </div>
                                   <span className={`px-1.5 py-0.5 rounded text-[7px] font-bold ${
                                     item.priority === 1
                                       ? 'bg-rose-50 text-rose-700 border border-rose-100'
@@ -6916,20 +6954,19 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                   const DB_FIELDS = [
                     { value: 'agency_name', label: "Nom de l'agence" },
                     { value: 'phone', label: 'Téléphone Principal' },
-                    { value: 'phone_2', label: 'Téléphone Secondaire' },
-                    { value: 'area', label: 'Région / Wilaya' },
-                    { value: 'website', label: 'Site Web' },
-                    { value: 'google_rating', label: 'Note Google' },
-                    { value: 'review_count', label: "Nombre d'avis" },
-                    { value: 'maps_link', label: 'Lien Google Maps' },
-                    { value: 'address', label: 'Adresse Physique' },
-                    { value: 'email', label: 'Adresse Email' },
-                    { value: 'contact_person', label: 'Personne de contact' },
-                    { value: 'social_link', label: 'Lien Instagram / Réseau' },
-                    { value: 'notes', label: 'Notes / Commentaires' },
-                    { value: 'priority', label: 'Priorité (1-3)' },
+                                      { value: 'area', label: 'Region / State' },
+                    { value: 'website', label: 'Website' },
+                    { value: 'google_rating', label: 'Google Rating' },
+                    { value: 'review_count', label: 'Review Count' },
+                    { value: 'maps_link', label: 'Google Maps Link' },
+                    { value: 'address', label: 'Physical Address' },
+                    { value: 'email', label: 'Email Address' },
+                    { value: 'contact_person', label: 'Contact Person' },
+                    { value: 'social_link', label: 'Instagram / Social Link' },
+                    { value: 'notes', label: 'Notes / Comments' },
+                    { value: 'priority', label: 'Priority (1-5)' },
                   ];
-
+ 
                   return (
                     <div key={header} className="grid grid-cols-2 gap-4 items-center border-b border-slate-50 pb-2 last:border-0">
                       <span className="font-body text-xs font-semibold text-slate-700 truncate" title={header}>
@@ -6943,7 +6980,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                         }}
                         className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none cursor-pointer"
                       >
-                        <option value="skip">-- Ignorer cette colonne --</option>
+                        <option value="skip">-- Ignore this column --</option>
                         {DB_FIELDS.map(f => (
                           <option key={f.value} value={f.value}>{f.label}</option>
                         ))}
@@ -6953,7 +6990,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                 })}
               </div>
             </div>
-
+ 
             {/* Footer */}
             <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2.5 bg-slate-50/50">
               <button
@@ -6961,14 +6998,14 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                 onClick={() => setCsvMapperOpen(false)}
                 className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
               >
-                Annuler
+                Cancel
               </button>
               <button
                 type="button"
                 onClick={handleCsvMapperConfirm}
                 className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
               >
-                Valider Mapping & Preview
+                Validate Mapping & Preview
               </button>
             </div>
           </div>
@@ -6983,10 +7020,10 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/30">
               <div>
                 <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wider">
-                  {selectedDeal ? 'Modifier le Deal' : 'Créer une Opportunité'}
+                  {selectedDeal ? 'Edit Deal' : 'Create Deal / Opportunity'}
                 </h3>
                 <p className="font-body text-[10px] text-slate-400 uppercase font-bold tracking-wide mt-0.5">
-                  {selectedDeal ? "Mettre à jour les paramètres de l'opportunité" : "Ajouter un nouveau deal qualifié au pipeline"}
+                  {selectedDeal ? 'Update parameters for this active deal' : 'Add a new qualified deal to the pipeline'}
                 </p>
               </div>
               <button 
@@ -7001,19 +7038,19 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
             {/* Form */}
             <form onSubmit={selectedDeal ? handleUpdateDealSubmit : handleCreateDealSubmit} className="p-6 flex flex-col gap-4 font-body text-xs">
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 uppercase font-bold">Nom du Deal *</label>
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Deal Name *</label>
                 <input
                   type="text"
                   required
                   value={dealForm.deal_name}
                   onChange={(e) => setDealForm(prev => ({ ...prev, deal_name: e.target.value }))}
-                  placeholder="Ex: Configuration CRM + Site Web"
+                  placeholder="e.g. CRM Setup + Website"
                   className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none transition-all"
                 />
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 uppercase font-bold">Lier à une Agence Qualifiée (Optionnel)</label>
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Link to a Qualified Lead (Optional)</label>
                 <select
                   value={dealForm.lead_id || ''}
                   onChange={(e) => {
@@ -7027,7 +7064,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                   }}
                   className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3 cursor-pointer text-slate-800 focus:outline-none"
                 >
-                  <option value="">-- Aucun lien ou taper manuellement ci-dessous --</option>
+                  <option value="">-- No link (or type company name below) --</option>
                   {linkableLeads.map(l => (
                     <option key={l.id} value={l.id}>{l.agency_name} ({l.area})</option>
                   ))}
@@ -7035,19 +7072,19 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 uppercase font-bold">Nom de l'Entreprise / Agence</label>
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Company / Agency Name</label>
                 <input
                   type="text"
                   value={dealForm.company_name}
                   onChange={(e) => setDealForm(prev => ({ ...prev, company_name: e.target.value }))}
-                  placeholder="Ex: El Hourria Travel"
+                  placeholder="e.g. El Hourria Travel"
                   className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none transition-all"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Installation (Setup DZD)</label>
+                  <label className="text-[9px] text-slate-400 uppercase font-bold">Setup Fee (DZD)</label>
                   <input
                     type="number"
                     min="0"
@@ -7057,7 +7094,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Mensuel Récurrent (MRR DZD)</label>
+                  <label className="text-[9px] text-slate-400 uppercase font-bold">Monthly Recurring (MRR DZD)</label>
                   <input
                     type="number"
                     min="0"
@@ -7069,7 +7106,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 uppercase font-bold">Date de Clôture Estimée</label>
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Estimated Close Date</label>
                 <input
                   type="date"
                   value={dealForm.expected_close_date}
@@ -7079,11 +7116,11 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 uppercase font-bold">Notes sur l'opportunité</label>
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Opportunity Notes</label>
                 <textarea
                   value={dealForm.notes}
                   onChange={(e) => setDealForm(prev => ({ ...prev, notes: e.target.value }))}
-                  placeholder="Ex: Intéressé par la formule premium, décision fin de semaine."
+                  placeholder="e.g. Interested in premium package, deciding end of week."
                   rows={3}
                   className="bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl py-2.5 px-3.5 text-slate-800 focus:outline-none resize-none"
                 />
@@ -7096,13 +7133,13 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                   onClick={() => setDealModalOpen(false)}
                   className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 font-body text-xs font-bold uppercase tracking-wider hover:bg-slate-100 cursor-pointer"
                 >
-                  Annuler
+                  Cancel
                 </button>
                 <button
                   type="submit"
                   className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-body text-xs font-bold uppercase tracking-wider hover:bg-blue-700 shadow-md shadow-blue-500/10 cursor-pointer"
                 >
-                  {selectedDeal ? 'Mettre à jour' : 'Créer le Deal'}
+                  {selectedDeal ? 'Update' : 'Create Deal'}
                 </button>
               </div>
             </form>
