@@ -895,20 +895,20 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   // NOTE: page and search resets on tab change are handled directly in handleMainTabChange below.
 
   // Fetch Team Scores
-  const fetchLeaderboardData = async () => {
+  const fetchLeaderboardData = useCallback(async () => {
     const res = await getTeamLeaderboard();
     if (res.success && res.leaderboard) {
       setLeaderboard(res.leaderboard);
     }
-  };
+  }, []);
 
   // Fetch Meetings checklist
-  const fetchMeetingsData = async () => {
+  const fetchMeetingsData = useCallback(async () => {
     const res = await getMeetingsList();
     if (res.success && res.meetings) {
       setMeetingsList(res.meetings);
     }
-  };
+  }, []);
 
   // Fetch Deals (Phase 2)
   const fetchDeals = useCallback(async () => {
@@ -1236,25 +1236,46 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
   }, [currentPage, debouncedSearchQuery, filterPriority, filterArea, filterStatus, fetchListTab, activeTab, initialLoadDone]);
 
   // Handle Tab Switch (silent refreshes, instant transitions)
+  // Split into separate effects to prevent dependencies from other tabs/filters
+  // from triggering dialer queue re-fetches and causing index snapback.
   useEffect(() => {
     if (!initialLoadDone) return;
-
     if (activeTab === 'dialer') {
       loadDialer();
-    } else if (activeTab === 'deadlines') {
+    }
+  }, [activeTab, initialLoadDone, loadDialer]);
+
+  useEffect(() => {
+    if (!initialLoadDone) return;
+    if (activeTab === 'deadlines') {
       fetchMeetingsData();
-    } else if (activeTab === 'admin') {
+    }
+  }, [activeTab, initialLoadDone, fetchMeetingsData]);
+
+  useEffect(() => {
+    if (!initialLoadDone) return;
+    if (activeTab === 'admin') {
       fetchAssignmentStats();
       fetchApplications();
-    } else if (activeTab === 'pipeline') {
+    }
+  }, [activeTab, initialLoadDone, fetchAssignmentStats, fetchApplications]);
+
+  useEffect(() => {
+    if (!initialLoadDone) return;
+    if (activeTab === 'pipeline') {
       fetchDeals();
       fetchLinkableLeads();
-    } else if (activeTab === 'database') {
+    }
+  }, [activeTab, initialLoadDone, fetchDeals, fetchLinkableLeads]);
+
+  useEffect(() => {
+    if (!initialLoadDone) return;
+    if (activeTab === 'database') {
       if (['Lost', 'Followups', 'WarmLeads', 'GoodClients', 'Treated'].includes(filterStatus)) {
         setFilterStatus('');
       }
     }
-  }, [activeTab, initialLoadDone, fetchAssignmentStats, loadDialer, fetchDatabaseLeads, fetchMeetingsData, filterStatus, fetchApplications, fetchDeals, fetchLinkableLeads]);
+  }, [activeTab, initialLoadDone, filterStatus]);
 
   const currentLead = dialerQueue[currentQueueIndex];
   const activeCallers = leaderboard.length > 0 ? leaderboard.map(x => x.name) : ['Hamid', 'Oussama', 'Kamel'];
