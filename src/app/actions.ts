@@ -247,6 +247,7 @@ const LEAD_LIST_COLUMNS = [
   'message_instagram',
   'message_tiktok',
   'message_email',
+  'work_hours',
 ].join(',');
 
 async function getDataSafetySchemaStatus() {
@@ -464,6 +465,7 @@ export async function updateLeadDetails(id: number, fields: {
   message_instagram?: boolean;
   message_tiktok?: boolean;
   message_email?: boolean;
+  work_hours?: string;
 }, editorName?: string) {
   try {
     const session = await requireWritableSession();
