@@ -1360,7 +1360,9 @@ ${callerName || 'L\'équipe'} Web-OS`;
     }
   }, [activeTab, initialLoadDone, filterStatus]);
 
-  const activeDialerQueue = dialerQueue.filter(lead => isLeadOpen(lead.work_hours));
+  // activeDialerQueue = all leads in dialer. isLeadOpen is used only for status badges
+  // and notifications — NOT for filtering leads out of the queue.
+  const activeDialerQueue = dialerQueue;
   const currentLead = activeDialerQueue[currentQueueIndex];
   const activeCallers = leaderboard.length > 0 ? leaderboard.map(x => x.name) : ['Hamid', 'Oussama', 'Kamel'];
   const displayCount = (count: number) => inventoryCountsReady ? count : '...';
