@@ -823,8 +823,11 @@ export async function getTeamLeaderboard() {
     await requireCallerSession();
     const supabase = requireSupabase();
     
-    // Fetch all profiles first
-    const { data: profiles, error: profErr } = await supabase.from('caller_profiles').select('name, gender');
+    // Fetch all profiles first, excluding system settings
+    const { data: profiles, error: profErr } = await supabase
+      .from('caller_profiles')
+      .select('name, gender')
+      .neq('name', '__portal_settings__');
     const callers = (profiles && !profErr && profiles.length > 0)
       ? profiles
       : [{ name: 'Hamid', gender: 'Male' }, { name: 'Oussama', gender: 'Male' }, { name: 'Kamel', gender: 'Male' }];
@@ -1337,7 +1340,10 @@ export async function resetCampaign(pin: string, adminCallerName: string = 'Hami
 
 async function getActiveCallers(supabase: any): Promise<string[]> {
   try {
-    const { data, error } = await supabase.from('caller_profiles').select('name');
+    const { data, error } = await supabase
+      .from('caller_profiles')
+      .select('name')
+      .neq('name', '__portal_settings__');
     if (error || !data || data.length === 0) {
       return ['Hamid', 'Oussama', 'Kamel'];
     }
@@ -1386,7 +1392,10 @@ export async function getCallerProfiles() {
   try {
     if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
-    const { data, error } = await supabase.from('caller_profiles').select('*');
+    const { data, error } = await supabase
+      .from('caller_profiles')
+      .select('*')
+      .neq('name', '__portal_settings__');
     if (error) throw new Error(error.message);
     return { success: true, profiles: data || [] };
   } catch (error: any) {
@@ -1573,11 +1582,27 @@ export async function deleteCallerProfile(name: string) {
 
 export async function verifyPortalPinAction(pin: string) {
   try {
-    const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
-    if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
-    const success = safeStringEqual(expectedPortalPin, pin);
-    if (success) await setPortalSession();
-    return { success };
+    const supabase = requireSupabase();
+    const { data: customPinObj } = await supabase
+      .from('caller_profiles')
+      .select('pin')
+      .eq('name', '__portal_settings__')
+      .single();
+
+    if (customPinObj && customPinObj.pin) {
+      const success = verifyCallerPin(customPinObj.pin, pin);
+      if (success) {
+        await setPortalSession();
+        return { success: true };
+      }
+      return { success: false };
+    } else {
+      const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
+      if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
+      const success = safeStringEqual(expectedPortalPin, pin);
+      if (success) await setPortalSession();
+      return { success };
+    }
   } catch (error: any) {
     console.error('[verifyPortalPinAction]', error.message);
     return { success: false, error: error.message };
@@ -2057,5 +2082,56 @@ export async function undoLastImport(adminCallerName: string) {
   } catch (error: any) {
     console.error('[undoLastImport]', error.message);
     return { success: false, error: error.message, removed: 0 };
+  }
+}
+
+export async function updateProfilePinAction(name: string, newPin: string) {
+  try {
+    const session = await requireAdminSession();
+    if (newPin.length !== 6 || isNaN(Number(newPin))) {
+      throw new Error('PIN must be exactly 6 numeric digits.');
+    }
+
+    const supabase = requireSupabase();
+    const hashedPin = hashCallerPin(newPin);
+
+    if (name === 'PORTAL') {
+      const { data: existing } = await supabase
+        .from('caller_profiles')
+        .select('id')
+        .eq('name', '__portal_settings__')
+        .maybeSingle();
+
+      if (existing) {
+        const { error } = await supabase
+          .from('caller_profiles')
+          .update({ pin: hashedPin })
+          .eq('name', '__portal_settings__');
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase
+          .from('caller_profiles')
+          .insert({
+            name: '__portal_settings__',
+            pin: hashedPin,
+            role: 'Viewer',
+            gender: 'Male'
+          });
+        if (error) throw new Error(error.message);
+      }
+      await logAuditEvent(session.name, 'UPDATE_PORTAL_PIN', 'Updated Portal Gate access PIN securely');
+    } else {
+      const { error } = await supabase
+        .from('caller_profiles')
+        .update({ pin: hashedPin })
+        .eq('name', name);
+      if (error) throw new Error(error.message);
+      await logAuditEvent(session.name, 'UPDATE_CALLER_PIN', `Updated secure access PIN for caller: ${name}`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[updateProfilePinAction]', error.message);
+    return { success: false, error: error.message };
   }
 }

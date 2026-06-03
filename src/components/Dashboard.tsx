@@ -74,6 +74,8 @@ import {
   getTeamApplications,
   handleApplicationDecision,
   deleteCallerProfile,
+  getCallerProfiles,
+  updateProfilePinAction,
   // Phase 2
   extractCsvHeaders,
   previewLeadImportWithMapping,
@@ -304,6 +306,10 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
 
   // Team Leaderboard
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+
+  // Dynamic Caller Profiles for admin management
+  const [callerProfiles, setCallerProfiles] = useState<any[]>([]);
+  const [pinChangeInputs, setPinChangeInputs] = useState<Record<string, string>>({});
 
   // Database Tab State
   const [leadsList, setLeadsList] = useState<any[]>([]);
@@ -1012,7 +1018,7 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     ] as any[];
 
     if (callerName === 'Hamid') {
-      promises.push(getAssignmentStats(), checkDataSafetySchema());
+      promises.push(getAssignmentStats(), checkDataSafetySchema(), getCallerProfiles());
     }
 
     const results = await Promise.all(promises);
@@ -1038,11 +1044,15 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
     if (callerName === 'Hamid') {
       const assignmentRes = results[4];
       const schemaRes = results[5];
+      const profilesRes = results[6];
       if (assignmentRes?.success) {
         setAssignmentStats({ stats: assignmentRes.stats || [], unassigned: assignmentRes.unassigned || 0 });
       }
       if (schemaRes?.success) {
         setDataSafetySchema(schemaRes);
+      }
+      if (profilesRes?.success) {
+        setCallerProfiles(profilesRes.profiles || []);
       }
     }
   }, [callerName, refreshInventoryCounts]);
@@ -6239,6 +6249,116 @@ export default function Dashboard({ callerName, callerRole, onLogoutCaller }: Da
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+
+                {/* Security & Password Gates Management */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col gap-6">
+                  <div>
+                    <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+                      Security & Access PIN Management
+                    </h3>
+                    <p className="font-body text-xs text-slate-400 mt-1">
+                      Modify secure login PINs for the main portal gate and individual caller profiles. PINs must be exactly 6 numeric digits.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 border-t border-slate-100 pt-6">
+                    {/* Portal PIN Card */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col gap-4 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4.5 h-4.5 text-blue-600" />
+                        <span className="font-display text-xs font-bold text-slate-800 uppercase">Portal Gate PIN</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-slate-400 uppercase font-bold">New 6-Digit PIN</label>
+                        <input
+                          type="password"
+                          maxLength={6}
+                          placeholder="******"
+                          value={pinChangeInputs['PORTAL'] || ''}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setPinChangeInputs(prev => ({ ...prev, PORTAL: val }));
+                          }}
+                          className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-300 font-mono"
+                        />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const newPin = pinChangeInputs['PORTAL'];
+                          if (!newPin || newPin.length !== 6) {
+                            alert("PIN must be exactly 6 numeric digits.");
+                            return;
+                          }
+                          if (!confirm("Are you sure you want to change the Portal Gate access PIN?")) return;
+                          
+                          setIsAdminActionPending(true);
+                          const res = await updateProfilePinAction('PORTAL', newPin);
+                          setIsAdminActionPending(false);
+
+                          if (res.success) {
+                            alert("Portal Gate PIN updated successfully!");
+                            setPinChangeInputs(prev => ({ ...prev, PORTAL: '' }));
+                          } else {
+                            alert(`Error updating PIN: ${res.error}`);
+                          }
+                        }}
+                        disabled={isAdminActionPending}
+                        className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                      >
+                        Update Portal PIN
+                      </button>
+                    </div>
+
+                    {/* Caller Profiles PINs */}
+                    {callerProfiles.map(profile => (
+                      <div key={profile.name} className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col gap-4 shadow-sm">
+                        <div className="flex items-center gap-2">
+                          <User className="w-4.5 h-4.5 text-indigo-600" />
+                          <span className="font-display text-xs font-bold text-slate-800 uppercase">{profile.name}'s Login PIN</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] text-slate-400 uppercase font-bold">New 6-Digit PIN</label>
+                          <input
+                            type="password"
+                            maxLength={6}
+                            placeholder="******"
+                            value={pinChangeInputs[profile.name] || ''}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, '');
+                              setPinChangeInputs(prev => ({ ...prev, [profile.name]: val }));
+                            }}
+                            className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-300 font-mono"
+                          />
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const newPin = pinChangeInputs[profile.name];
+                            if (!newPin || newPin.length !== 6) {
+                              alert("PIN must be exactly 6 numeric digits.");
+                              return;
+                            }
+                            if (!confirm(`Are you sure you want to change the login PIN for caller ${profile.name}?`)) return;
+
+                            setIsAdminActionPending(true);
+                            const res = await updateProfilePinAction(profile.name, newPin);
+                            setIsAdminActionPending(false);
+
+                            if (res.success) {
+                              alert(`PIN for ${profile.name} updated successfully!`);
+                              setPinChangeInputs(prev => ({ ...prev, [profile.name]: '' }));
+                            } else {
+                              alert(`Error updating PIN: ${res.error}`);
+                            }
+                          }}
+                          disabled={isAdminActionPending}
+                          className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-body text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        >
+                          Update {profile.name} PIN
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </motion.div>
