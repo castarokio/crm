@@ -538,7 +538,7 @@ export async function generatePitchWithAI(options: {
     options.instagramFollowers ? `Instagram: ${options.instagramFollowers}` : '',
   ].filter(Boolean).join(', ');
 
-  const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web.
+  const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web. Présente-toi au nom de l'agence "Castarokio Digital" et fais référence de manière pertinente à leur activité pour justifier l'intérêt de collaborer avec nous, en proposant de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/).
 
 Agence : ${options.agencyName}
 Ville : ${options.area || 'Algérie'}
@@ -555,7 +555,7 @@ ${options.runningAds ? `Diffuse des publicités actuellement : ${options.running
 
 ${options.customInstruction ? `Consignes supplémentaires : "${options.customInstruction}"` : ''}
 
-Réponds UNIQUEMENT avec le texte brut du message généré. Fais référence de manière pertinente à leur activité sur les réseaux sociaux pour justifier l'intérêt d'un site web professionnel.`;
+Réponds UNIQUEMENT avec le texte brut du message généré.`;
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);

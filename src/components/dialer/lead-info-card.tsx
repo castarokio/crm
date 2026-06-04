@@ -230,7 +230,7 @@ export function LeadInfoCard({
 
   const getMailtoUrl = (emailVal: string) => {
     const pitch = localStorage.getItem(`pitch_draft_${lead.id}`) || '';
-    const subject = `Proposition de collaboration Web-OS - ${lead.agency_name}`;
+    const subject = `Proposition de collaboration Castarokio Digital - ${lead.agency_name}`;
     
     let emailBody = pitch;
     if (!emailBody) {
@@ -249,19 +249,23 @@ export function LeadInfoCard({
 
       emailBody = `Bonjour,
 
-Je m'appelle ${callerName} de Web-OS. Nous accompagnons les entreprises à structurer et accélérer leur présence digitale.
+Je m'appelle ${callerName} de Castarokio Digital. Nous accompagnons les agences de voyages à structurer et accélérer leur présence en ligne pour maximiser leurs réservations.
 
-J'ai analysé la visibilité en ligne de ${lead.agency_name} à ${lead.area || 'votre région'} et identifié des axes clés pour maximiser vos réservations :
+J'ai analysé la visibilité digitale de ${lead.agency_name} à ${lead.area || 'votre région'} et identifié des opportunités majeures de croissance :
 
 ${webSection}${reviewSection}${adsSection}
 
-Nous proposons un accompagnement clé en main pour automatiser vos processus d'acquisition. Seriez-vous disponible pour un appel rapide de 10 minutes cette semaine afin d'en discuter ? Je serais ravi de vous proposer un audit gratuit.
+Vous pouvez consulter nos réalisations et notre portfolio directement sur : https://castarokio.github.io/
+
+Seriez-vous disponible pour un appel rapide de 10 minutes cette semaine afin d'en discuter ? Je serais ravi de vous proposer un audit gratuit.
 
 Cordialement,
 
 ${callerName}
-Web-OS | Solutions Digitales
-Site web : web-os.io`;
+Castarokio Digital
+Tél : +213 540 21 12 50
+Email : castarokibusiness@gmail.com
+Portfolio : https://castarokio.github.io/`;
     }
     
     return `mailto:${emailVal}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
@@ -276,10 +280,10 @@ Site web : web-os.io`;
     const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
     
     if (isNoWeb) {
-      return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Web-OS. J'adore votre contenu sur Instagram. J'ai remarqué une belle opportunité pour optimiser la présence en ligne de ${agency} (notamment car vous n'avez pas encore de site web pour recevoir des réservations directes). Seriez-vous ouvert à y jeter un coup d'œil lors d'un rapide échange ?`;
+      return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Castarokio Digital. J'adore votre contenu sur Instagram. J'ai remarqué une belle opportunité pour optimiser la présence en ligne de ${agency} (notamment car vous n'avez pas encore de site web pour recevoir des réservations directes). Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous ouvert à y jeter un coup d'œil lors d'un rapide échange ?`;
     }
     
-    return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Web-OS. J'ai analysé la présence digitale de ${agency} à ${area} et noté quelques pistes d'optimisation intéressantes sur votre site pour booster vos conversions. Seriez-vous ouvert à en discuter brièvement ?`;
+    return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Castarokio Digital. J'ai analysé la présence digitale de ${agency} à ${area} et noté quelques pistes d'optimisation intéressantes sur votre site. Vous pouvez jeter un œil à notre travail sur https://castarokio.github.io/. Seriez-vous ouvert à en discuter brièvement ?`;
   };
 
   const handleSocialDmClick = (e: React.MouseEvent, platform: 'Instagram' | 'Facebook Messenger', handle: string) => {

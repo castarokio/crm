@@ -25,8 +25,8 @@ export function PitchGenerator({ lead, callerName }: PitchGeneratorProps) {
 
       const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
       const defaultPitch = isNoWeb
-        ? `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Web-OS. J'ai remarqué votre forte présence sur les réseaux sociaux, mais l'absence de site web vous fait perdre des réservations directes. Web-OS conçoit des solutions sur mesure. Êtes-vous disponible pour en parler ?`
-        : `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Web-OS. J'ai analysé votre site ${lead.website} et noté des lenteurs mobiles qui affectent vos conversions. Web-OS optimise les performances des agences de voyages. Seriez-vous intéressé par un audit gratuit ?`;
+        ? `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Castarokio Digital. J'ai remarqué votre forte présence sur les réseaux sociaux, mais l'absence de site web vous fait perdre des réservations directes. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous ouvert à un court échange ?`
+        : `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Castarokio Digital. J'ai jeté un coup d'œil à votre site ${lead.website} et noté des lenteurs sur mobile qui freinent vos conversions. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous intéressé par un court audit gratuit ?`;
       
       setPitch(defaultPitch);
       setInstruction('');
