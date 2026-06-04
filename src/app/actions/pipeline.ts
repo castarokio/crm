@@ -186,3 +186,65 @@ export async function getCallerTarget(callerName: string) {
     };
   }
 }
+
+export async function getTeamLeaderboardAction() {
+  try {
+    const session = await requireCallerSession();
+    const supabase = requireSupabase();
+    
+    // Fetch all active caller profiles
+    const { data: profiles, error: profErr } = await supabase
+      .from('caller_profiles')
+      .select('name, daily_call_target, weekly_appointment_target, status')
+      .neq('name', '__portal_settings__');
+
+    if (profErr) throw new Error(profErr.message);
+    if (!profiles || profiles.length === 0) {
+      return { success: true, leaderboard: [] };
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date();
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const leaderboard = [];
+    for (const p of profiles) {
+      // Calls today
+      const { count: callsToday } = await supabase
+        .from('call_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('caller_name', p.name)
+        .gte('created_at', startOfToday.toISOString());
+
+      // Appointments this week
+      const { count: apptsWeek } = await supabase
+        .from('call_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('caller_name', p.name)
+        .gte('created_at', startOfWeek.toISOString())
+        .in('call_status', ['Callback', 'Accepted', 'Client Configured', 'Interested']);
+
+      leaderboard.push({
+        name: p.name,
+        daily_target: p.daily_call_target ?? 80,
+        weekly_target: p.weekly_appointment_target ?? 15,
+        calls_today: callsToday ?? 0,
+        appointments_this_week: apptsWeek ?? 0,
+        status: p.status || 'Active'
+      });
+    }
+
+    // Sort by calls today (descending)
+    leaderboard.sort((a, b) => b.calls_today - a.calls_today);
+
+    return { success: true, leaderboard };
+  } catch (error: any) {
+    console.error('[getTeamLeaderboardAction]', error.message);
+    return { success: false, error: error.message, leaderboard: [] };
+  }
+}

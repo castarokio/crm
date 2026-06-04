@@ -22,6 +22,10 @@ export default function Home() {
   const [callerRole, setCallerRole] = useState<string>('Caller');
   const [agreementAcceptedVersion, setAgreementAcceptedVersion] = useState<string | null>(null);
   
+  // Dynamic guidelines state
+  const [latestGuidelinesVersion, setLatestGuidelinesVersion] = useState<string>('1.0');
+  const [latestGuidelinesText, setLatestGuidelinesText] = useState<string>('');
+  
   // PIN states
   const [enteredPortalPin, setEnteredPortalPin] = useState<string>('');
   const [enteredCallerPin, setEnteredCallerPin] = useState<string>('');
@@ -67,6 +71,12 @@ export default function Home() {
       setCallerName(session.callerName);
       setCallerRole(session.callerRole);
       setAgreementAcceptedVersion(session.agreementAcceptedVersion || null);
+      if (session.latestGuidelinesVersion) {
+        setLatestGuidelinesVersion(session.latestGuidelinesVersion);
+      }
+      if (session.latestGuidelinesText) {
+        setLatestGuidelinesText(session.latestGuidelinesText);
+      }
       if (session.portalUnlocked) loadCallerProfiles();
     });
   }, [loadCallerProfiles]);
@@ -240,6 +250,8 @@ export default function Home() {
       <AgreementGate
         callerName={callerName}
         agreementAcceptedVersion={agreementAcceptedVersion}
+        latestGuidelinesVersion={latestGuidelinesVersion}
+        latestGuidelinesText={latestGuidelinesText}
         callerRole={callerRole}
         onAccepted={(updatedSession) => {
           setAgreementAcceptedVersion(updatedSession.agreementAcceptedVersion);

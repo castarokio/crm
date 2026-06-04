@@ -51,7 +51,7 @@ export async function getCallerProfiles() {
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('caller_profiles')
-      .select('id, name, gender, role, daily_call_target, weekly_appointment_target, created_at')
+      .select('id, name, gender, role, daily_call_target, weekly_appointment_target, status, disabled_reason, created_at')
       .neq('name', '__portal_settings__');
     if (error) throw new Error(error.message);
     return { success: true, profiles: data || [] };
@@ -68,11 +68,14 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     
     const { data, error } = await supabase
       .from('caller_profiles')
-      .select('pin, role, trust_level, agreement_accepted_version')
+      .select('pin, role, trust_level, agreement_accepted_version, status, disabled_reason')
       .eq('name', name)
       .single();
       
     if (!error && data) {
+      if (data.status === 'Disabled') {
+        return { success: false, error: 'ACCOUNT_SUSPENDED', disabledReason: data.disabled_reason || 'Account disabled by admin compliance.' };
+      }
       if (verifyCallerPin(data.pin, pin)) {
         if (!data.pin.startsWith(`${PIN_HASH_PREFIX}$`)) {
           await supabase
@@ -144,12 +147,22 @@ export async function getCurrentSessionAction() {
   try {
     const portalUnlocked = await hasPortalSession();
     const caller = await getCallerSession();
+    const supabase = requireSupabase();
+
+    const { data: settings } = await supabase
+      .from('caller_profiles')
+      .select('guidelines_version, guidelines_text')
+      .eq('name', '__portal_settings__')
+      .maybeSingle();
+
     return {
       success: true,
       portalUnlocked,
       callerName: caller?.name || '',
       callerRole: caller?.role || 'Caller',
       agreementAcceptedVersion: caller?.agreement_accepted_version || null,
+      latestGuidelinesVersion: settings?.guidelines_version || '1.0',
+      latestGuidelinesText: settings?.guidelines_text || '',
       trustLevel: caller?.trust_level || 'New',
     };
   } catch (error: any) {
@@ -201,11 +214,20 @@ export async function submitTeamApplication(name: string, email: string, phone: 
 export async function acceptCallerAgreementAction(name: string) {
   try {
     const supabase = requireSupabase();
+
+    // Fetch the latest guidelines version
+    const { data: settings } = await supabase
+      .from('caller_profiles')
+      .select('guidelines_version')
+      .eq('name', '__portal_settings__')
+      .maybeSingle();
+
+    const latestVersion = settings?.guidelines_version || '1.0';
     
-    // Update profile
+    // Update caller profile with the latest version
     const { error: profileError } = await supabase
       .from('caller_profiles')
-      .update({ agreement_accepted_version: '1.0' })
+      .update({ agreement_accepted_version: latestVersion })
       .eq('name', name);
       
     if (profileError) throw new Error(profileError.message);
@@ -224,14 +246,14 @@ export async function acceptCallerAgreementAction(name: string) {
     // Log to audit log table
     await supabase.from('audit_logs').insert({
       user_id: name,
-      action: 'ACCEPT_AGREEMENT_V1.0',
+      action: `ACCEPT_AGREEMENT_V${latestVersion}`,
       entity_type: 'caller_profiles',
       entity_id: name,
       severity: 'Info',
-      notes: 'Guidelines and Commission Agreement V1.0 signed and accepted.'
+      notes: `Guidelines and Commission Agreement version ${latestVersion} accepted.`
     });
 
-    return { success: true };
+    return { success: true, acceptedVersion: latestVersion };
   } catch (error: any) {
     console.error('[acceptCallerAgreementAction]', error.message);
     return { success: false, error: error.message };

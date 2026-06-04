@@ -84,6 +84,14 @@ export function LeadInfoCard({
   const [viewAllowed, setViewAllowed] = useState<boolean | null>(null);
   const [limitError, setLimitError] = useState<string>('');
   
+  // Call simulator state
+  const [callSession, setCallSession] = useState<{
+    phone: string;
+    status: 'dialing' | 'connected' | 'ended';
+    duration: number;
+    muted: boolean;
+  } | null>(null);
+  
   // Alternate inputs list
   const [altPhones, setAltPhones] = useState<string[]>([]);
   const [altEmails, setAltEmails] = useState<string[]>([]);
@@ -139,6 +147,42 @@ export function LeadInfoCard({
       toast.error('Failed to copy to clipboard.');
     }
   };
+
+  const startCallSimulator = (phoneNumber: string) => {
+    // Fire external tel connection
+    onDial(phoneNumber);
+
+    setCallSession({
+      phone: phoneNumber,
+      status: 'dialing',
+      duration: 0,
+      muted: false
+    });
+  };
+
+  useEffect(() => {
+    if (!callSession) return;
+    
+    let timer: any;
+    if (callSession.status === 'dialing') {
+      timer = setTimeout(() => {
+        setCallSession(prev => prev ? { ...prev, status: 'connected' } : null);
+      }, 2500);
+    } else if (callSession.status === 'connected') {
+      timer = setInterval(() => {
+        setCallSession(prev => prev ? { ...prev, duration: prev.duration + 1 } : null);
+      }, 1000);
+    } else if (callSession.status === 'ended') {
+      timer = setTimeout(() => {
+        setCallSession(null);
+      }, 2000);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(timer);
+    };
+  }, [callSession?.status]);
 
   useEffect(() => {
     if (lead) {
@@ -495,7 +539,7 @@ Portfolio : https://castarokio.github.io/`;
       </div>
 
       {/* RENDER VIEW ACCORDING TO SUBTAB */}
-      {activeTab === 'pitch' && <PitchGenerator lead={lead} callerName={callerName} onDial={onDial} />}
+      {activeTab === 'pitch' && <PitchGenerator lead={lead} callerName={callerName} onDial={startCallSimulator} />}
       {activeTab === 'history' && <CallLogLedger leadId={lead.id} />}
 
       {activeTab === 'info' && (
@@ -648,7 +692,7 @@ Portfolio : https://castarokio.github.io/`;
                         WA Pitch
                       </a>
                       <button
-                        onClick={() => onDial(lead.phone)}
+                        onClick={() => startCallSimulator(lead.phone)}
                         className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-body text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-indigo-100 animate-pulse"
                       >
                         <Phone className="w-3 h-3" />
@@ -710,7 +754,7 @@ Portfolio : https://castarokio.github.io/`;
                           WA Pitch
                         </a>
                         <button
-                          onClick={() => onDial(phoneVal)}
+                          onClick={() => startCallSimulator(phoneVal)}
                           className="px-3.5 py-1.5 rounded-lg bg-indigo-650 hover:bg-indigo-750 text-white font-body text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                         >
                           <Phone className="w-3 h-3" />
@@ -1023,6 +1067,80 @@ Portfolio : https://castarokio.github.io/`;
             </div>
           </div>
         </>
+      )}
+
+      {/* Floating VoIP Simulator Overlay */}
+      {callSession && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 backdrop-blur-md text-white rounded-3xl p-5 shadow-2xl border border-slate-700/50 w-80 animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className="flex flex-col gap-4">
+            
+            {/* Caller Header Status */}
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${
+                  callSession.status === 'dialing' ? 'bg-amber-500 animate-pulse' :
+                  callSession.status === 'connected' ? 'bg-emerald-500 animate-ping' :
+                  'bg-rose-500'
+                }`} />
+                {callSession.status === 'dialing' ? 'Dialing Agency...' :
+                 callSession.status === 'connected' ? 'Call Connected' :
+                 'Call Ended'}
+              </span>
+              {callSession.status === 'connected' && (
+                <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-900/30 animate-pulse">
+                  {Math.floor(callSession.duration / 60).toString().padStart(2, '0')}:
+                  {(callSession.duration % 60).toString().padStart(2, '0')}
+                </span>
+              )}
+            </div>
+
+            {/* Target Info */}
+            <div className="flex flex-col items-center py-2 text-center">
+              <div className="w-12 h-12 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-lg mb-2 animate-bounce">
+                <Phone className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold tracking-tight truncate max-w-full">
+                {lead.agency_name || 'Travel Partner'}
+              </h4>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">{callSession.phone}</p>
+            </div>
+
+            {/* Animated soundwaves when connected */}
+            {callSession.status === 'connected' && !callSession.muted && (
+              <div className="flex items-center justify-center gap-1 h-6 my-1">
+                <div className="w-1 bg-indigo-500 rounded-full animate-pulse h-3" />
+                <div className="w-1 bg-indigo-500 rounded-full animate-bounce h-5" style={{ animationDelay: '0.15s' }} />
+                <div className="w-1 bg-indigo-400 rounded-full animate-pulse h-4" />
+                <div className="w-1 bg-indigo-500 rounded-full animate-bounce h-2" style={{ animationDelay: '0.3s' }} />
+                <div className="w-1 bg-indigo-500 rounded-full animate-pulse h-4" />
+              </div>
+            )}
+
+            {/* Controls */}
+            <div className="flex items-center justify-center gap-4 mt-2">
+              <button
+                onClick={() => setCallSession(prev => prev ? { ...prev, muted: !prev.muted } : null)}
+                className={`p-2.5 rounded-2xl border text-xs font-bold uppercase tracking-wider px-4 transition-all cursor-pointer ${
+                  callSession.muted
+                    ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-900/20'
+                    : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
+                }`}
+                title={callSession.muted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {callSession.muted ? 'Muted' : 'Mute'}
+              </button>
+
+              <button
+                onClick={() => setCallSession(prev => prev ? { ...prev, status: 'ended' } : null)}
+                className="p-2.5 rounded-2xl bg-rose-600 border border-rose-500 text-white hover:bg-rose-700 transition-all cursor-pointer shadow-lg shadow-rose-900/20 flex items-center justify-center gap-1.5 px-4 font-bold text-xs uppercase"
+              >
+                <Phone className="w-4 h-4 rotate-[135deg]" />
+                Hang Up
+              </button>
+            </div>
+
+          </div>
+        </div>
       )}
     </div>
   );

@@ -24,7 +24,10 @@ import {
   updateProfilePinAction,
   createCallerDirectlyAction,
   updateCallerRoleAction,
-  undoLastImport
+  undoLastImport,
+  toggleCallerSuspensionAction,
+  updateGuidelinesAction,
+  getGuidelinesAction
 } from '@/app/actions/admin';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -86,6 +89,11 @@ export function AdminTab({ callerName }: AdminTabProps) {
   const [resetPinInput, setResetPinInput] = useState<string>('');
   const [resetLoading, setResetLoading] = useState<boolean>(false);
 
+  // Onboarding Guidelines State
+  const [guidelinesText, setGuidelinesText] = useState<string>('');
+  const [guidelinesVersion, setGuidelinesVersion] = useState<string>('1.0');
+  const [savingGuidelines, setSavingGuidelines] = useState<boolean>(false);
+
   useEffect(() => {
     void loadData();
   }, [activeTab]);
@@ -103,6 +111,12 @@ export function AdminTab({ callerName }: AdminTabProps) {
         const aRes = await getTeamApplications();
         if (pRes.success) setProfiles(pRes.profiles || []);
         if (aRes.success) setApplications(aRes.applications || []);
+        
+        const gRes = await getGuidelinesAction();
+        if (gRes.success) {
+          setGuidelinesText(gRes.text || '');
+          setGuidelinesVersion(gRes.version || '1.0');
+        }
       } else if (activeTab === 'maintenance') {
         const lRes = await getAuditLogs();
         if (lRes.success) setAuditLogs(lRes.logs || []);
@@ -393,6 +407,46 @@ export function AdminTab({ callerName }: AdminTabProps) {
       void loadData();
     } else {
       toast.error(`Reset failed: ${res.error}`);
+    }
+  };
+
+  const handleSaveGuidelines = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingGuidelines(true);
+    const res = await updateGuidelinesAction(guidelinesText, guidelinesVersion);
+    setSavingGuidelines(false);
+    if (res.success) {
+      toast.success('Agreement Guidelines updated successfully.');
+    } else {
+      toast.error(`Guidelines update failed: ${res.error}`);
+    }
+  };
+
+  const handleToggleCallerSuspension = async (name: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'Disabled' ? 'Active' : 'Disabled';
+    
+    let reason = '';
+    if (nextStatus === 'Disabled') {
+      const inputReason = window.prompt(`Enter reason to suspend caller "${name}":`, 'Violation of outreach security policies');
+      if (inputReason === null) return;
+      reason = inputReason || 'Suspended by admin compliance';
+    } else {
+      const ok = await confirm(`Are you sure you want to reactivate caller "${name}"?`, {
+        title: 'Reactivate Caller Profile',
+        confirmLabel: 'Reactivate'
+      });
+      if (!ok) return;
+    }
+    
+    setLoading(true);
+    const res = await toggleCallerSuspensionAction(name, nextStatus, reason);
+    setLoading(false);
+    
+    if (res.success) {
+      toast.success(`Caller ${name} is now ${nextStatus === 'Disabled' ? 'Suspended' : 'Active'}.`);
+      void loadData();
+    } else {
+      toast.error(`Failed to change caller status: ${res.error}`);
     }
   };
 
@@ -834,11 +888,12 @@ export function AdminTab({ callerName }: AdminTabProps) {
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse font-body text-xs">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 font-display text-[9px] text-slate-450 uppercase font-bold tracking-wider">
+                  <tr className="bg-slate-50 border-b border-slate-200 font-display text-[9px] text-slate-455 uppercase font-bold tracking-wider">
                     <th className="px-4 py-2.5">Name</th>
                     <th className="px-4 py-2.5">System Role (Change Inline)</th>
                     <th className="px-4 py-2.5">Daily Target</th>
                     <th className="px-4 py-2.5">Weekly Target</th>
+                    <th className="px-4 py-2.5">Status</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -871,8 +926,17 @@ export function AdminTab({ callerName }: AdminTabProps) {
                       </td>
                       <td className="px-4 py-3 font-semibold">{p.daily_call_target} calls</td>
                       <td className="px-4 py-3 font-semibold">{p.weekly_appointment_target} appointments</td>
+                      <td className="px-4 py-3 font-semibold">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                          p.status === 'Disabled' 
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200 animate-pulse' 
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}>
+                          {p.status || 'Active'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-1.5">
+                        <div className="flex justify-end items-center gap-1.5">
                           <button
                             onClick={() => {
                               setEditingCaller(p);
@@ -896,8 +960,20 @@ export function AdminTab({ callerName }: AdminTabProps) {
                           </button>
                           {p.name !== 'Hamid' && (
                             <button
+                              onClick={() => handleToggleCallerSuspension(p.name, p.status)}
+                              className={`p-1 rounded border font-bold text-[9px] uppercase px-2 py-1 transition-all cursor-pointer ${
+                                p.status === 'Disabled'
+                                  ? 'bg-emerald-50 border-emerald-250 text-emerald-700 hover:bg-emerald-600 hover:text-white'
+                                  : 'bg-rose-50 border-rose-250 text-rose-700 hover:bg-rose-600 hover:text-white'
+                              }`}
+                            >
+                              {p.status === 'Disabled' ? 'Activate' : 'Suspend'}
+                            </button>
+                          )}
+                          {p.name !== 'Hamid' && (
+                            <button
                               onClick={() => handleDeleteProfile(p.name)}
-                              className="p-1.5 rounded bg-slate-50 border border-transparent text-rose-600 hover:bg-rose-50 hover:border-rose-100 transition-all cursor-pointer"
+                              className="p-1.5 rounded bg-slate-50 border border-transparent text-rose-600 hover:bg-rose-50 hover:border-rose-100 transition-all cursor-pointer flex items-center justify-center"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -976,6 +1052,57 @@ export function AdminTab({ callerName }: AdminTabProps) {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* Guidelines settings form */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col gap-4">
+            <div className="border-b border-slate-100 pb-2 flex justify-between items-center">
+              <h4 className="font-display text-sm font-bold text-slate-800 uppercase tracking-wider">
+                Outreach Guidelines & Commission Agreement Settings
+              </h4>
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase bg-slate-50 border border-slate-250 px-2 py-0.5 rounded-full font-mono">
+                Active Agreement: V{guidelinesVersion}
+              </span>
+            </div>
+            
+            <form onSubmit={handleSaveGuidelines} className="flex flex-col gap-4">
+              <div className="flex gap-4">
+                <div className="flex flex-col gap-1 w-32">
+                  <label className="text-[9px] text-slate-400 font-bold uppercase">Agreement Version</label>
+                  <Input 
+                    type="text" 
+                    value={guidelinesVersion} 
+                    onChange={(e) => setGuidelinesVersion(e.target.value)} 
+                    placeholder="e.g. 1.0"
+                    required
+                  />
+                </div>
+                <div className="flex-1 flex flex-col gap-1">
+                  <label className="text-[9px] text-slate-400 font-bold uppercase">Version Announcement Note</label>
+                  <p className="text-[9.5px] text-slate-450 font-semibold uppercase tracking-wider">Updating this version forces all callers to re-accept guidelines before proceeding to dashboard workspace.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase font-body">Guidelines Text Content</label>
+                <textarea
+                  rows={8}
+                  value={guidelinesText}
+                  onChange={(e) => setGuidelinesText(e.target.value)}
+                  placeholder="Enter onboarding guidelines text..."
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-mono text-slate-750 focus:outline-none focus:border-indigo-500 resize-y"
+                  required
+                />
+              </div>
+
+              <Button 
+                type="submit" 
+                disabled={savingGuidelines}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase self-start px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+              >
+                {savingGuidelines ? 'Saving Agreement...' : 'Save & Publish Agreement Guidelines'}
+              </Button>
+            </form>
           </div>
         </div>
       )}

@@ -6,6 +6,8 @@ type AgreementGateProps = {
   children: React.ReactNode;
   callerName: string;
   agreementAcceptedVersion: string | null;
+  latestGuidelinesVersion?: string;
+  latestGuidelinesText?: string;
   callerRole: string;
   onAccepted: (updatedSession: { agreementAcceptedVersion: string }) => void;
 };
@@ -14,6 +16,8 @@ export function AgreementGate({
   children,
   callerName,
   agreementAcceptedVersion,
+  latestGuidelinesVersion = '1.0',
+  latestGuidelinesText = '',
   callerRole,
   onAccepted,
 }: AgreementGateProps) {
@@ -22,7 +26,8 @@ export function AgreementGate({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const needsAcceptance = agreementAcceptedVersion !== '1.0' && callerRole !== 'Admin';
+  const activeVersion = latestGuidelinesVersion || '1.0';
+  const needsAcceptance = agreementAcceptedVersion !== activeVersion && callerRole !== 'Admin';
 
   if (!needsAcceptance) return <>{children}</>;
 
@@ -36,7 +41,7 @@ export function AgreementGate({
     try {
       const res = await acceptCallerAgreementAction(callerName);
       if (res.success) {
-        onAccepted({ agreementAcceptedVersion: '1.0' });
+        onAccepted({ agreementAcceptedVersion: activeVersion });
       } else {
         setErrorMsg(res.error || 'Failed to submit agreement.');
       }
@@ -61,48 +66,54 @@ export function AgreementGate({
               Guidelines & Commission Agreement
             </h2>
             <p className="font-body text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-              WEB-OS Outbound Operations — Version 1.0
+              WEB-OS Outbound Operations — Version {activeVersion}
             </p>
           </div>
         </div>
 
         {/* Guidelines Box */}
-        <div className="text-[11px] leading-relaxed text-slate-600 bg-slate-50 border border-slate-200/50 rounded-2xl p-5 overflow-y-auto h-72 flex flex-col gap-4 font-body select-text">
-          <div>
-            <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">1. Role & Scope Boundaries</h4>
-            <p>
-              As a Caller, you are responsible for appointment setting and lead qualification. 
-              You are strictly prohibited from promising final prices, discounts, delivery dates, 
-              or project features to clients without explicit Admin or Manager authorization.
-            </p>
-          </div>
+        <div className="text-[11px] leading-relaxed text-slate-650 bg-slate-50 border border-slate-200/50 rounded-2xl p-5 overflow-y-auto h-72 flex flex-col gap-4 font-body select-text whitespace-pre-line">
+          {latestGuidelinesText ? (
+            <div>{latestGuidelinesText}</div>
+          ) : (
+            <>
+              <div>
+                <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">1. Role & Scope Boundaries</h4>
+                <p>
+                  As a Caller, you are responsible for appointment setting and lead qualification. 
+                  You are strictly prohibited from promising final prices, discounts, delivery dates, 
+                  or project features to clients without explicit Admin or Manager authorization.
+                </p>
+              </div>
 
-          <div>
-            <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">2. Lead Ownership protection</h4>
-            <p>
-              When you mark a lead as 'Interested', 'Callback', or 'Meeting Booked', an ownership lock of 
-              <strong> 60 days</strong> is automatically granted to your account. However, this lock will expire 
-              and the lead will be reassigned if there are <strong>14 days of inactivity</strong> (no follow-up call outcomes or notes logged).
-            </p>
-          </div>
+              <div>
+                <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">2. Lead Ownership protection</h4>
+                <p>
+                  When you mark a lead as 'Interested', 'Callback', or 'Meeting Booked', an ownership lock of 
+                  <strong> 60 days</strong> is automatically granted to your account. However, this lock will expire 
+                  and the lead will be reassigned if there are <strong>14 days of inactivity</strong> (no follow-up call outcomes or notes logged).
+                </p>
+              </div>
 
-          <div>
-            <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">3. Commission Payout Structures</h4>
-            <p>
-              Commissions are generated solely from client funds actually received and confirmed by management. 
-              If the client pays in milestones (e.g. 50% deposit, 50% final), your commission is paid out in 
-              matching parts.
-            </p>
-          </div>
+              <div>
+                <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">3. Commission Payout Structures</h4>
+                <p>
+                  Commissions are generated solely from client funds actually received and confirmed by management. 
+                  If the client pays in milestones (e.g. 50% deposit, 50% final), your commission is paid out in 
+                  matching parts.
+                </p>
+              </div>
 
-          <div>
-            <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">4. Anti-Theft & Data Leak policies</h4>
-            <p>
-              Copying lead phone numbers in bulk, scraping spreadsheets, or sharing client profiles is 
-              strictly monitored. Standard daily view limits are enforced (50 leads/day for new callers). 
-              Canary/trap leads are embedded in campaigns to identify data theft.
-            </p>
-          </div>
+              <div>
+                <h4 className="font-bold text-slate-800 uppercase text-[10px] tracking-wider mb-1">4. Anti-Theft & Data Leak policies</h4>
+                <p>
+                  Copying lead phone numbers in bulk, scraping spreadsheets, or sharing client profiles is 
+                  strictly monitored. Standard daily view limits are enforced (50 leads/day for new callers). 
+                  Canary/trap leads are embedded in campaigns to identify data theft.
+                </p>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Acceptance Form */}

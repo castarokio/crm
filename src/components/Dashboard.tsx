@@ -10,8 +10,9 @@ import { AuditLogsTable } from './admin/AuditLogsTable';
 import { CommissionsTab } from './pipeline/CommissionsTab';
 import { ProjectsTab } from './pipeline/ProjectsTab';
 import { DisputesTab } from './pipeline/DisputesTab';
-import { getCallerTarget } from '@/app/actions/pipeline';
+import { getCallerTarget, getTeamLeaderboardAction } from '@/app/actions/pipeline';
 import { getTargetInventoryCounts, getUpcomingCallbacksAction } from '@/app/actions/leads';
+import { sweepExpiredLocksAction } from '@/app/actions/security';
 import { GlassCard } from './ui/glass-card';
 import { AppDialogs } from './ui/app-dialogs';
 
@@ -49,6 +50,9 @@ export default function Dashboard({
     treated: number;
   }>({ total: 0, warm: 0, converted: 0, followups: 0, lost: 0, treated: 0 });
 
+  // Leaderboard statistics state
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+
   // Callback alarms notifications state
   const [callbackAlarms, setCallbackAlarms] = useState<any[]>([]);
   // Callback selected lead to load in Dialer Tab
@@ -58,9 +62,11 @@ export default function Dashboard({
 
   useEffect(() => {
     void loadCallerMetrics();
+    void sweepExpiredLocksAction();
     // Refresh count values every 30 seconds for live updates
     const interval = setInterval(() => {
       void loadCallerMetrics();
+      void sweepExpiredLocksAction();
     }, 30000);
     return () => clearInterval(interval);
   }, [callerName]);
@@ -136,6 +142,7 @@ export default function Dashboard({
     setLoadingTargets(true);
     const targetRes = await getCallerTarget(callerName);
     const countRes = await getTargetInventoryCounts();
+    const leaderRes = await getTeamLeaderboardAction();
     if (targetRes.success) {
       setTargets({
         daily_call_target: targetRes.daily_call_target,
@@ -146,6 +153,9 @@ export default function Dashboard({
     }
     if (countRes.success && countRes.counts) {
       setCounts(countRes.counts);
+    }
+    if (leaderRes.success && leaderRes.leaderboard) {
+      setLeaderboard(leaderRes.leaderboard);
     }
     setLoadingTargets(false);
   };
@@ -410,6 +420,83 @@ export default function Dashboard({
 
         {/* Dynamic View Box */}
         <main className="flex-1 overflow-hidden p-3 md:p-6 flex flex-col gap-4 md:gap-6">
+          
+          {/* Animated Team Scorecard Leaderboard */}
+          {leaderboard.length > 0 && (callerRole !== 'Developer' && callerRole !== 'Auditor') && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0 animate-in fade-in slide-in-from-top-3 duration-500">
+              {leaderboard.slice(0, 3).map((item, idx) => {
+                const progress = formatPercentage(item.calls_today, item.daily_target);
+                
+                const borderColors = [
+                  'border-indigo-500/30 shadow-indigo-100/50 bg-indigo-50/5',
+                  'border-blue-500/25 shadow-blue-100/40 bg-blue-50/5',
+                  'border-slate-200 shadow-slate-100/40 bg-slate-50/5'
+                ];
+                
+                const badges = [
+                  '🏆 Rank 1',
+                  '🥈 Rank 2',
+                  '🥉 Rank 3'
+                ];
+
+                return (
+                  <div 
+                    key={item.name} 
+                    className={`p-4 bg-white rounded-2xl border ${borderColors[idx] || 'border-slate-200'} shadow-sm flex flex-col gap-2.5 transition-all hover:scale-[1.02] duration-300 relative overflow-hidden`}
+                  >
+                    {idx === 0 && (
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-800 text-xs border border-slate-200 uppercase">
+                          {item.name[0]}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="font-display font-extrabold text-slate-900 uppercase tracking-wide text-[11px] flex items-center gap-1">
+                            {item.name}
+                            {item.status === 'Disabled' && (
+                              <span className="text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 px-1 rounded uppercase">SUSP</span>
+                            )}
+                          </span>
+                          <span className="text-[8.5px] font-semibold text-slate-400 uppercase tracking-wider">{badges[idx]}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className="text-[9.5px] text-slate-455 uppercase font-black tracking-widest block leading-none">Calls Made</span>
+                        <h4 className="text-sm font-black text-slate-800 font-display mt-1">{item.calls_today} <span className="text-[10px] text-slate-455 font-normal">/ {item.daily_target}</span></h4>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1 mt-1">
+                      <div className="flex justify-between items-center text-[9px] font-bold text-slate-655">
+                        <span>Daily Progress</span>
+                        <span className="text-indigo-650 font-black">{progress}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-1000 ${
+                            idx === 0 ? 'bg-indigo-600' :
+                            idx === 1 ? 'bg-blue-500' :
+                            'bg-slate-500'
+                          }`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] text-slate-455 font-bold uppercase tracking-wider border-t border-slate-100 pt-2 mt-1">
+                      <span>Appts This Week:</span>
+                      <span className="font-extrabold text-slate-800 font-display">{item.appointments_this_week} / {item.weekly_target}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto pr-1">
             {activeTab === 'dialer' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
               <DialerTab 

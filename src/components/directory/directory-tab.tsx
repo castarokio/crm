@@ -37,6 +37,7 @@ import {
   bulkDeleteLeadsAction,
   bulkRestoreLeadsAction
 } from '@/app/actions/leads';
+import { logExportAction } from '@/app/actions/security';
 import { Modal } from '../ui/modal';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -379,6 +380,61 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     }
   };
 
+  const handleExportCSV = async () => {
+    if (leads.length === 0) {
+      toast.warning('No leads available to export.');
+      return;
+    }
+
+    // Log the export event to audit logs
+    await logExportAction(leads.length);
+
+    // Define columns
+    const headers = [
+      'ID', 'Agency Name', 'Phone', 'Phone 2', 'Email', 'Email 2', 
+      'Website', 'Website Quality', 'Area', 'Address', 'Priority', 
+      'Call Status', 'Contact Person', 'Work Hours', 'Notes', 'Call Notes'
+    ];
+
+    // Map leads to rows
+    const rows = leads.map(l => [
+      l.id,
+      l.agency_name || '',
+      l.phone || '',
+      l.phone_2 || '',
+      l.email || '',
+      l.email_2 || '',
+      l.website || '',
+      l.website_quality || '',
+      l.area || '',
+      l.address || '',
+      l.priority || '',
+      l.call_status || '',
+      l.contact_person || '',
+      l.work_hours || '',
+      (l.notes || '').replace(/"/g, '""'),
+      (l.call_notes || '').replace(/"/g, '""')
+    ]);
+
+    // Build CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(val => `"${val}"`).join(','))
+    ].join('\n');
+
+    // Create download link
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `web_os_crm_export_${new Date().toISOString().slice(0,10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Spreadsheet exported to CSV successfully.');
+  };
+
   // Bulk selectors
   const handleToggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -625,6 +681,16 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
         >
           Add Contact
         </Button>
+
+        {/* CSV Export Button (Visible only to Admin or Manager) */}
+        {(callerRole === 'Admin' || callerRole === 'Manager') && (
+          <Button
+            onClick={handleExportCSV}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shrink-0 rounded-xl py-1.5"
+          >
+            Export to CSV
+          </Button>
+        )}
 
         <div className="text-slate-400 text-[10px] uppercase font-black tracking-wider font-body ml-auto">
           Found: <span className="text-slate-800 font-extrabold font-display">{totalLeads}</span> leads

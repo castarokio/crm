@@ -838,3 +838,96 @@ export async function updateCallerRoleAction(name: string, role: string) {
     return { success: false, error: error.message };
   }
 }
+
+export async function toggleCallerSuspensionAction(name: string, status: 'Active' | 'Disabled', reason?: string) {
+  try {
+    const session = await requireAdminSession();
+    if (name === 'Hamid') {
+      throw new Error('ADMIN_CANNOT_BE_SUSPENDED');
+    }
+    const supabase = requireSupabase();
+
+    const { error } = await supabase
+      .from('caller_profiles')
+      .update({
+        status,
+        disabled_reason: status === 'Disabled' ? (reason || 'Suspended by admin compliance') : null
+      })
+      .eq('name', name);
+
+    if (error) throw new Error(error.message);
+
+    await logAuditEvent(session.name, status === 'Disabled' ? 'SUSPEND_CALLER' : 'ACTIVATE_CALLER', `${status} secure status of caller: ${name}`);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[toggleCallerSuspensionAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateGuidelinesAction(text: string, version: string) {
+  try {
+    const session = await requireAdminSession();
+    const supabase = requireSupabase();
+
+    // Check if __portal_settings__ exists
+    const { data: existing } = await supabase
+      .from('caller_profiles')
+      .select('id')
+      .eq('name', '__portal_settings__')
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase
+        .from('caller_profiles')
+        .update({
+          guidelines_text: text,
+          guidelines_version: version
+        })
+        .eq('name', '__portal_settings__');
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabase
+        .from('caller_profiles')
+        .insert({
+          name: '__portal_settings__',
+          pin: '000000', // Dummy PIN
+          role: 'Viewer',
+          gender: 'Male',
+          guidelines_text: text,
+          guidelines_version: version
+        });
+      if (error) throw new Error(error.message);
+    }
+
+    await logAuditEvent(session.name, 'UPDATE_ONBOARDING_GUIDELINES', `Guidelines updated to version ${version}`);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[updateGuidelinesAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getGuidelinesAction() {
+  try {
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('caller_profiles')
+      .select('guidelines_text, guidelines_version')
+      .eq('name', '__portal_settings__')
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    
+    return {
+      success: true,
+      text: data?.guidelines_text || '',
+      version: data?.guidelines_version || '1.0'
+    };
+  } catch (error: any) {
+    console.error('[getGuidelinesAction]', error.message);
+    return { success: false, error: error.message, text: '', version: '1.0' };
+  }
+}
