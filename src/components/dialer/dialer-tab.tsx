@@ -15,12 +15,10 @@ import {
   updateCallStatus, 
   lockLead, 
   unlockLead, 
-  updateCallStatusWithAI,
   deleteLeadPermanently,
   createLeadAction,
   recallAllUnansweredAction,
-  getSingleLeadAction,
-  processCallSummaryWithAI
+  getSingleLeadAction
 } from '@/app/actions/leads';
 
 type DialerTabProps = {
@@ -43,9 +41,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
   const [leadEmail, setLeadEmail] = useState<string>('');
   const [showScheduler, setShowScheduler] = useState<boolean>(false);
 
-  // AI note parsing state
-  const [aiNotesInput, setAiNotesInput] = useState<string>('');
-  const [parsingAI, setParsingAI] = useState<boolean>(false);
+
   const [mobileView, setMobileView] = useState<'queue' | 'call'>('call');
 
   // Add Lead Modal State
@@ -171,7 +167,6 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       setMeetingDate(activeLead.meeting_date || '');
       setContactPerson(activeLead.contact_person || '');
       setLeadEmail(activeLead.email || '');
-      setAiNotesInput('');
     }
 
     return () => {
@@ -250,33 +245,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
     }
   };
 
-  const handleSaveOutcomeAI = async () => {
-    if (!activeLead || !aiNotesInput.trim()) return;
 
-    setParsingAI(true);
-    try {
-      const res = await processCallSummaryWithAI(aiNotesInput);
-      if (res.success && res.extractedData) {
-        const data = res.extractedData;
-        
-        // Pre-fill form state variables
-        if (data.call_status) setOutcomeStatus(data.call_status);
-        if (data.summary) setOutcomeNotes(data.summary);
-        if (data.meeting_date) setMeetingDate(data.meeting_date);
-        if (data.contact_person) setContactPerson(data.contact_person);
-        if (data.updated_email) setLeadEmail(data.updated_email);
-        
-        toast.success('AI analysis done — form pre-filled. Review and click Save Call Log.');
-      } else {
-        toast.error(res.error || 'AI parsing failed. Check your Gemini API key.');
-      }
-    } catch (err: any) {
-      console.error('[AI notes save error]', err);
-      toast.error('Unexpected error while parsing notes with AI.');
-    } finally {
-      setParsingAI(false);
-    }
-  };
 
   const handleDeleteFalseLead = async () => {
     if (!activeLead) return;
@@ -614,36 +583,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
                   </div>
                 </GlassCard>
 
-                {/* AI Post Call Parser Card */}
-                <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4 p-5">
-                  <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
-                    Gemini AI Summary Parser
-                  </h3>
 
-                  <div className="flex flex-col gap-3 font-body text-xs">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[9px] text-slate-400 uppercase font-bold">Paste Raw Notes / Transcript</label>
-                      <textarea
-                        rows={3}
-                        value={aiNotesInput}
-                        onChange={(e) => setAiNotesInput(e.target.value)}
-                        placeholder="Paste call notes (AI will auto extract status, date, and details)..."
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-medium text-slate-850"
-                      />
-                    </div>
-
-                    <Button
-                      onClick={handleSaveOutcomeAI}
-                      loading={parsingAI}
-                      variant="secondary"
-                      icon={<Sparkles className="w-3.5 h-3.5 text-indigo-600" />}
-                      className="w-full text-indigo-700 hover:text-indigo-850 border border-indigo-200 bg-indigo-50/50"
-                    >
-                      Analyze & Save
-                    </Button>
-                  </div>
-                </GlassCard>
               </>
             )}
           </div>
