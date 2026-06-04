@@ -204,6 +204,59 @@ export async function getDialerQueue() {
   }
 }
 
+async function syncDealFromCallStatus(supabase: any, leadId: number, status: string, agencyName: string, callerName: string) {
+  // Map call_status to deal stage
+  let stage: string | null = null;
+  if (status === 'Interested') stage = 'Interested';
+  else if (status === 'Callback') stage = 'Appointment Booked';
+  else if (['Accepted', 'Client Configured'].includes(status)) stage = 'Won';
+  else if (['Not Interested', 'Wrong Number'].includes(status)) stage = 'Lost';
+
+  if (!stage) return; // For busy/no answer/etc, we don't automatically create or transition deals
+
+  // Check if deal already exists for this lead_id
+  const { data: existingDeal, error: dealFetchErr } = await supabase
+    .from('deals')
+    .select('id, stage')
+    .eq('lead_id', leadId)
+    .maybeSingle();
+
+  if (dealFetchErr) {
+    console.error('[syncDealFromCallStatus fetch error]', dealFetchErr.message);
+    return;
+  }
+
+  if (existingDeal) {
+    const { error: updateErr } = await supabase
+      .from('deals')
+      .update({ stage, updated_at: new Date().toISOString() })
+      .eq('id', existingDeal.id);
+    if (updateErr) {
+      console.error('[syncDealFromCallStatus update error]', updateErr.message);
+    }
+  } else {
+    // Only create deals automatically if the new status is Interested, Callback, Accepted, or Client Configured
+    if (['Interested', 'Callback', 'Accepted', 'Client Configured'].includes(status)) {
+      const { error: insertErr } = await supabase
+        .from('deals')
+        .insert({
+          deal_name: `${agencyName || 'Leads'} Deal`,
+          company_name: agencyName || '',
+          caller_name: callerName,
+          lead_id: leadId,
+          stage,
+          setup_value: 0.00,
+          recurring_value: 0.00,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      if (insertErr) {
+        console.error('[syncDealFromCallStatus insert error]', insertErr.message);
+      }
+    }
+  }
+}
+
 export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string, meetingDate?: string) {
   try {
     const session = await requireWritableSession();
@@ -212,7 +265,7 @@ export async function updateCallStatus(id: number, status: string, notes: string
 
     const { data: original, error: fetchErr } = await supabase
       .from('leads')
-      .select('call_status, notes, call_notes, caller_name, assigned_to, last_called_at, last_updated, meeting_date')
+      .select('agency_name, call_status, notes, call_notes, caller_name, assigned_to, last_called_at, last_updated, meeting_date')
       .eq('id', id)
       .single();
     if (fetchErr) throw new Error(fetchErr.message);
@@ -254,19 +307,8 @@ export async function updateCallStatus(id: number, status: string, notes: string
     });
     if (historyError) throw new Error(historyError.message);
 
-    // Auto-create deal if status is Converted
-    if (CONVERTED_STATUSES.includes(status)) {
-      const { error: dealError } = await supabase.from('deals').insert({
-        deal_name: `${original.agency_name || 'Leads'} Deal`,
-        company_name: original.agency_name || '',
-        caller_name: session.name,
-        lead_id: id,
-        stage: 'New',
-        setup_value: 0.00,
-        recurring_value: 0.00
-      });
-      if (dealError) console.warn('[Auto Deal Error]', dealError.message);
-    }
+    // Synchronize deal to pipeline
+    await syncDealFromCallStatus(supabase, id, status, original.agency_name, session.name);
 
     return { success: true };
   } catch (error: any) {
@@ -514,6 +556,14 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
 
   try {
     const supabase = requireSupabase();
+
+    // Fetch original lead agency name
+    const { data: original, error: fetchErr } = await supabase
+      .from('leads')
+      .select('agency_name')
+      .eq('id', leadId)
+      .single();
+    if (fetchErr) throw new Error(fetchErr.message);
     
     const updatePayload: any = {
       call_status: data.call_status,
@@ -542,6 +592,9 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
       call_status: data.call_status,
       notes: data.summary || rawSummary
     });
+
+    // Synchronize deal to pipeline
+    await syncDealFromCallStatus(supabase, leadId, data.call_status, original.agency_name, session.name);
 
     return { success: true, extracted: data };
   } catch (error: any) {

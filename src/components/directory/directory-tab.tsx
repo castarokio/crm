@@ -40,6 +40,7 @@ import {
 import { Modal } from '../ui/modal';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { GlassCard } from '../ui/glass-card';
 
 type DirectoryTabProps = {
   callerName: string;
@@ -98,6 +99,56 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
   // Inline Cell Editing State
   const [editingCell, setEditingCell] = useState<{ leadId: number; field: 'priority' | 'contact_person' | 'work_hours' } | null>(null);
   const [inlineValue, setInlineValue] = useState<string>('');
+
+  // Selected Simple Profile State
+  const [profileLead, setProfileLead] = useState<any | null>(null);
+  const [profileFields, setProfileFields] = useState<any>({});
+  const [savingProfile, setSavingProfile] = useState<boolean>(false);
+
+  const handleSelectProfileLead = (lead: any) => {
+    setProfileLead(lead);
+    setProfileFields({
+      agency_name: lead.agency_name || '',
+      area: lead.area || '',
+      address: lead.address || '',
+      priority: lead.priority ?? 3,
+      call_status: lead.call_status || 'Not Called',
+      phone: lead.phone || '',
+      phone_2: lead.phone_2 || '',
+      email: lead.email || '',
+      email_2: lead.email_2 || '',
+      website: lead.website || '',
+      website_quality: lead.website_quality || 'Medium',
+      facebook: lead.facebook || '',
+      instagram: lead.instagram || '',
+      tiktok: lead.tiktok || '',
+      linkedin: lead.linkedin || '',
+      social_link: lead.social_link || '',
+      work_hours: lead.work_hours || '',
+      notes: lead.notes || '',
+      call_notes: lead.call_notes || '',
+    });
+  };
+
+  const handleProfileFieldChange = (field: string, val: any) => {
+    setProfileFields((prev: any) => ({ ...prev, [field]: val }));
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profileLead) return;
+    setSavingProfile(true);
+    const res = await updateLeadDetails(profileLead.id, profileFields);
+    setSavingProfile(false);
+    if (res.success) {
+      // Update local state in table list
+      setLeads(prev => prev.map(l => l.id === profileLead.id ? { ...l, ...profileFields } : l));
+      setProfileLead((prev: any) => ({ ...prev, ...profileFields }));
+      alert('Lead profile updated successfully.');
+    } else {
+      alert(`Failed to update profile: ${res.error}`);
+    }
+  };
 
   useEffect(() => {
     if (searchQuery) {
@@ -406,7 +457,9 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
   };
 
   return (
-    <div className="flex flex-col gap-6 h-full flex-1">
+    <div className="flex flex-col xl:flex-row gap-6 h-full items-start w-full">
+      {/* Grid List View */}
+      <div className="flex-1 flex flex-col gap-6 w-full">
       {/* 7 Directories Tab Select Bar */}
       <div className="flex border-b border-slate-200 overflow-x-auto">
         <button
@@ -580,8 +633,11 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
                   return (
                     <tr
                       key={lead.id}
-                      className={`border-b border-slate-100 hover:bg-slate-50/40 transition-all font-medium ${
-                        isChecked 
+                      onClick={() => handleSelectProfileLead(lead)}
+                      className={`border-b border-slate-100 hover:bg-slate-50/40 transition-all font-medium cursor-pointer ${
+                        profileLead?.id === lead.id
+                          ? 'bg-indigo-50/40 hover:bg-indigo-50/50 border-l-4 border-indigo-650'
+                          : isChecked 
                           ? 'bg-indigo-50/30 hover:bg-indigo-50/40' 
                           : idx % 2 === 1 
                           ? 'bg-slate-50/15' 
@@ -589,7 +645,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
                       }`}
                     >
                       {/* Checkbox Column */}
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -735,7 +791,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
                       </td>
 
                       {/* Action buttons row */}
-                      <td className="px-5 py-3 text-right">
+                      <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={() => handleOpenEdit(lead)}
@@ -1091,6 +1147,228 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
           </div>
         </form>
       </Modal>
+      </div>
+
+      {/* Simple Profile Side Card */}
+      {profileLead && (
+        <GlassCard className="w-full xl:w-96 shrink-0 border border-slate-200/80 shadow-md p-5 flex flex-col gap-4 max-h-[calc(100vh-160px)] overflow-y-auto font-body relative bg-white/75 backdrop-blur-md">
+          <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+            <div>
+              <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider">Agency Profile</h3>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">ID: #{profileLead.id}</p>
+            </div>
+            <button
+              onClick={() => setProfileLead(null)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all cursor-pointer font-bold border-none bg-transparent"
+              type="button"
+            >
+              ✕
+            </button>
+          </div>
+
+          <form onSubmit={handleSaveProfile} className="flex flex-col gap-3 text-[11px]">
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Agency Name *</label>
+              <Input
+                type="text"
+                required
+                value={profileFields.agency_name || ''}
+                onChange={(e) => handleProfileFieldChange('agency_name', e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Area / City *</label>
+                <Input
+                  type="text"
+                  required
+                  value={profileFields.area || ''}
+                  onChange={(e) => handleProfileFieldChange('area', e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Priority</label>
+                <select
+                  value={profileFields.priority || 3}
+                  onChange={(e) => handleProfileFieldChange('priority', Number(e.target.value))}
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-semibold text-slate-850 text-xs cursor-pointer"
+                >
+                  <option value={1}>P1 (High Socials)</option>
+                  <option value={2}>P2 (High Reviews)</option>
+                  <option value={3}>P3 (Standard)</option>
+                  <option value={4}>P4 (Low)</option>
+                  <option value={5}>P5 (Minimal)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Physical Address</label>
+              <Input
+                type="text"
+                value={profileFields.address || ''}
+                onChange={(e) => handleProfileFieldChange('address', e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Phone 1 *</label>
+                <Input
+                  type="text"
+                  required
+                  value={profileFields.phone || ''}
+                  onChange={(e) => handleProfileFieldChange('phone', e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Phone 2</label>
+                <Input
+                  type="text"
+                  value={profileFields.phone_2 || ''}
+                  onChange={(e) => handleProfileFieldChange('phone_2', e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Email 1</label>
+                <Input
+                  type="email"
+                  value={profileFields.email || ''}
+                  onChange={(e) => handleProfileFieldChange('email', e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Email 2</label>
+                <Input
+                  type="email"
+                  value={profileFields.email_2 || ''}
+                  onChange={(e) => handleProfileFieldChange('email_2', e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Website</label>
+                <Input
+                  type="text"
+                  value={profileFields.website || ''}
+                  onChange={(e) => handleProfileFieldChange('website', e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Web Quality</label>
+                <select
+                  value={profileFields.website_quality || 'Medium'}
+                  onChange={(e) => handleProfileFieldChange('website_quality', e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-semibold text-slate-850 text-xs cursor-pointer"
+                >
+                  <option value="None">None</option>
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Facebook Link</label>
+              <Input
+                type="text"
+                value={profileFields.facebook || ''}
+                onChange={(e) => handleProfileFieldChange('facebook', e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Instagram Link</label>
+              <Input
+                type="text"
+                value={profileFields.instagram || ''}
+                onChange={(e) => handleProfileFieldChange('instagram', e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">TikTok Link</label>
+              <Input
+                type="text"
+                value={profileFields.tiktok || ''}
+                onChange={(e) => handleProfileFieldChange('tiktok', e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">LinkedIn Link</label>
+              <Input
+                type="text"
+                value={profileFields.linkedin || ''}
+                onChange={(e) => handleProfileFieldChange('linkedin', e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Other Social Link</label>
+              <Input
+                type="text"
+                value={profileFields.social_link || ''}
+                onChange={(e) => handleProfileFieldChange('social_link', e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Work Hours</label>
+                <Input
+                  type="text"
+                  value={profileFields.work_hours || ''}
+                  onChange={(e) => handleProfileFieldChange('work_hours', e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Call Status</label>
+                <select
+                  value={profileFields.call_status || 'Not Called'}
+                  onChange={(e) => handleProfileFieldChange('call_status', e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-semibold text-slate-850 text-xs cursor-pointer"
+                >
+                  <option value="Not Called">Not Called</option>
+                  <option value="Interested">Interested</option>
+                  <option value="Callback">Callback</option>
+                  <option value="Busy">Busy</option>
+                  <option value="No Answer">No Answer</option>
+                  <option value="Not Interested">Not Interested</option>
+                  <option value="Wrong Number">Wrong Number</option>
+                  <option value="Accepted">Accepted / Booked</option>
+                  <option value="Client Configured">Client Configured</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Latest Call Notes</label>
+              <textarea
+                rows={2}
+                value={profileFields.call_notes || ''}
+                onChange={(e) => handleProfileFieldChange('call_notes', e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs text-slate-850 font-medium resize-none"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              loading={savingProfile}
+              className="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] tracking-wider"
+            >
+              Save Profile Changes
+            </Button>
+          </form>
+        </GlassCard>
+      )}
     </div>
   );
 }
