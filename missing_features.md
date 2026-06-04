@@ -1,64 +1,102 @@
 # Missing Features Report: Monolithic vs. Modular CRM
 
-We conducted a deep code audit comparing the original 7,500-line monolithic `Dashboard.tsx` (commit `af7522e`) against the new modular React structure. Below is an honest list of missing or partially integrated features that were present in the first version but have not been carried over.
+This document lists all features, UI layouts, widgets, helper utilities, and database-linked states present in the legacy 7,500-line monolithic `Dashboard.tsx` (commit `af7522e`) that were **not** carried over during the modular Next.js refactoring.
 
 ---
 
-## 📅 1. Upcoming Meetings & Callbacks Tab (`deadlines`)
+## 🔗 1. Social Media Profile Badges (`SocialProfileBadges` Widget)
 * **Status**: 🔴 **Completely Missing**
-* **Legacy Implementation**: A major navigation panel accessible from the sidebar (`activeTab === 'deadlines'`).
+* **Legacy Implementation**: A component (`SocialProfileBadges`) dynamically rendered hoverable badges for active leads.
 * **Missing Capabilities**:
-  * **Calendar View**: Renders a visual calendar grid of the current month. Days containing scheduled callback deadlines displayed a number badge; clicking a day filtered and showed specific callback cards below it.
-  * **List Table View**: An alternative tabular display showing lead names, phone numbers, districts (`area`), meeting times, and caller names.
-  * **Month Navigation**: Buttons to advance or reverse the calendar month.
+  * **Social Normalization Utilities**: Normalizes handles (e.g. `@username` or raw text) into fully qualified URLs:
+    * `normalizeFacebookProfileUrl` -> Matches `facebook.com` domains or raw handles to direct profile links.
+    * `normalizeInstagramProfileUrl` -> Converts Instagram handles into direct profile URLs.
+    * `normalizeTikTokUrl` -> Converts handles to `tiktok.com/@username`.
+    * `normalizeLinkedInUrl` -> Converts company names or handles to company profiles.
+    * `normalizeExternalUrl` -> Sanitizes websites.
+  * **Link Parsing & Badges**: Filtered out empty/N/A entries and rendered clean, responsive icon badges (Globe, Facebook, Instagram, TikTok, LinkedIn) in the directory grids and the dialer details panel.
 
 ---
 
-## 📋 2. Outreach Checklist Panel (Dialer Control Center)
+## ⚡ 2. Direct Outreach Messaging & Proposal Redirects
 * **Status**: 🔴 **Completely Missing**
-* **Legacy Implementation**: A checkbox sub-panel inside the Dialer Tab sidebar:
-  * Checkboxes for: **Call Placed**, **Email Sent**, **Social Message Sent**, and **Audit Report Prepared**.
-  * A **"Save Outreach"** action that executed an API call to save the checked items to the database, displaying a temporary "Saved!" alert upon success.
-* **New Implementation**: The dialer queue panel (`dialer-queue.tsx`) lacks these checkboxes, and the state hooks/server actions for outreach checklists are not wired up.
+* **Legacy Implementation**: Action buttons located in the Dialer active card (`dialerCardTab === 'pitch'`) that dynamically generated pre-filled outreach templates and directly launched messaging windows:
+  * **WhatsApp Msg**: Formatted Algerian phone numbers (converting `06...` to `2136...` via `formatWhatsappPhone`) and launched a chat with the custom Gemini AI proposal text prefilled:
+    `https://wa.me/213xxxxxxxxx?text=Pre-filled%20Proposal%20Paragraph...`
+  * **WhatsApp Chat**: Opens a clean chat window without pre-filled text.
+  * **Instagram Direct DM**: Auto-copied the custom AI pitch/proposal text to the system clipboard, displayed a success toast, and opened the Direct Message screen:
+    `https://ig.me/m/{handle}` (falling back to `/direct/inbox/`).
+  * **Facebook Messenger**: Auto-copied the proposal text to the clipboard and opened the direct Messenger thread:
+    `https://m.me/{handle}` (falling back to the main messenger page).
 
 ---
 
-## 👁️ 3. Live Audit Logs Viewer (Admin Panel)
+## 📅 3. Callback Scheduler Modal
+* **Status**: 🔴 **Completely Missing**
+* **Legacy Implementation**: When a caller marked a lead as a `Callback`, instead of typing details into a text box, the app popped open a dedicated **Scheduler Modal**:
+  * An interactive calendar grid displaying dates.
+  * Dropdown selectors for Hour and Minute.
+  * Saved the combined timestamp to the database in a standardized structure.
+* **New Implementation**: Replaced with a simple date/time text input inside the update status panel, which lacks the styled, guided date-grid scheduler.
+
+---
+
+## 📋 4. Outbox Checklist Checkbox States
+* **Status**: 🔴 **Completely Missing**
+* **Legacy Implementation**: Inside the dialer checklist sub-panel, separate checkboxes tracked specific social media sends, saving their state inside the database:
+  * **WhatsApp Sent** (`message_whatsapp` boolean)
+  * **Facebook Sent** (`message_facebook` boolean)
+  * **Instagram Sent** (`message_instagram` boolean)
+  * **TikTok Sent** (`message_tiktok` boolean)
+  * **Email Sent** (`message_email` boolean)
+* **New Implementation**: Although these boolean columns exist in the database, there is no UI rendering or state hooks inside `lead-info-card.tsx` or `DirectoryTab` to view or check these off.
+
+---
+
+## 🗂️ 5. Tabbed Sub-Panels on Dialer Card
+* **Status**: 🔴 **Completely Missing**
+* **Legacy Implementation**: The active lead card on the dialer tab was split into three custom tabs to keep information dense and clean:
+  * `'info'`: Core contact details (editable names, phones, emails, and notes).
+  * `'pitch'`: Editable Gemini AI French Pitch text-box and the direct messaging redirects.
+  * `'history'`: Displayed the chronological calls audit log timeline for that specific lead alongside the raw scraper metadata.
+* **New Implementation**: A single, static vertical form list. There is no pitch tab, call timeline log, or outreach redirect pane.
+
+---
+
+## 📊 6. Central Campaign Analytics Rates (Admin Panel)
+* **Status**: 🔴 **Completely Missing**
+* **Legacy Implementation**: Calculations displaying overall outreach success rates:
+  * **Coverage Rate** (% of database called vs. uncalled)
+  * **Positive Outcome Rate** (% of Interested + Won leads out of called ones)
+  * **Conversion Rate** (% of Won leads out of called ones)
+  * **Unreachable Rate** (% of Busy + No Answer + Wrong Number out of called ones)
+  * **Refusal Rate** (% of Not Interested out of called ones)
+* **New Implementation**: Omitted from the UI. Only a basic individual targets tracker is visible to callers on the sidebar.
+
+---
+
+## 📅 7. Meetings & Deadlines Tab (`deadlines`)
+* **Status**: 🔴 **Completely Missing**
+* **Legacy Implementation**: A sidebar navigation tab containing a full meetings coordination panel:
+  * **Calendar View**: Interactive grid of days of the month showing callback count badges. Clicking a day displayed callback details below.
+  * **List Table View**: Tabular scroll of upcoming meetings.
+
+---
+
+## 👁️ 8. Audit Event Logs Viewer UI (Admin Panel)
 * **Status**: ⚠️ **Partially Missing (Backend Ready, UI Omitted)**
-* **Legacy Implementation**: Renders an interactive table of all events logged inside the `audit_logs` table (campaign resets, deletions, assignments, caller profile updates, logins).
-* **New Implementation**: The `AdminTab` fetches the audit records into local React state (`const [auditLogs, setAuditLogs] = useState([])`), but the UI rendering blocks for displaying this table are omitted in `admin-tab.tsx`.
+* **Legacy Implementation**: Rendered a structured table of system actions (assignments, profile creations, database resets) from the `audit_logs` table.
+* **New Implementation**: The `AdminTab` queries the database and populates the `auditLogs` state, but the code to display the table in the UI is missing from the admin interface.
 
 ---
 
-## 📊 4. Campaign Analytics Rates (Admin Panel)
+## ✏️ 9. Directory Spreadsheet Inline Cell Inputs
 * **Status**: 🔴 **Completely Missing**
-* **Legacy Implementation**: Renders overall metrics for Hamid to evaluate lead coverage and outreach conversions:
-  * **Coverage Rate** (% of called leads out of total database)
-  * **Positive Outcome Rate** (% of Interested + Won leads out of called)
-  * **Conversion Rate** (% of Won leads out of called)
-  * **Unreachable Rate** (% of Busy + No Answer + Wrong Number out of called)
-  * **Refusal Rate** (% of Not Interested out of called)
-* **New Implementation**: The `AdminTab` does not show these rate calculations. The sidebar only displays a basic progress tracker for the active caller's target (daily call target vs calls made today), but there is no campaign-wide analysis dashboard.
+* **Legacy Implementation**: Allowed double-clicking or focusing fields like `work_hours`, `contact_person`, or `priority` directly inside the spreadsheet table rows to edit them instantly without leaving the grid.
+* **New Implementation**: Edits require opening a modal popup.
 
 ---
 
-## ✉️ 5. French Outreach Email Template Redirection (`mailto`)
+## 🎉 10. Success Confetti Explosion
 * **Status**: 🔴 **Completely Missing**
-* **Legacy Implementation**: Generates template-based French emails via `getPrefilledMailtoUrl`:
-  * Prefills a customized email subject line: `Proposition de Partenariat – Call-OS`
-  * Generates a template body referencing the agency's name, rating count, maps presence, and potential optimization pitch.
-* **New Implementation**: The new email buttons use a simple raw `mailto:${email}` link with no preset subject, body templates, or agency name interpolation.
-
----
-
-## ✏️ 6. Directory Inline Cell Editing (Spreadsheet View)
-* **Status**: 🔴 **Completely Missing**
-* **Legacy Implementation**: Enabled quick corrections directly within the directory spreadsheet grid. Users could double-click or focus fields (like `work_hours`, `contact_person`, `priority`) to edit and save them on blur, without leaving the list view.
-* **New Implementation**: All edits in `DirectoryTab` require selecting a lead, opening a large modal form popup, modifying inputs, and clicking save. Inline inputs in the table are omitted.
-
----
-
-## 🕒 7. Dialer Card Business Hours & Quick Edit
-* **Status**: ⚠️ **Partially Missing**
-* **Legacy Implementation**: Enabled editing fields like `work_hours` inside the Dialer Active Card and displayed Open/Closed badges contextually.
-* **New Implementation**: The dialer queue sidebar shows the open/closed status badge, but the active card (`lead-info-card.tsx`) does not render the badge and has no text input to quickly view or adjust `work_hours`.
+* **Legacy Implementation**: Triggered a full confetti explosion when a lead was successfully converted to `Accepted` or `Client Configured`.
