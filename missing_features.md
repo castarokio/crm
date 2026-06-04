@@ -100,3 +100,46 @@ This document lists all features, UI layouts, widgets, helper utilities, and dat
 ## 🎉 10. Success Confetti Explosion
 * **Status**: 🔴 **Completely Missing**
 * **Legacy Implementation**: Triggered a full confetti explosion when a lead was successfully converted to `Accepted` or `Client Configured`.
+
+---
+
+## 🔄 11. Case Study: Lead Queue Depletion & Caller Stalling
+* **The Problem**: In `getDialerQueue()`, the database query only selects leads with a `call_status` of `'Not Called'`, `NULL`, or `'Recalled'`. 
+* **The Consequences**:
+  * As callers log outcomes (e.g. `Busy`, `No Answer`, `Callback`, `Wrong Number`), the leads are instantly filtered out of the queue list.
+  * Once a caller dials through their allocated range (e.g. 100 leads), their dialer queue hits **0 (empty state)**.
+  * Callers are left idle and locked out from calling, even though there may be dozens of unanswered leads (`Busy` or `No Answer`) in their history.
+* **Missing Feature Solutions**:
+  * **Empty-State Direct Recall Triggers**: An empty queue screen that displays: *"Queue Complete! Click here to automatically recall your unanswered leads (Busy / No Answer) back into the dialer queue."*
+  * **Admin Range Alerts**: Live indicators in Hamid's Admin view showing which callers have empty or low queues so he can immediately assign fresh ranges.
+
+---
+
+## 📈 12. Case Study: Why the Daily Target is 80 Calls
+* **The Math**: An 8-hour shift has **480 minutes**.
+  * **At 80 calls/day**, a caller must cycle through a lead every **6 minutes** (dialing, ringing, pitched, logging results).
+  * **Unanswered Ratio (~60%)**: Out of 80 calls, ~48 result in `Busy`, `No Answer`, or `Wrong Number`. These are logged and skipped within **30–60 seconds** (~48 minutes total).
+  * **Active Conversations (~40%)**: The remaining ~32 calls result in active conversations. This leaves **13.5 minutes per active call** to walk through the website audit, read the French pitch, copy/paste outreach paragraphs to WhatsApp/DMs, and type call notes.
+* **The Problem**: If a caller has **fewer than 80 fresh leads** left in their queue at start-of-day, it is mathematically impossible for them to meet their daily target.
+* **Missing Feature Solutions**:
+  * **Low Allocation Warning**: A yellow warning banner on the goals tracker: *"Allocated leads remaining (X) is lower than your daily target (80). Request a new range from Hamid to hit your target."*
+  * **Automated Admin Top-ups**: An admin option allowing the database to automatically allocate a chunk of 50 new leads to a caller's name when their uncalled lead count falls below 20.
+
+---
+
+## 🔔 13. Case Study: Callback Reminders & Alarm Triggers
+* **The Problem**: Callbacks are scheduled for specific dates and times (e.g. `2026-06-05 10:30`). However, callers only see this if they manually click on the "Callbacks" directory sub-tab.
+* **The Consequences**: Callers miss critical scheduled callback times because they are busy calling fresh leads from the queue, leading to lost conversion opportunities.
+* **Missing Feature Solutions**:
+  * **Real-time Callback Checker**: A background listener checking every 60 seconds if any callback dates are due.
+  * **Visual & Audio Alarms**: A floating browser notification with a sound prompt (Web Audio API) alerting: *"Meeting Due: [Agency Name] is scheduled for a callback now!"*
+  * **Auto-Queue Injection**: Automatically injecting callback leads directly into the top of the active Dialer Queue as the next item once their scheduled time is reached.
+
+---
+
+## 🔒 14. Case Study: Concurrency Lock Gaps
+* **The Problem**: Real-time locking locks leads to `assigned_to = callerName` while they are viewing them. 
+* **The Consequences**: If a caller closes their tab abruptly, shuts down their computer, or loses internet without clicking away from the dialer, the lead remains locked indefinitely until an inactivity check query runs on the backend (defaulted to 10 minutes).
+* **Missing Feature Solutions**:
+  * **Manual Unlock Override**: A button for Admins inside the Directory or Admin tab to forcefully unlock any lead locked by another caller.
+  * **Lock Expiry Timer**: A live visual countdown timer (e.g., `09:59`) on the active dialer card displaying when the current lease lock expires.
