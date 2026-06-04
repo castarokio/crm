@@ -417,7 +417,7 @@ Portfolio : https://castarokio.github.io/`;
       </div>
 
       {/* RENDER VIEW ACCORDING TO SUBTAB */}
-      {activeTab === 'pitch' && <PitchGenerator lead={lead} callerName={callerName} />}
+      {activeTab === 'pitch' && <PitchGenerator lead={lead} callerName={callerName} onDial={onDial} />}
       {activeTab === 'history' && <CallLogLedger leadId={lead.id} />}
 
       {activeTab === 'info' && (

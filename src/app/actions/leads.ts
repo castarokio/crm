@@ -524,6 +524,7 @@ export async function generatePitchWithAI(options: {
   facebookFollowers?: string;
   instagramFollowers?: string;
   runningAds?: string;
+  format?: 'whatsapp' | 'email';
 }) {
   await requireWritableSession();
   const apiKey = process.env.GEMINI_API_KEY;
@@ -538,7 +539,35 @@ export async function generatePitchWithAI(options: {
     options.instagramFollowers ? `Instagram: ${options.instagramFollowers}` : '',
   ].filter(Boolean).join(', ');
 
-  const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web. Présente-toi obligatoirement sous le nom de "hamid" de l'agence "Web-OS" (n'utilise aucun autre nom) et fais référence de manière pertinente à leur activité pour justifier l'intérêt de collaborer avec nous, en proposant de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/).
+  const isEmail = options.format === 'email';
+
+  const basePrompt = isEmail
+    ? `Rédige un e-mail professionnel d'accroche (cold email) personnalisé en français, chaleureux, structuré et persuasif, destiné à l'agence de voyages "${options.agencyName}" en Algérie.
+Le but est de leur proposer de collaborer avec nous pour créer ou optimiser leur site web.
+Présente-toi obligatoirement sous le nom de "hamid" de l'agence "Web-OS" (n'utilise aucun autre nom).
+Fais référence de manière pertinente à leur activité et à leur présence en ligne pour justifier l'intérêt de collaborer.
+Propose de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/) et propose un court appel de 5 à 10 minutes ou un échange WhatsApp pour un audit complet gratuit de leur présence en ligne.
+Termine par une signature professionnelle claire :
+hamid — Web-OS
+Tél/WhatsApp : +213 540 21 12 50
+Email : castarokibusiness@gmail.com
+Portfolio : https://castarokio.github.io/
+
+Agence : ${options.agencyName}
+Ville : ${options.area || 'Algérie'}
+Site existant : ${isNoWeb ? "Non (pas de site, réseaux sociaux uniquement)" : `Oui (${options.website})`}
+Qualité site : ${options.websiteQuality || 'Moyenne'}
+Présence réseaux sociaux : ${hasSocials ? 'Oui' : 'Non'}
+${options.facebook ? `Facebook : ${options.facebook}` : ''}
+${options.instagram ? `Instagram : ${options.instagram}` : ''}
+${options.tiktok ? `TikTok : ${options.tiktok}` : ''}
+${followersDesc ? `Abonnés : ${followersDesc}` : ''}
+${options.runningAds ? `Diffuse des publicités actuellement : ${options.runningAds}` : ''}
+
+${options.customInstruction ? `Consignes supplémentaires : "${options.customInstruction}"` : ''}
+
+Réponds UNIQUEMENT avec le texte brut de l'e-mail généré (pas de balises markdown, pas de sujet d'e-mail, uniquement le corps du message).`
+    : `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web. Présente-toi obligatoirement sous le nom de "hamid" de l'agence "Web-OS" (n'utilise aucun autre nom) et fais référence de manière pertinente à leur activité pour justifier l'intérêt de collaborer avec nous, en proposant de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/).
   
 Agence : ${options.agencyName}
 Ville : ${options.area || 'Algérie'}
@@ -564,7 +593,7 @@ Réponds UNIQUEMENT avec le texte brut du message généré.`;
       contents: [{ role: 'user', parts: [{ text: basePrompt }] }],
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 200,
+        maxOutputTokens: isEmail ? 600 : 200,
       },
     });
     const textResult = result.response.text() || '';
