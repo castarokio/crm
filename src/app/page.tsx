@@ -12,7 +12,7 @@ import {
 } from '@/app/actions/auth';
 import { gsap } from 'gsap';
 
-// Note: Dashboard tab module is imported dynamically or after auth verification to keep chunk sizes modular.
+import { AgreementGate } from '@/components/auth/AgreementGate';
 import Dashboard from '@/components/Dashboard';
 
 export default function Home() {
@@ -20,6 +20,7 @@ export default function Home() {
   const [portalUnlocked, setPortalUnlocked] = useState<boolean>(false);
   const [callerName, setCallerName] = useState<string>('');
   const [callerRole, setCallerRole] = useState<string>('Caller');
+  const [agreementAcceptedVersion, setAgreementAcceptedVersion] = useState<string | null>(null);
   
   // PIN states
   const [enteredPortalPin, setEnteredPortalPin] = useState<string>('');
@@ -65,6 +66,7 @@ export default function Home() {
       setPortalUnlocked(session.portalUnlocked);
       setCallerName(session.callerName);
       setCallerRole(session.callerRole);
+      setAgreementAcceptedVersion(session.agreementAcceptedVersion || null);
       if (session.portalUnlocked) loadCallerProfiles();
     });
   }, [loadCallerProfiles]);
@@ -114,6 +116,7 @@ export default function Home() {
     if (res.success) {
       setCallerName(name);
       setCallerRole(res.role || 'Caller');
+      setAgreementAcceptedVersion(res.agreementAcceptedVersion || null);
       setPromptPinFor('');
       setEnteredCallerPin('');
       callerPinRef.current = '';
@@ -234,11 +237,20 @@ export default function Home() {
 
   if (callerName) {
     return (
-      <Dashboard
+      <AgreementGate
         callerName={callerName}
+        agreementAcceptedVersion={agreementAcceptedVersion}
         callerRole={callerRole}
-        onLogoutCaller={handleLogoutCaller}
-      />
+        onAccepted={(updatedSession) => {
+          setAgreementAcceptedVersion(updatedSession.agreementAcceptedVersion);
+        }}
+      >
+        <Dashboard
+          callerName={callerName}
+          callerRole={callerRole}
+          onLogoutCaller={handleLogoutCaller}
+        />
+      </AgreementGate>
     );
   }
 

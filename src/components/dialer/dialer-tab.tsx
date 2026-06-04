@@ -18,16 +18,18 @@ import {
   deleteLeadPermanently,
   createLeadAction,
   recallAllUnansweredAction,
-  getSingleLeadAction
+  getSingleLeadAction,
+  getNextLeadAction
 } from '@/app/actions/leads';
 
 type DialerTabProps = {
   callerName: string;
+  callerRole: string;
   activeLeadId?: number | null;
   onClearActiveLeadId?: () => void;
 };
 
-export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: DialerTabProps) {
+export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveLeadId }: DialerTabProps) {
   const [queue, setQueue] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [loading, setLoading] = useState<boolean>(true);
@@ -176,6 +178,27 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       }
     };
   }, [activeLead, callerName, currentIndex, queue.length]);
+
+  const handleGetNextLead = async () => {
+    setLoading(true);
+    try {
+      const res = await getNextLeadAction(callerName);
+      if (res.success && res.lead) {
+        setQueue([res.lead]);
+        setCurrentIndex(0);
+        setMobileView('call');
+        toast.success(`Acquired lock on ${res.lead.agency_name || 'lead'} for 10 minutes.`);
+      } else {
+        toast.warning(res.error === 'NO_AVAILABLE_LEADS' 
+          ? 'No unassigned or available leads found in the system right now.'
+          : res.error || 'Failed to fetch next lead.');
+      }
+    } catch (err: any) {
+      toast.error('An error occurred while fetching the next lead.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSelectIndex = (idx: number) => {
     setCurrentIndex(idx);
@@ -336,37 +359,53 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
         </div>
       )}
 
-      {/* Main Grid View */}
-      {queue.length === 0 ? (
-        /* Empty State */
-        <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10">
-          <AlertCircle className="w-8 h-8 text-amber-500 animate-bounce" />
-          <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Queue Depleted</h3>
-          <p className="text-xs text-slate-450 text-center font-medium leading-relaxed max-w-sm">
-            There are no active or uncalled leads left in your dialer queue. Please contact the administrator to assign more lead ranges, or click below to recall unanswered attempts.
-          </p>
-          <div className="flex gap-3">
-            <Button
-              onClick={async () => {
-                setLoading(true);
-                const res = await recallAllUnansweredAction(callerName);
-                if (res.success && res.count) {
-                  toast.success(`Recalled ${res.count} unanswered leads back into queue!`);
-                  await loadQueue();
-                } else {
-                  toast.warning('No unanswered leads to recall right now.');
-                }
-                setLoading(false);
-              }}
-              className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold uppercase text-[10px]"
+      {/* Main Grid View */}      {queue.length === 0 ? (
+        callerRole === 'Caller' ? (
+          /* Caller Empty State - Get Next Lead Cursor Button */
+          <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10 font-body text-xs">
+            <Phone className="w-8 h-8 text-indigo-650 shrink-0 animate-pulse" />
+            <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Cursor Offline</h3>
+            <p className="text-slate-455 text-center font-medium leading-relaxed max-w-sm">
+              Press the button below to retrieve your next locked calling lead from the campaign queue. Your lock lease is active for 10 minutes.
+            </p>
+            <Button 
+              onClick={handleGetNextLead} 
+              className="bg-indigo-650 hover:bg-indigo-750 text-white font-bold uppercase text-[10px] px-6 py-3 rounded-xl shadow cursor-pointer"
             >
-              Recall Unanswered Leads
-            </Button>
-            <Button onClick={() => setIsCreateOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px]">
-              + ADD NEW CONTACT
+              Get Next Lead Card
             </Button>
           </div>
-        </div>
+        ) : (
+          /* Empty State */
+          <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10">
+            <AlertCircle className="w-8 h-8 text-amber-500 animate-bounce" />
+            <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Queue Depleted</h3>
+            <p className="text-xs text-slate-455 text-center font-medium leading-relaxed max-w-sm">
+              There are no active or uncalled leads left in your dialer queue. Please contact the administrator to assign more lead ranges, or click below to recall unanswered attempts.
+            </p>
+            <div className="flex gap-3">
+              <Button
+                onClick={async () => {
+                  setLoading(true);
+                  const res = await recallAllUnansweredAction(callerName);
+                  if (res.success && res.count) {
+                    toast.success(`Recalled ${res.count} unanswered leads back into queue!`);
+                    await loadQueue();
+                  } else {
+                    toast.warning('No unanswered leads to recall right now.');
+                  }
+                  setLoading(false);
+                }}
+                className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold uppercase text-[10px]"
+              >
+                Recall Unanswered Leads
+              </Button>
+              <Button onClick={() => setIsCreateOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px]">
+                + ADD NEW CONTACT
+              </Button>
+            </div>
+          </div>
+        )
       ) : (
         <div className="flex flex-col gap-4 h-full">
           {/* Mobile Tab Select Bar */}
@@ -390,30 +429,33 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
               Active Call ({activeLead?.agency_name ? (activeLead.agency_name.substring(0, 15) + (activeLead.agency_name.length > 15 ? '...' : '')) : 'None'})
             </button>
           </div>
-
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
             
             {/* Dialer Queue (Left Column) */}
-            <div className={`lg:col-span-1 h-full ${mobileView === 'queue' ? 'block' : 'hidden lg:block'}`}>
-              <div className="mb-2">
-                <Button
-                  onClick={() => setIsCreateOpen(true)}
-                  icon={<UserPlus className="w-4.5 h-4.5" />}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
-                >
-                  Add New Contact
-                </Button>
+            {callerRole !== 'Caller' && (
+              <div className={`lg:col-span-1 h-full ${mobileView === 'queue' ? 'block' : 'hidden lg:block'}`}>
+                <div className="mb-2">
+                  <Button
+                    onClick={() => setIsCreateOpen(true)}
+                    icon={<UserPlus className="w-4.5 h-4.5" />}
+                    className="w-full bg-indigo-650 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
+                  >
+                    Add New Contact
+                  </Button>
+                </div>
+                <DialerQueue
+                  queue={queue}
+                  currentIndex={currentIndex}
+                  onSelectIndex={handleSelectIndex}
+                  callerName={callerName}
+                />
               </div>
-              <DialerQueue
-                queue={queue}
-                currentIndex={currentIndex}
-                onSelectIndex={handleSelectIndex}
-                callerName={callerName}
-              />
-            </div>
+            )}
 
             {/* Active Call View (Center + Right Columns) */}
-            <div className={`col-span-1 lg:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start ${mobileView === 'call' ? 'grid' : 'hidden lg:grid'}`}>
+            <div className={`${
+              callerRole === 'Caller' ? 'col-span-1 lg:col-span-4' : 'col-span-1 lg:col-span-3'
+            } grid grid-cols-1 lg:grid-cols-3 gap-6 items-start ${mobileView === 'call' ? 'grid' : 'hidden lg:grid'}`}>
               
               {/* Main Dial Card (Center Column) */}
               <div className="lg:col-span-2 flex flex-col gap-3">
@@ -573,13 +615,15 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
                     </Button>
                     
                     {/* Delete if not related button */}
-                    <Button
-                      onClick={handleDeleteFalseLead}
-                      variant="secondary"
-                      className="w-full text-rose-600 hover:text-rose-800 hover:bg-rose-50/50 border border-rose-200 font-bold uppercase text-[9px] mt-1"
-                    >
-                      Disqualify / Delete Lead
-                    </Button>
+                    {callerRole !== 'Caller' && (
+                      <Button
+                        onClick={handleDeleteFalseLead}
+                        variant="secondary"
+                        className="w-full text-rose-600 hover:text-rose-800 hover:bg-rose-50/50 border border-rose-200 font-bold uppercase text-[9px] mt-1"
+                      >
+                        Disqualify / Delete Lead
+                      </Button>
+                    )}
                   </div>
                 </GlassCard>
 

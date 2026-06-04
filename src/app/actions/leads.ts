@@ -110,6 +110,9 @@ export async function getLeads(options: {
   try {
     await requireCallerSession();
     const supabase = requireSupabase();
+    
+    // Auto-expire old locks
+    await runAutoExpirations();
     let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'exact' });
 
     if (search) {
@@ -174,7 +177,33 @@ export async function getDialerQueue() {
     const effectiveCallerName = session.name;
     const supabase = requireSupabase();
     
-    // Select leads that are fresh or explicitly recalled
+    // Auto-expire old locks
+    await runAutoExpirations();
+
+    // Secure database exports: simple callers can ONLY query their active lock lead
+    if (session.role === 'Caller') {
+      const nowStr = new Date().toISOString();
+      const { data: activeLock } = await supabase
+        .from('lead_locks')
+        .select('lead_id')
+        .eq('locked_by', effectiveCallerName)
+        .eq('lock_type', 'active_call')
+        .eq('status', 'Active')
+        .gt('lock_expiry', nowStr)
+        .maybeSingle();
+
+      if (activeLock) {
+        const { data: lead } = await supabase
+          .from('leads')
+          .select(LEAD_LIST_COLUMNS)
+          .eq('id', activeLock.lead_id)
+          .single();
+        return { success: true, queue: lead ? [lead] : [], total: lead ? 1 : 0 };
+      }
+      return { success: true, queue: [], total: 0 };
+    }
+    
+    // Select leads that are fresh or explicitly recalled (Admins / Supervisors)
     let q = supabase
       .from('leads')
       .select(LEAD_LIST_COLUMNS, { count: 'exact' })
@@ -182,7 +211,6 @@ export async function getDialerQueue() {
 
     if (effectiveCallerName) {
       const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
-      // Concurrency lock check: caller can access leads assigned directly to them, completely unassigned leads, or leads whose lock has expired (updated > 10 mins ago)
       const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null,last_updated.lt.${tenMinutesAgo}`);
     }
@@ -274,11 +302,18 @@ export async function updateCallStatus(
       .single();
     if (fetchErr) throw new Error(fetchErr.message);
 
-    if (original.assigned_to && original.assigned_to !== session.name) {
-      const lockExpired = original.last_updated && (Date.now() - new Date(original.last_updated).getTime() > 10 * 60 * 1000);
-      if (!lockExpired) {
-        throw new Error('LEAD_ASSIGNED_TO_OTHER');
-      }
+    // Verify lock permissions via lead_locks table
+    const { data: activeLock } = await supabase
+      .from('lead_locks')
+      .select('locked_by, lock_expiry')
+      .eq('lead_id', id)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active')
+      .gt('lock_expiry', new Date().toISOString())
+      .maybeSingle();
+
+    if (activeLock && activeLock.locked_by !== session.name) {
+      throw new Error('LEAD_LOCKED_BY_OTHER');
     }
     
     const updatePayload: any = {
@@ -301,18 +336,15 @@ export async function updateCallStatus(
       updatePayload.email = email;
     }
 
-    // Auto-release lock if status is Lost
-    if (['Not Interested', 'Wrong Number'].includes(status)) {
-      updatePayload.assigned_to = null;
-    }
-
     const { error } = await supabase.from('leads').update(updatePayload).eq('id', id);
     if (error) throw new Error(error.message);
 
-    // Broadcast SSE status change & lock release
-    broadcastSse('STATUS_CHANGED', { leadId: id, status, user: session.name });
-    if (['Not Interested', 'Wrong Number'].includes(status)) {
-      broadcastSse('LOCK_RELEASED', { leadId: id, user: session.name });
+    // Manage locks leases
+    const isProtected = ['Interested', 'Callback', 'Meeting Booked', 'Decision Maker Reached', 'Proposal Requested', 'Proposal Sent'].includes(status);
+    if (isProtected) {
+      await establishOwnershipLock(id, session.name);
+    } else {
+      await releaseActiveLock(id, session.name);
     }
 
     // Insert history record
@@ -741,59 +773,11 @@ export async function getLeadAreas() {
 }
 
 export async function lockLead(leadId: number, callerName: string) {
-  try {
-    const session = await requireWritableSession();
-    const supabase = requireSupabase();
-    
-    // Acquire optimistic lock in database, ensuring it hasn't been handled yet and lock is free or expired
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const { data, error } = await supabase
-      .from('leads')
-      .update({
-        assigned_to: session.name,
-        last_updated: new Date().toISOString()
-      })
-      .eq('id', leadId)
-      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled')
-      .or(`assigned_to.is.null,assigned_to.eq.${session.name},last_updated.lt.${tenMinutesAgo}`)
-      .select('id');
-
-    if (error) throw new Error(error.message);
-    if (!data || data.length === 0) return { success: false, error: 'LEAD_LOCKED_BY_OTHER' };
-
-    // Broadcast SSE lock
-    broadcastSse('LOCK_ACQUIRED', { leadId, user: session.name });
-
-    return { success: true };
-  } catch (error: any) {
-    console.error('[lockLead]', error.message);
-    return { success: false, error: error.message };
-  }
+  return acquireActiveLock(leadId, callerName);
 }
 
 export async function unlockLead(leadId: number, callerName: string) {
-  try {
-    const session = await requireWritableSession();
-    const supabase = requireSupabase();
-    const { error } = await supabase
-      .from('leads')
-      .update({
-        assigned_to: null,
-        last_updated: new Date().toISOString()
-      })
-      .eq('id', leadId)
-      .eq('assigned_to', session.name);
-
-    if (error) throw new Error(error.message);
-
-    // Broadcast SSE unlock
-    broadcastSse('LOCK_RELEASED', { leadId, user: session.name });
-
-    return { success: true };
-  } catch (error: any) {
-    console.error('[unlockLead]', error.message);
-    return { success: false, error: error.message };
-  }
+  return releaseActiveLock(leadId, callerName);
 }
 
 export async function recallLead(leadId: number) {
@@ -1038,6 +1022,340 @@ export async function getSingleLeadAction(leadId: number) {
     return { success: true, lead: data };
   } catch (error: any) {
     console.error('[getSingleLeadAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function acquireActiveLock(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date();
+    const nowStr = now.toISOString();
+    const expiry = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes active lease
+
+    // Check if active call lock exists and is still valid
+    const { data: existingLock } = await supabase
+      .from('lead_locks')
+      .select('id, locked_by, lock_expiry')
+      .eq('lead_id', leadId)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active')
+      .gt('lock_expiry', nowStr)
+      .maybeSingle();
+
+    if (existingLock) {
+      if (existingLock.locked_by !== callerName) {
+        return { success: false, error: 'LEAD_LOCKED_BY_OTHER', lockedBy: existingLock.locked_by };
+      }
+      // If it belongs to us, return success (we already hold it)
+      return { success: true };
+    }
+
+    // Invalidate any other active locks for safety
+    await supabase.from('lead_locks')
+      .update({ status: 'Expired' })
+      .eq('lead_id', leadId)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active');
+
+    // Insert new active call lock
+    const { error: lockErr } = await supabase
+      .from('lead_locks')
+      .insert({
+        lead_id: leadId,
+        lock_type: 'active_call',
+        locked_by: callerName,
+        lock_expiry: expiry.toISOString(),
+        status: 'Active'
+      });
+
+    if (lockErr) throw new Error(lockErr.message);
+
+    // Update leads table to show lock owner
+    await supabase.from('leads')
+      .update({
+        assigned_to: callerName,
+        last_updated: nowStr
+      })
+      .eq('id', leadId);
+
+    // Broadcast SSE status changed to trigger lock visualization
+    broadcastSse('STATUS_CHANGED', { leadId, status: 'Locked for Call', user: callerName });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[acquireActiveLock]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function releaseActiveLock(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const nowStr = new Date().toISOString();
+
+    // Release active lock in locks table
+    await supabase.from('lead_locks')
+      .update({ status: 'Released' })
+      .eq('lead_id', leadId)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active');
+
+    // Check if the lead is currently owned (ownership lock)
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('owner_caller_id, call_status')
+      .eq('id', leadId)
+      .single();
+
+    const updatePayload: any = { last_updated: nowStr };
+
+    // If lead has a status like Interested, keep assigned_to. Otherwise release assigned_to.
+    const isTreated = ['Interested', 'Callback', 'Meeting Booked', 'Accepted', 'Client Configured'].includes(lead?.call_status || '');
+    if (!isTreated) {
+      updatePayload.assigned_to = null;
+    } else {
+      updatePayload.assigned_to = lead.owner_caller_id || lead.assigned_to;
+    }
+
+    await supabase.from('leads').update(updatePayload).eq('id', leadId);
+
+    broadcastSse('LOCK_RELEASED', { leadId, user: callerName });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[releaseActiveLock]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function establishOwnershipLock(leadId: number, callerName: string) {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date();
+    const nowStr = now.toISOString();
+    const expiry = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days ownership protection
+
+    // Deactivate existing ownership locks on this lead
+    await supabase.from('lead_locks')
+      .update({ status: 'Released' })
+      .eq('lead_id', leadId)
+      .eq('lock_type', 'ownership')
+      .eq('status', 'Active');
+
+    // Create ownership lock
+    const { error: lockErr } = await supabase
+      .from('lead_locks')
+      .insert({
+        lead_id: leadId,
+        lock_type: 'ownership',
+        locked_by: callerName,
+        lock_expiry: expiry.toISOString(),
+        status: 'Active'
+      });
+
+    if (lockErr) throw new Error(lockErr.message);
+
+    // Update lead attributes
+    await supabase.from('leads')
+      .update({
+        owner_caller_id: callerName,
+        ownership_status: 'Active',
+        ownership_start_at: nowStr,
+        ownership_expires_at: expiry.toISOString(),
+        assigned_to: callerName,
+        last_updated: nowStr
+      })
+      .eq('id', leadId);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[establishOwnershipLock]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function verifyOwnershipValidity(leadId: number) {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date();
+    const nowStr = now.toISOString();
+
+    // Check active ownership lock
+    const { data: lock } = await supabase
+      .from('lead_locks')
+      .select('id, locked_by, lock_expiry')
+      .eq('lead_id', leadId)
+      .eq('lock_type', 'ownership')
+      .eq('status', 'Active')
+      .maybeSingle();
+
+    if (!lock) return true;
+
+    // Check if 60-day lease is expired
+    if (new Date(lock.lock_expiry).getTime() < now.getTime()) {
+      await expireOwnership(supabase, leadId, lock.id, '60_DAYS_LIMIT', lock.locked_by);
+      return false;
+    }
+
+    // Check 14-day inactivity
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentLogs, error: logErr } = await supabase
+      .from('call_history')
+      .select('id')
+      .eq('lead_id', leadId)
+      .gt('created_at', fourteenDaysAgo)
+      .limit(1);
+
+    if (logErr) throw new Error(logErr.message);
+
+    if (!recentLogs || recentLogs.length === 0) {
+      await expireOwnership(supabase, leadId, lock.id, '14_DAYS_INACTIVITY', lock.locked_by);
+      return false;
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error('[verifyOwnershipValidity]', error.message);
+    return false;
+  }
+}
+
+async function expireOwnership(supabase: any, leadId: number, lockId: number, reason: string, ownerName: string) {
+  await supabase.from('lead_locks').update({ status: 'Expired' }).eq('id', lockId);
+  await supabase.from('leads').update({
+    owner_caller_id: null,
+    ownership_status: 'Expired',
+    assigned_to: null,
+    last_updated: new Date().toISOString()
+  }).eq('id', leadId);
+
+  await supabase.from('audit_logs').insert({
+    user_id: 'SYSTEM',
+    action: `EXPIRE_OWNERSHIP_${reason}`,
+    entity_type: 'leads',
+    entity_id: leadId.toString(),
+    severity: 'Info',
+    notes: `Lead ownership held by ${ownerName} expired due to ${reason.toLowerCase().replace(/_/g, ' ')}.`
+  });
+
+  broadcastSse('LOCK_RELEASED', { leadId, user: 'system' });
+}
+
+export async function runAutoExpirations() {
+  try {
+    const supabase = requireSupabase();
+    const now = new Date();
+    const nowStr = now.toISOString();
+
+    // 1. Fetch active ownership locks
+    const { data: activeLocks } = await supabase
+      .from('lead_locks')
+      .select('id, lead_id, locked_by, lock_expiry')
+      .eq('lock_type', 'ownership')
+      .eq('status', 'Active');
+
+    if (!activeLocks || activeLocks.length === 0) return;
+
+    for (const lock of activeLocks) {
+      // Expiration check 1: 60 days duration
+      if (new Date(lock.lock_expiry).getTime() < now.getTime()) {
+        await expireOwnership(supabase, lock.lead_id, lock.id, '60_DAYS_LIMIT', lock.locked_by);
+        continue;
+      }
+
+      // Expiration check 2: 14 days inactivity (no new entries in call_history)
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: logs } = await supabase
+        .from('call_history')
+        .select('id')
+        .eq('lead_id', lock.lead_id)
+        .gt('created_at', fourteenDaysAgo)
+        .limit(1);
+
+      if (!logs || logs.length === 0) {
+        await expireOwnership(supabase, lock.lead_id, lock.id, '14_DAYS_INACTIVITY', lock.locked_by);
+      }
+    }
+  } catch (err: any) {
+    console.error('[runAutoExpirations] failed:', err.message);
+  }
+}
+
+export async function getNextLeadAction(callerName: string) {
+  try {
+    const session = await requireCallerSession();
+    // Validate request caller constraints
+    const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    const supabase = requireSupabase();
+    const now = new Date();
+    const nowStr = now.toISOString();
+
+    // Auto-expire old locks
+    await runAutoExpirations();
+
+    // 1. Check if caller already has an active lock on some lead
+    const { data: activeLock } = await supabase
+      .from('lead_locks')
+      .select('lead_id, lock_expiry')
+      .eq('locked_by', effectiveCallerName)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active')
+      .gt('lock_expiry', nowStr)
+      .maybeSingle();
+
+    if (activeLock) {
+      // Fetch and return the currently locked lead details
+      const { data: lead } = await supabase
+        .from('leads')
+        .select(LEAD_LIST_COLUMNS)
+        .eq('id', activeLock.lead_id)
+        .single();
+      return { success: true, lead };
+    }
+
+    // 2. Fetch leads: assigned to caller or unassigned, filtering out locked/owned/converted ones
+    const { data: candidates, error } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('do_not_contact', false)
+      .not('call_status', 'in', '("Interested","Wrong Number","Not Interested","Accepted","Client Configured")')
+      .or(`assigned_to.eq.${escapePostgrestFilterValue(effectiveCallerName)},assigned_to.is.null`)
+      .order('priority', { ascending: true })
+      .order('review_count', { ascending: false })
+      .limit(10);
+
+    if (error || !candidates || candidates.length === 0) {
+      return { success: false, error: 'NO_AVAILABLE_LEADS' };
+    }
+
+    // Try to acquire an active lock on the first available candidate
+    for (const candidate of candidates) {
+      const lockRes = await acquireActiveLock(candidate.id, effectiveCallerName);
+      if (lockRes.success) {
+        const { data: lead } = await supabase
+          .from('leads')
+          .select(LEAD_LIST_COLUMNS)
+          .eq('id', candidate.id)
+          .single();
+        
+        // Log view lead event in audit logs
+        await supabase.from('audit_logs').insert({
+          user_id: effectiveCallerName,
+          action: 'VIEW_LEAD_DETAILS',
+          entity_type: 'leads',
+          entity_id: candidate.id.toString(),
+          severity: 'Info',
+          notes: `Lead details viewed inside dialer card cursor.`
+        });
+
+        return { success: true, lead };
+      }
+    }
+
+    return { success: false, error: 'ALL_CANDIDATES_LOCKED' };
+  } catch (error: any) {
+    console.error('[getNextLeadAction]', error.message);
     return { success: false, error: error.message };
   }
 }

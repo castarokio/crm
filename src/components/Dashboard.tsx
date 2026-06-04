@@ -1,11 +1,15 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X } from 'lucide-react';
+import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X, Scale, FileCheck2, ClipboardList, DollarSign } from 'lucide-react';
 import { DialerTab } from './dialer/dialer-tab';
 import { PipelineTab } from './pipeline/pipeline-tab';
 import { DirectoryTab } from './directory/directory-tab';
 import { AdminTab } from './admin/admin-tab';
+import { AuditLogsTable } from './admin/AuditLogsTable';
+import { CommissionsTab } from './pipeline/CommissionsTab';
+import { ProjectsTab } from './pipeline/ProjectsTab';
+import { DisputesTab } from './pipeline/DisputesTab';
 import { getCallerTarget } from '@/app/actions/pipeline';
 import { getTargetInventoryCounts, getUpcomingCallbacksAction } from '@/app/actions/leads';
 import { GlassCard } from './ui/glass-card';
@@ -17,14 +21,16 @@ type DashboardProps = {
   onLogoutCaller: () => Promise<void>;
 };
 
-type ActiveTab = 'dialer' | 'pipeline' | 'directory' | 'admin';
+type ActiveTab = 'dialer' | 'pipeline' | 'directory' | 'admin' | 'projects' | 'disputes' | 'commissions' | 'audit';
 
 export default function Dashboard({
   callerName,
   callerRole,
   onLogoutCaller,
 }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dialer');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    callerRole === 'Developer' ? 'projects' : callerRole === 'Auditor' ? 'audit' : 'dialer'
+  );
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [loadingTargets, setLoadingTargets] = useState<boolean>(true);
   const [targets, setTargets] = useState<{
@@ -220,60 +226,122 @@ export default function Dashboard({
 
           {/* Sidebar Nav Buttons */}
           <nav className="flex-1 flex flex-col gap-2 font-body text-xs font-semibold">
-            <button
-              onClick={() => { setActiveTab('dialer'); setIsSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'dialer'
-                  ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
-              }`}
-            >
-              <Phone className="w-4 h-4 shrink-0" />
-              <span>Outbound Dialer</span>
-              {counts.total > 0 && (
-                <span className="ml-auto text-[9px] bg-slate-100 border border-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">
-                  {counts.total}
-                </span>
-              )}
-            </button>
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('dialer'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'dialer'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <Phone className="w-4 h-4 shrink-0" />
+                <span>Outbound Dialer</span>
+                {counts.total > 0 && (
+                  <span className="ml-auto text-[9px] bg-slate-100 border border-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">
+                    {counts.total}
+                  </span>
+                )}
+              </button>
+            )}
 
-            <button
-              onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'pipeline'
-                  ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4 shrink-0" />
-              <span>Deal Pipeline</span>
-              {counts.converted > 0 && (
-                <span className="ml-auto text-[9px] bg-emerald-50 border border-emerald-150 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                  {counts.converted}
-                </span>
-              )}
-            </button>
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'pipeline'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 shrink-0" />
+                <span>Deal Pipeline</span>
+                {counts.converted > 0 && (
+                  <span className="ml-auto text-[9px] bg-emerald-50 border border-emerald-150 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
+                    {counts.converted}
+                  </span>
+                )}
+              </button>
+            )}
 
-            <button
-              onClick={() => { setActiveTab('directory'); setIsSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'directory'
-                  ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
-              }`}
-            >
-              <Folder className="w-4 h-4 shrink-0" />
-              <span>Directory Grid</span>
-            </button>
+            {['Admin', 'Manager', 'Supervisor', 'Auditor', 'Viewer'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('directory'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'directory'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <Folder className="w-4 h-4 shrink-0" />
+                <span>Directory Grid</span>
+              </button>
+            )}
 
-            {isAdminOrSupervisor && (
+            {['Admin', 'Manager', 'Supervisor', 'Developer'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('projects'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'projects'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <FileCheck2 className="w-4 h-4 shrink-0" />
+                <span>Active Projects</span>
+              </button>
+            )}
+
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('commissions'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'commissions'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <DollarSign className="w-4 h-4 shrink-0" />
+                <span>Commissions Ledger</span>
+              </button>
+            )}
+
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('disputes'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'disputes'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <Scale className="w-4 h-4 shrink-0" />
+                <span>Dispute Center</span>
+              </button>
+            )}
+
+            {['Admin', 'Auditor'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('audit'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'audit'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                <span>Compliance Audit</span>
+              </button>
+            )}
+
+            {['Admin', 'Supervisor'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('admin'); setIsSidebarOpen(false); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                   activeTab === 'admin'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
                     : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
-              }`}
+                }`}
               >
                 <Shield className="w-4 h-4 shrink-0" />
                 <span>Admin Settings</span>
@@ -343,15 +411,16 @@ export default function Dashboard({
         {/* Dynamic View Box */}
         <main className="flex-1 overflow-hidden p-3 md:p-6 flex flex-col gap-4 md:gap-6">
           <div className="flex-1 overflow-y-auto pr-1">
-            {activeTab === 'dialer' && (
+            {activeTab === 'dialer' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
               <DialerTab 
                 callerName={callerName} 
+                callerRole={callerRole}
                 activeLeadId={activeLeadId}
                 onClearActiveLeadId={() => setActiveLeadId(null)}
               />
             )}
             
-            {activeTab === 'pipeline' && (
+            {activeTab === 'pipeline' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer'].includes(callerRole) && (
               <PipelineTab 
                 callerName={callerName} 
                 onViewSourceLead={(companyName: string) => {
@@ -361,13 +430,29 @@ export default function Dashboard({
               />
             )}
             
-            {activeTab === 'directory' && (
+            {activeTab === 'directory' && ['Admin', 'Manager', 'Supervisor', 'Auditor', 'Viewer'].includes(callerRole) && (
               <DirectoryTab 
                 callerName={callerName} 
                 callerRole={callerRole} 
                 searchQuery={directorySearchQuery}
                 onClearSearchQuery={() => setDirectorySearchQuery('')}
               />
+            )}
+
+            {activeTab === 'projects' && ['Admin', 'Manager', 'Supervisor', 'Developer'].includes(callerRole) && (
+              <ProjectsTab callerName={callerName} callerRole={callerRole} />
+            )}
+
+            {activeTab === 'commissions' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <CommissionsTab callerName={callerName} callerRole={callerRole} />
+            )}
+
+            {activeTab === 'disputes' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
+              <DisputesTab callerName={callerName} callerRole={callerRole} />
+            )}
+
+            {activeTab === 'audit' && ['Admin', 'Auditor'].includes(callerRole) && (
+              <AuditLogsTable />
             )}
 
             {activeTab === 'admin' && isAdminOrSupervisor && (

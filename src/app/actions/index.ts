@@ -2,3 +2,8 @@ export * from './auth';
 export * from './leads';
 export * from './pipeline';
 export * from './admin';
+export * from './payments';
+export * from './commissions';
+export * from './security';
+export * from './projects';
+export * from './disputes';

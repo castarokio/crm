@@ -3,11 +3,13 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 
-export type CallerRole = 'Admin' | 'Supervisor' | 'Caller' | 'Viewer';
+export type CallerRole = 'Admin' | 'Manager' | 'Supervisor' | 'Closer' | 'Caller' | 'Developer' | 'Auditor' | 'Viewer';
 
 export type CallerSession = {
   name: string;
   role: CallerRole;
+  trust_level: string;
+  agreement_accepted_version: string | null;
   expiresAt: number;
 };
 
@@ -82,10 +84,10 @@ export async function hasPortalSession() {
   return Boolean(session && session.expiresAt > Date.now());
 }
 
-export async function setCallerSession(name: string, role: CallerRole) {
+export async function setCallerSession(name: string, role: CallerRole, trustLevel = 'New', agreementVersion: string | null = null) {
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
   const store = await cookies();
-  store.set(CALLER_COOKIE, createToken({ name, role, expiresAt }), cookieOptions());
+  store.set(CALLER_COOKIE, createToken({ name, role, trust_level: trustLevel, agreement_accepted_version: agreementVersion, expiresAt }), cookieOptions());
 }
 
 export async function getCallerSession(): Promise<CallerSession | null> {

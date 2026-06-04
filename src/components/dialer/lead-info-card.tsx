@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Phone, Mail, Globe, MapPin, Star, ExternalLink, Check, Loader2, 
-  AlertCircle, Clock, Plus, Trash2, CheckSquare, Square
+  AlertCircle, Clock, Plus, Trash2, CheckSquare, Square, Copy
 } from 'lucide-react';
 
 const Facebook = (props: React.SVGProps<SVGSVGElement>) => (
@@ -28,6 +28,7 @@ const Linkedin = (props: React.SVGProps<SVGSVGElement>) => (
 import { GlassCard } from '../ui/glass-card';
 import { Input } from '../ui/input';
 import { updateLeadDetails } from '@/app/actions/leads';
+import { logLeadViewAction, logClipboardAction } from '@/app/actions/security';
 import { PitchGenerator } from './pitch-generator';
 import { CallLogLedger } from './call-log-ledger';
 import { toast } from '@/lib/toast';
@@ -47,6 +48,21 @@ const isValidSocialLink = (link?: string | null) => {
   return l !== 'not found' && l !== 'none' && l !== '' && l !== 'null';
 };
 
+const WatermarkOverlay = ({ callerName }: { callerName: string }) => {
+  const watermarkText = `Viewed by ${callerName} | ${new Date().toLocaleDateString()} | CONFIDENTIAL `;
+  return (
+    <div 
+      className="absolute inset-0 pointer-events-none select-none overflow-hidden z-40 opacity-[0.03] flex flex-wrap items-center justify-center gap-16 p-4 rotate-[-15deg]"
+    >
+      {Array(30).fill(watermarkText).map((txt, idx) => (
+        <span key={idx} className="text-[10px] font-mono font-bold tracking-widest uppercase text-slate-900 whitespace-nowrap">
+          {txt}
+        </span>
+      ))}
+    </div>
+  );
+};
+
 type LeadInfoCardProps = {
   lead: any;
   callerName: string;
@@ -63,6 +79,10 @@ export function LeadInfoCard({
   const [activeTab, setActiveTab] = useState<'info' | 'pitch' | 'history'>('info');
   const [fields, setFields] = useState<any>({});
   const [saveStatus, setSaveStatus] = useState<Record<string, 'saving' | 'saved' | 'failed'>>({});
+  
+  // Security view gate state
+  const [viewAllowed, setViewAllowed] = useState<boolean | null>(null);
+  const [limitError, setLimitError] = useState<string>('');
   
   // Alternate inputs list
   const [altPhones, setAltPhones] = useState<string[]>([]);
@@ -87,6 +107,38 @@ export function LeadInfoCard({
       setIsIPhone(/iPhone|iPad|iPod/i.test(navigator.userAgent));
     }
   }, []);
+
+  useEffect(() => {
+    if (lead?.id) {
+      setViewAllowed(null);
+      setLimitError('');
+      const trackLeadView = async () => {
+        const res = await logLeadViewAction(lead.id);
+        if (res.success) {
+          setViewAllowed(true);
+        } else {
+          setViewAllowed(false);
+          setLimitError(res.error || 'UNAUTHORIZED_VIEW');
+        }
+      };
+      void trackLeadView();
+    }
+  }, [lead?.id]);
+
+  const handleCopy = async (channel: string, targetValue: string) => {
+    try {
+      await navigator.clipboard.writeText(targetValue);
+      const copyRes = await logClipboardAction({ leadId: lead.id, channel, targetValue });
+      if (copyRes.success && copyRes.trapTriggered) {
+        toast.warning('Warning: Security alert. Clipboard action recorded.');
+      } else {
+        toast.success(`${channel} copied to clipboard!`);
+      }
+    } catch (err: any) {
+      console.error('[handleCopy]', err);
+      toast.error('Failed to copy to clipboard.');
+    }
+  };
 
   useEffect(() => {
     if (lead) {
@@ -303,8 +355,7 @@ Portfolio : https://castarokio.github.io/`;
   const handleSocialDmClick = (e: React.MouseEvent, platform: 'Instagram' | 'Facebook Messenger', handle: string) => {
     e.preventDefault();
     const pitch = getDmPitch();
-    void navigator.clipboard.writeText(pitch);
-    toast.success(`${platform} pitch copied to clipboard!`);
+    void handleCopy(`dm_pitch_${platform}`, pitch);
     
     const url = platform === 'Instagram' 
       ? normalizeInstagramDmUrl(handle, isIPhone, pitch)
@@ -383,8 +434,32 @@ Portfolio : https://castarokio.github.io/`;
 
   const openStatus = isBusinessOpen(fields.work_hours);
 
+  if (viewAllowed === null) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-indigo-650 font-body text-xs gap-3">
+        <Loader2 className="w-6.5 h-6.5 animate-spin" />
+        <span>Verifying lead view permissions...</span>
+      </div>
+    );
+  }
+
+  if (viewAllowed === false) {
+    return (
+      <div className="bg-rose-50 border border-rose-200 rounded-3xl p-12 text-center flex flex-col items-center justify-center gap-4">
+        <AlertCircle className="w-8 h-8 text-rose-600 animate-pulse" />
+        <h3 className="font-bold text-rose-850 uppercase tracking-wide text-sm">Security Block</h3>
+        <p className="text-xs text-rose-700 max-w-sm font-semibold uppercase leading-relaxed">
+          {limitError === 'DAILY_VIEW_LIMIT_EXCEEDED' 
+            ? 'Daily lead view limit reached. Upgrade your Trust Level to view more leads.'
+            : 'Access to this lead details has been blocked by compliance security.'}
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 relative overflow-hidden">
+      <WatermarkOverlay callerName={callerName} />
       {/* Dynamic Sub-Tab Select Bar */}
       <div className="flex gap-4 border-b border-slate-100 pb-3 mb-1">
         <button
@@ -536,11 +611,20 @@ Portfolio : https://castarokio.github.io/`;
                   <div className="flex flex-col">
                     <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Phone</span>
                     {lead.phone ? (
-                      <a href={`tel:${lead.phone}`} className="text-xs font-semibold text-slate-800 hover:text-indigo-600 underline">
-                        {lead.phone}
-                      </a>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <a href={`tel:${lead.phone}`} className="text-xs font-semibold text-slate-800 hover:text-indigo-600 underline">
+                          {lead.phone}
+                        </a>
+                        <button
+                          onClick={() => handleCopy('phone_1', lead.phone)}
+                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                          title="Copy Primary Phone"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
                     ) : (
-                      <span className="text-xs font-semibold text-slate-400">Missing</span>
+                      <span className="text-xs font-semibold text-slate-400 mt-0.5">Missing</span>
                     )}
                   </div>
                   {lead.phone && (
@@ -584,17 +668,28 @@ Portfolio : https://castarokio.github.io/`;
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </span>
-                      <input
-                        type="text"
-                        value={phoneVal}
-                        onChange={(e) => handleAltPhoneChange(i, e.target.value)}
-                        onBlur={() => {
-                          const joined = altPhones.filter(Boolean).join(', ');
-                          void handleBlurSave('phone_2', joined || null);
-                        }}
-                        placeholder="Enter phone..."
-                        className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350 mt-0.5"
-                      />
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <input
+                          type="text"
+                          value={phoneVal}
+                          onChange={(e) => handleAltPhoneChange(i, e.target.value)}
+                          onBlur={() => {
+                            const joined = altPhones.filter(Boolean).join(', ');
+                            void handleBlurSave('phone_2', joined || null);
+                          }}
+                          placeholder="Enter phone..."
+                          className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                        />
+                        {phoneVal && (
+                          <button
+                            onClick={() => handleCopy(`phone_alt_${i + 1}`, phoneVal)}
+                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors shrink-0"
+                            title="Copy Alt Phone"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {phoneVal && (
                       <div className="flex items-center gap-1.5">
@@ -643,9 +738,22 @@ Portfolio : https://castarokio.github.io/`;
                 <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
                   <div className="flex flex-col">
                     <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Email</span>
-                    <span className="text-xs font-semibold text-slate-800 truncate max-w-[150px]">
-                      {lead.email || 'Missing'}
-                    </span>
+                    {lead.email ? (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-xs font-semibold text-slate-800 truncate max-w-[150px]">
+                          {lead.email}
+                        </span>
+                        <button
+                          onClick={() => handleCopy('email_1', lead.email)}
+                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                          title="Copy Email"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-400 mt-0.5">Missing</span>
+                    )}
                   </div>
                   {lead.email && (
                     <a
@@ -668,17 +776,28 @@ Portfolio : https://castarokio.github.io/`;
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </span>
-                      <input
-                        type="text"
-                        value={emailVal}
-                        onChange={(e) => handleAltEmailChange(i, e.target.value)}
-                        onBlur={() => {
-                          const joined = altEmails.filter(Boolean).join(', ');
-                          void handleBlurSave('email_2', joined || null);
-                        }}
-                        placeholder="Enter email..."
-                        className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350 mt-0.5"
-                      />
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <input
+                          type="text"
+                          value={emailVal}
+                          onChange={(e) => handleAltEmailChange(i, e.target.value)}
+                          onBlur={() => {
+                            const joined = altEmails.filter(Boolean).join(', ');
+                            void handleBlurSave('email_2', joined || null);
+                          }}
+                          placeholder="Enter email..."
+                          className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                        />
+                        {emailVal && (
+                          <button
+                            onClick={() => handleCopy(`email_alt_${i + 1}`, emailVal)}
+                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors shrink-0"
+                            title="Copy Alt Email"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {emailVal && (
                       <a

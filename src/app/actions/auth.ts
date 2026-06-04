@@ -68,7 +68,7 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     
     const { data, error } = await supabase
       .from('caller_profiles')
-      .select('pin, role')
+      .select('pin, role, trust_level, agreement_accepted_version')
       .eq('name', name)
       .single();
       
@@ -81,8 +81,10 @@ export async function verifyCallerPinAction(name: string, pin: string) {
             .eq('name', name);
         }
         const role = (data.role || 'Caller') as CallerRole;
-        await setCallerSession(name, role);
-        return { success: true, role };
+        const trustLevel = data.trust_level || 'New';
+        const agreementVersion = data.agreement_accepted_version || null;
+        await setCallerSession(name, role, trustLevel, agreementVersion);
+        return { success: true, role, agreementAcceptedVersion: agreementVersion };
       }
       return { success: false };
     }
@@ -101,8 +103,8 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     }
     
     const matched = expectedPin !== '' && safeStringEqual(expectedPin, pin);
-    if (matched) await setCallerSession(name, role as CallerRole);
-    return { success: matched, role: matched ? role : undefined };
+    if (matched) await setCallerSession(name, role as CallerRole, 'New', null);
+    return { success: matched, role: matched ? role : undefined, agreementAcceptedVersion: matched ? null : undefined };
   } catch (error: any) {
     console.error('[verifyCallerPinAction]', error.message);
     return { success: false, error: error.message };
@@ -147,6 +149,8 @@ export async function getCurrentSessionAction() {
       portalUnlocked,
       callerName: caller?.name || '',
       callerRole: caller?.role || 'Caller',
+      agreementAcceptedVersion: caller?.agreement_accepted_version || null,
+      trustLevel: caller?.trust_level || 'New',
     };
   } catch (error: any) {
     return { success: false, portalUnlocked: false, callerName: '', callerRole: 'Caller', error: error.message };
@@ -190,6 +194,46 @@ export async function submitTeamApplication(name: string, email: string, phone: 
     return { success: true };
   } catch (error: any) {
     console.error('[submitTeamApplication]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function acceptCallerAgreementAction(name: string) {
+  try {
+    const supabase = requireSupabase();
+    
+    // Update profile
+    const { error: profileError } = await supabase
+      .from('caller_profiles')
+      .update({ agreement_accepted_version: '1.0' })
+      .eq('name', name);
+      
+    if (profileError) throw new Error(profileError.message);
+
+    // Get updated profile details to refresh session token
+    const { data: profile } = await supabase
+      .from('caller_profiles')
+      .select('role, trust_level, agreement_accepted_version')
+      .eq('name', name)
+      .single();
+
+    if (profile) {
+      await setCallerSession(name, profile.role, profile.trust_level, profile.agreement_accepted_version);
+    }
+
+    // Log to audit log table
+    await supabase.from('audit_logs').insert({
+      user_id: name,
+      action: 'ACCEPT_AGREEMENT_V1.0',
+      entity_type: 'caller_profiles',
+      entity_id: name,
+      severity: 'Info',
+      notes: 'Guidelines and Commission Agreement V1.0 signed and accepted.'
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[acceptCallerAgreementAction]', error.message);
     return { success: false, error: error.message };
   }
 }
