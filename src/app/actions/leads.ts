@@ -182,10 +182,7 @@ export async function getDialerQueue() {
 
     if (effectiveCallerName) {
       const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
-      // Caller can access leads assigned directly to them OR completely unassigned leads
-      q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null`);
-      
-      // Concurrency lock check: lock expires after 10 minutes
+      // Concurrency lock check: caller can access leads assigned directly to them, completely unassigned leads, or leads whose lock has expired (updated > 10 mins ago)
       const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null,last_updated.lt.${tenMinutesAgo}`);
     }
@@ -276,6 +273,13 @@ export async function updateCallStatus(
       .eq('id', id)
       .single();
     if (fetchErr) throw new Error(fetchErr.message);
+
+    if (original.assigned_to && original.assigned_to !== session.name) {
+      const lockExpired = original.last_updated && (Date.now() - new Date(original.last_updated).getTime() > 10 * 60 * 1000);
+      if (!lockExpired) {
+        throw new Error('LEAD_ASSIGNED_TO_OTHER');
+      }
+    }
     
     const updatePayload: any = {
       call_status: status,
@@ -712,7 +716,8 @@ export async function lockLead(leadId: number, callerName: string) {
     const session = await requireWritableSession();
     const supabase = requireSupabase();
     
-    // Acquire optimistic lock in database
+    // Acquire optimistic lock in database, ensuring it hasn't been handled yet and lock is free or expired
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('leads')
       .update({
@@ -720,7 +725,8 @@ export async function lockLead(leadId: number, callerName: string) {
         last_updated: new Date().toISOString()
       })
       .eq('id', leadId)
-      .or(`assigned_to.is.null,assigned_to.eq.${session.name}`)
+      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled')
+      .or(`assigned_to.is.null,assigned_to.eq.${session.name},last_updated.lt.${tenMinutesAgo}`)
       .select('id');
 
     if (error) throw new Error(error.message);

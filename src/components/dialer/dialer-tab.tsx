@@ -147,9 +147,23 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       if (prevLeadIdRef.current !== null) {
         void unlockLead(prevLeadIdRef.current, callerName);
       }
-      // Lock new lead
-      void lockLead(activeLead.id, callerName);
-      prevLeadIdRef.current = activeLead.id;
+      
+      const attemptLock = async () => {
+        const res = await lockLead(activeLead.id, callerName);
+        if (!res.success) {
+          toast.error(res.error === 'LEAD_LOCKED_BY_OTHER' 
+            ? 'This lead is currently locked by another caller.'
+            : 'This lead has already been dealt with by another caller.');
+          // Remove from local queue so it disappears from this caller's screen
+          setQueue(prev => prev.filter(l => l.id !== activeLead.id));
+          if (currentIndex >= queue.length - 1) {
+            setCurrentIndex(prev => Math.max(0, prev - 1));
+          }
+        } else {
+          prevLeadIdRef.current = activeLead.id;
+        }
+      };
+      void attemptLock();
 
       // Reset outcome state
       setOutcomeStatus(activeLead.call_status && activeLead.call_status !== 'Not Called' ? activeLead.call_status : '');
@@ -162,11 +176,11 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
 
     return () => {
       // Unlock lead on unmount
-      if (activeLead) {
+      if (activeLead && prevLeadIdRef.current === activeLead.id) {
         void unlockLead(activeLead.id, callerName);
       }
     };
-  }, [activeLead, callerName]);
+  }, [activeLead, callerName, currentIndex, queue.length]);
 
   const handleSelectIndex = (idx: number) => {
     setCurrentIndex(idx);
