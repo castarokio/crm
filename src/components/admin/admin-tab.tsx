@@ -29,6 +29,7 @@ import {
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Modal } from '../ui/modal';
+import { toast, confirm } from '@/lib/toast';
 
 type AdminTabProps = {
   callerName: string;
@@ -133,7 +134,12 @@ export function AdminTab({ callerName }: AdminTabProps) {
   };
 
   const handleClearAssignments = async () => {
-    if (!confirm('Are you sure you want to clear ALL caller assignments for uncalled leads? This does not alter leads already called.')) return;
+    const ok = await confirm('Clear ALL caller assignments for uncalled leads? This does not alter leads already called.', {
+      title: 'Clear Assignments',
+      confirmLabel: 'Clear All',
+      danger: true,
+    });
+    if (!ok) return;
     setLoading(true);
     setStatusMessage(null);
     const res = await clearAssignments(callerName);
@@ -202,7 +208,7 @@ export function AdminTab({ callerName }: AdminTabProps) {
       setEditingCaller(null);
       void loadData();
     } else {
-      alert(`Targets update failed: ${res.error}`);
+      toast.error(`Targets update failed: ${res.error}`);
     }
   };
 
@@ -210,7 +216,7 @@ export function AdminTab({ callerName }: AdminTabProps) {
     e.preventDefault();
     if (!editingCaller) return;
     if (editPin.length !== 6 || isNaN(Number(editPin))) {
-      alert('PIN must be exactly 6 digits.');
+      toast.warning('PIN must be exactly 6 digits.');
       return;
     }
     setLoading(true);
@@ -220,16 +226,16 @@ export function AdminTab({ callerName }: AdminTabProps) {
       setIsPinOpen(false);
       setEditingCaller(null);
       setEditPin('');
-      alert(`Successfully updated PIN for ${editingCaller.name}`);
+      toast.success(`PIN updated for ${editingCaller.name}.`);
     } else {
-      alert(`Failed to update PIN: ${res.error}`);
+      toast.error(`Failed to update PIN: ${res.error}`);
     }
   };
 
   const handleUpdatePortalPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (portalPinInput.length !== 6 || isNaN(Number(portalPinInput))) {
-      alert('Portal PIN must be exactly 6 digits.');
+      toast.warning('Portal PIN must be exactly 6 digits.');
       return;
     }
     setLoading(true);
@@ -237,9 +243,9 @@ export function AdminTab({ callerName }: AdminTabProps) {
     setLoading(false);
     if (res.success) {
       setPortalPinInput('');
-      alert('Successfully updated Master Portal PIN!');
+      toast.success('Master Portal PIN updated successfully!');
     } else {
-      alert(`Failed to update Master PIN: ${res.error}`);
+      toast.error(`Failed to update Master PIN: ${res.error}`);
     }
   };
 
@@ -247,7 +253,7 @@ export function AdminTab({ callerName }: AdminTabProps) {
     e.preventDefault();
     if (!newCallerName || !newCallerPin) return;
     if (newCallerPin.length !== 6 || isNaN(Number(newCallerPin))) {
-      alert('PIN must be exactly 6 digits.');
+      toast.warning('PIN must be exactly 6 digits.');
       return;
     }
 
@@ -269,46 +275,57 @@ export function AdminTab({ callerName }: AdminTabProps) {
       setNewCallerDaily(80);
       setNewCallerWeekly(15);
       void loadData();
-      alert(`Successfully created caller profile: ${newCallerName}`);
+      toast.success(`Caller profile created: ${newCallerName}.`);
     } else {
-      alert(`Failed to create caller: ${res.error}`);
+      toast.error(`Failed to create caller: ${res.error}`);
     }
   };
 
   const handleUndoImportSubmit = async () => {
-    if (!confirm('Are you sure you want to UNDO the last CSV import batch? This will permanently delete all leads uploaded in that batch.')) return;
+    const ok = await confirm('Permanently delete all leads from the last imported CSV batch? This cannot be undone.', {
+      title: 'Undo Last CSV Import',
+      danger: true,
+      confirmLabel: 'Undo Import',
+    });
+    if (!ok) return;
     
     setLoading(true);
     const res = await undoLastImport(callerName);
     setLoading(false);
 
     if (res.success) {
-      alert('Successfully reverted the last CSV import batch!');
+      toast.success('Last CSV import batch successfully reverted.');
     } else {
-      alert(`Undo failed: ${res.error}`);
+      toast.error(`Undo failed: ${res.error}`);
     }
   };
 
   const handleDeleteProfile = async (name: string) => {
     if (name === 'Hamid') {
-      alert('Administrator Hamid cannot be deleted.');
+      toast.warning('Administrator Hamid cannot be deleted.');
       return;
     }
-    if (!confirm(`Are you sure you want to permanently delete profile for ${name}? All associated locks will be released.`)) return;
+    const ok = await confirm(`Permanently delete profile for ${name}? All associated locks will be released.`, {
+      title: 'Delete Caller Profile',
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     setLoading(true);
     const res = await deleteCallerProfile(name);
     setLoading(false);
     if (res.success) {
+      toast.success(`Profile for ${name} deleted.`);
       void loadData();
     } else {
-      alert(`Deletion failed: ${res.error}`);
+      toast.error(`Deletion failed: ${res.error}`);
     }
   };
 
   const handleApplicationDecisionSubmit = async (appId: number, status: 'Accepted' | 'Rejected') => {
     if (status === 'Accepted') {
       if (appPin.length !== 6 || isNaN(Number(appPin))) {
-        alert('PIN must be exactly 6 digits.');
+        toast.warning('PIN must be exactly 6 digits.');
         return;
       }
       setLoading(true);
@@ -319,17 +336,22 @@ export function AdminTab({ callerName }: AdminTabProps) {
         setAppPin('');
         void loadData();
       } else {
-        alert(`Failed to accept applicant: ${res.error}`);
+        toast.error(`Failed to accept applicant: ${res.error}`);
       }
     } else {
-      if (!confirm('Reject and delete this registration application?')) return;
+      const ok = await confirm('Reject and permanently delete this registration application?', {
+        title: 'Reject Application',
+        danger: true,
+        confirmLabel: 'Reject',
+      });
+      if (!ok) return;
       setLoading(true);
       const res = await handleApplicationDecision(appId, status);
       setLoading(false);
       if (res.success) {
         void loadData();
       } else {
-        alert(`Rejection failed: ${res.error}`);
+        toast.error(`Rejection failed: ${res.error}`);
       }
     }
   };
@@ -347,25 +369,30 @@ export function AdminTab({ callerName }: AdminTabProps) {
       downloadAnchor.click();
       downloadAnchor.remove();
     } else {
-      alert(`Backup download failed: ${res.error}`);
+      toast.error(`Backup download failed: ${res.error}`);
     }
   };
 
   const handleResetCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetPinInput) return;
-    if (!confirm('CRITICAL WARNING: This resets the entire outbound dialing campaign. All lead calls status, meeting schedules, notes, and history logs will be PERMANENTLY deleted. Are you absolutely sure?')) return;
+    const ok = await confirm('This resets the ENTIRE outbound campaign. All call statuses, meeting dates, notes, and call history will be PERMANENTLY deleted. This cannot be undone.', {
+      title: 'CRITICAL: Reset Campaign',
+      danger: true,
+      confirmLabel: 'Yes, Reset Everything',
+    });
+    if (!ok) return;
 
     setResetLoading(true);
     const res = await resetCampaign(resetPinInput, callerName);
     setResetLoading(false);
 
     if (res.success) {
-      alert('Campaign database has been completely reset to fresh status.');
+      toast.success('Campaign database completely reset to fresh status.');
       setResetPinInput('');
       void loadData();
     } else {
-      alert(`Reset failed: ${res.error}`);
+      toast.error(`Reset failed: ${res.error}`);
     }
   };
 
@@ -830,7 +857,7 @@ export function AdminTab({ callerName }: AdminTabProps) {
                               setProfiles(prev => prev.map(prof => prof.name === p.name ? { ...prof, role: newRole } : prof));
                               const res = await updateCallerRoleAction(p.name, newRole);
                               if (!res.success) {
-                                alert(`Failed to update role: ${res.error}`);
+                                toast.error(`Failed to update role: ${res.error}`);
                                 void loadData();
                               }
                             }}

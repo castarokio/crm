@@ -193,8 +193,7 @@ export async function getDialerQueue() {
     const { data, count, error } = await q
       .order('priority', { ascending: true })
       .order('last_called_at', { ascending: true, nullsFirst: true })
-      .order('review_count', { ascending: false })
-      .limit(100);
+      .order('review_count', { ascending: false });
 
     if (error) throw new Error(error.message);
     return { success: true, queue: data || [], total: count || (data || []).length };

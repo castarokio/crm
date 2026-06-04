@@ -9,6 +9,7 @@ import { Modal } from '../ui/modal';
 import { useOfflineEdits } from '@/hooks/use-offline-edits';
 import { useRealtimeSync } from '@/hooks/use-realtime-sync';
 import { SchedulerModal } from './scheduler-modal';
+import { toast, confirm } from '@/lib/toast';
 import { 
   getDialerQueue, 
   updateCallStatus, 
@@ -182,7 +183,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
     if (!activeLead) return;
     const status = overrideStatus || outcomeStatus;
     if (!status) {
-      alert('Please select a call outcome status.');
+      toast.warning('Please select a call outcome status.');
       return;
     }
 
@@ -200,7 +201,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
           meetingDate
         );
         if (success) {
-          alert('Offline mode: Outbound call saved locally. Updates will sync when online.');
+          toast.info('Offline mode: Call saved locally — will sync when back online.');
           // Remove from local queue index optimistically
           setQueue(prev => prev.filter(l => l.id !== activeLead.id));
           if (currentIndex >= queue.length - 1) {
@@ -225,7 +226,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
             setCurrentIndex(prev => Math.max(0, prev - 1));
           }
         } else {
-          alert(res.error || 'Failed to save outcome status.');
+          toast.error(res.error || 'Failed to save outcome status.');
         }
       }
     } catch (err) {
@@ -251,13 +252,13 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
         if (data.contact_person) setContactPerson(data.contact_person);
         if (data.updated_email) setLeadEmail(data.updated_email);
         
-        alert("AI analysis complete! The parsed details have been pre-filled in the Call Outcome Form above. Please review them and click 'Save Call Log' to save.");
+        toast.success('AI analysis done — form pre-filled. Review and click Save Call Log.');
       } else {
-        alert(res.error || 'AI note parsing failed. Please check your Gemini configuration.');
+        toast.error(res.error || 'AI parsing failed. Check your Gemini API key.');
       }
     } catch (err: any) {
       console.error('[AI notes save error]', err);
-      alert('Error parsing notes with AI.');
+      toast.error('Unexpected error while parsing notes with AI.');
     } finally {
       setParsingAI(false);
     }
@@ -265,19 +266,25 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
 
   const handleDeleteFalseLead = async () => {
     if (!activeLead) return;
-    if (!confirm('Are you sure you want to permanently delete this lead? This cannot be undone.')) return;
+    const ok = await confirm('This lead and its full call history will be permanently erased. This cannot be undone.', {
+      title: 'Delete Lead Permanently',
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     
     setSavingOutcome(true);
     const res = await deleteLeadPermanently(activeLead.id);
     setSavingOutcome(false);
     
     if (res.success) {
+      toast.success('Lead permanently deleted.');
       setQueue(prev => prev.filter(l => l.id !== activeLead.id));
       if (currentIndex >= queue.length - 1) {
         setCurrentIndex(prev => Math.max(0, prev - 1));
       }
     } else {
-      alert(`Delete failed: ${res.error}`);
+      toast.error(`Delete failed: ${res.error}`);
     }
   };
 
@@ -306,7 +313,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       setNewWebsite('');
       setNewEmail('');
     } else {
-      alert(`Failed to add new contact: ${res.error}`);
+      toast.error(`Failed to add new contact: ${res.error}`);
     }
   };
 
@@ -332,10 +339,10 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
               setLoading(true);
               const res = await recallAllUnansweredAction(callerName);
               if (res.success && res.count) {
-                alert(`Recalled ${res.count} unanswered leads.`);
+                toast.success(`Recalled ${res.count} unanswered leads back into queue.`);
                 await loadQueue();
               } else {
-                alert('No busy/unanswered leads found to recall.');
+                toast.warning('No busy/unanswered leads found to recall.');
               }
               setLoading(false);
             }}
@@ -361,10 +368,10 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
                 setLoading(true);
                 const res = await recallAllUnansweredAction(callerName);
                 if (res.success && res.count) {
-                  alert(`Successfully recalled ${res.count} busy/unanswered leads to your queue!`);
+                  toast.success(`Recalled ${res.count} unanswered leads back into queue!`);
                   await loadQueue();
                 } else {
-                  alert('No unanswered leads to recall at the moment.');
+                  toast.warning('No unanswered leads to recall right now.');
                 }
                 setLoading(false);
               }}
@@ -480,7 +487,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
                             onClick={() => {
                               setOutcomeStatus(btn.value);
                               if (['Callback', 'Interested', 'Accepted'].includes(btn.value)) {
-                                alert(`Status set to "${btn.label}". Please enter a Callback / Meeting Date below and click "Save Call Log".`);
+                                toast.info(`Status set to "${btn.label}" — enter a meeting date below and click Save Call Log.`);
                               } else {
                                 void handleSaveOutcome(btn.value);
                               }

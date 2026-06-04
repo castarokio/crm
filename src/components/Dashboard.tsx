@@ -9,6 +9,7 @@ import { AdminTab } from './admin/admin-tab';
 import { getCallerTarget } from '@/app/actions/pipeline';
 import { getTargetInventoryCounts, getUpcomingCallbacksAction } from '@/app/actions/leads';
 import { GlassCard } from './ui/glass-card';
+import { AppDialogs } from './ui/app-dialogs';
 
 type DashboardProps = {
   callerName: string;
@@ -152,6 +153,9 @@ export default function Dashboard({
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 flex flex-col relative overflow-hidden select-none font-body">
+      {/* Global Toast & Confirm Dialog Layer */}
+      <AppDialogs />
+
       {/* Background Gradients (Light theme) */}
       <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-50/30 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-slate-50/80 rounded-full blur-[120px] pointer-events-none" />

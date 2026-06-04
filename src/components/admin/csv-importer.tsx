@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { Upload, AlertCircle, CheckCircle, ArrowRight, Loader2, RefreshCcw, FileSpreadsheet } from 'lucide-react';
 import { extractCsvHeaders, previewLeadImportWithMapping, commitLeadImport, undoLastImport } from '@/app/actions/admin';
 import { Button } from '../ui/button';
+import { toast, confirm } from '@/lib/toast';
 
 const FIELD_LABELS: Record<string, string> = {
   skip: 'Skip Column',
@@ -71,7 +72,7 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
     if (droppedFile && droppedFile.name.endsWith('.csv')) {
       processFile(droppedFile);
     } else {
-      alert('Please upload a valid .csv file.');
+      toast.warning('Please upload a valid .csv file.');
     }
   };
 
@@ -141,7 +142,7 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
     const mappedFields = Object.values(mapping);
     const missing = REQUIRED_FIELDS.filter(field => !mappedFields.includes(field));
     if (missing.length > 0) {
-      alert(`Required database columns are missing from the mapping: ${missing.map(f => FIELD_LABELS[f]).join(', ')}`);
+      toast.warning(`Required columns missing: ${missing.map(f => FIELD_LABELS[f]).join(', ')}`);
       return;
     }
 
@@ -180,7 +181,12 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
   };
 
   const handleUndoLastImport = async () => {
-    if (!confirm('Are you sure you want to rollback the last imported batch? This will permanently delete all leads from that batch if they have not been called yet.')) return;
+    const ok = await confirm('Permanently delete all leads from the last imported CSV batch that have not been called yet?', {
+      title: 'Rollback Last Import',
+      danger: true,
+      confirmLabel: 'Rollback',
+    });
+    if (!ok) return;
     
     setLoading(true);
     setStatusMessage(null);

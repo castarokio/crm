@@ -9,6 +9,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { ALLOWED_DEAL_STAGES } from '@/lib/constants';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast, confirm } from '@/lib/toast';
 
 type PipelineTabProps = {
   callerName: string;
@@ -152,7 +153,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
 
     const res = await updateDealStage(dealId, newStage, callerName);
     if (!res.success) {
-      alert(`Failed to update stage: ${res.error}`);
+      toast.error(`Failed to update stage: ${res.error}`);
       setDeals(prevDeals); // rollback
     } else {
       void fetchData();
@@ -162,7 +163,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
   const handleCreateDeal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dealName || !companyName) {
-      alert('Please fill out Deal Name and Company Name.');
+      toast.warning('Please fill out Deal Name and Company Name.');
       return;
     }
     setFormSubmitting(true);
@@ -181,7 +182,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
       resetCreateForm();
       void fetchData();
     } else {
-      alert(`Error creating deal: ${res.error}`);
+      toast.error(`Error creating deal: ${res.error}`);
     }
   };
 
@@ -216,16 +217,22 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
       setSelectedDeal(null);
       void fetchData();
     } else {
-      alert(`Error updating deal: ${res.error}`);
+      toast.error(`Error updating deal: ${res.error}`);
     }
   };
 
-  const handleDeleteDeal = async () => {
-    if (!selectedDeal) return;
-    if (!confirm('Are you sure you want to permanently delete this deal?')) return;
+  const handleDeleteDeal = async (dealId?: number) => {
+    const id = dealId ?? selectedDeal?.id;
+    if (!id) return;
+    const ok = await confirm('This deal and all its data will be permanently removed from the pipeline.', {
+      title: 'Delete Deal',
+      danger: true,
+      confirmLabel: 'Delete Deal',
+    });
+    if (!ok) return;
     
     setFormSubmitting(true);
-    const res = await deleteDeal(selectedDeal.id, callerName);
+    const res = await deleteDeal(id, callerName);
     setFormSubmitting(false);
     
     if (res.success) {
@@ -233,7 +240,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
       setSelectedDeal(null);
       void fetchData();
     } else {
-      alert(`Error deleting deal: ${res.error}`);
+      toast.error(`Error deleting deal: ${res.error}`);
     }
   };
 
@@ -531,7 +538,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
           <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-2">
             <button
               type="button"
-              onClick={handleDeleteDeal}
+              onClick={() => handleDeleteDeal()}
               disabled={formSubmitting}
               className="flex items-center gap-1 px-3 py-2 rounded-xl text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-100 font-bold transition-all cursor-pointer disabled:opacity-50"
             >

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Copy, Check, Loader2 } from 'lucide-react';
 import { generatePitchWithAI } from '@/app/actions/leads';
+import { toast } from '@/lib/toast';
 
 type PitchGeneratorProps = {
   lead: any;
@@ -58,7 +59,7 @@ export function PitchGenerator({ lead, callerName }: PitchGeneratorProps) {
         setPitch(res.pitch);
         localStorage.setItem(`pitch_draft_${lead.id}`, res.pitch);
       } else {
-        alert(res.error || 'Failed to generate pitch. Please check your Gemini API configuration.');
+        toast.error(res.error || 'Failed to generate pitch. Check your Gemini API key.');
       }
     } catch (err) {
       console.error('[Generate Pitch Error]', err);

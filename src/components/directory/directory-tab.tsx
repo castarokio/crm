@@ -41,6 +41,7 @@ import { Modal } from '../ui/modal';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { GlassCard } from '../ui/glass-card';
+import { toast, confirm } from '@/lib/toast';
 
 const isValidSocialLink = (link?: string | null) => {
   if (!link) return false;
@@ -166,9 +167,9 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
       // Update local state in table list
       setLeads(prev => prev.map(l => l.id === profileLead.id ? { ...l, ...profileFields } : l));
       setProfileLead((prev: any) => ({ ...prev, ...profileFields }));
-      alert('Lead profile updated successfully.');
+      toast.success('Lead profile updated successfully.');
     } else {
-      alert(`Failed to update profile: ${res.error}`);
+      toast.error(`Failed to update profile: ${res.error}`);
     }
   };
 
@@ -301,7 +302,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!agencyName || !phone || !leadArea) {
-      alert('Agency Name, primary Phone, and Area/City are required.');
+      toast.warning('Agency Name, primary Phone, and Area/City are required.');
       return;
     }
 
@@ -343,27 +344,38 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
       void fetchLeads();
       void fetchAreas();
     } else {
-      alert(`Error saving lead registry: ${res.error}`);
+      toast.error(`Error saving lead registry: ${res.error}`);
     }
   };
 
   const handleRecall = async (leadId: number) => {
-    if (!confirm('Are you sure you want to push this lead back into the active dialer queue?')) return;
+    const ok = await confirm('Push this lead back into the active dialer queue?', {
+      title: 'Recall Lead',
+      confirmLabel: 'Recall',
+    });
+    if (!ok) return;
     const res = await restoreLeadToQueue(leadId);
     if (res.success) {
+      toast.success('Lead recalled to dialer queue.');
       void fetchLeads();
     } else {
-      alert(`Error restoring lead: ${res.error}`);
+      toast.error(`Error restoring lead: ${res.error}`);
     }
   };
 
   const handleDelete = async (leadId: number) => {
-    if (!confirm('WARNING: Are you sure you want to PERMANENTLY delete this lead and its full history?')) return;
+    const ok = await confirm('This lead and its full call history will be permanently erased and cannot be recovered.', {
+      title: 'Permanently Delete Lead',
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     const res = await deleteLeadPermanently(leadId);
     if (res.success) {
+      toast.success('Lead permanently deleted.');
       void fetchLeads();
     } else {
-      alert(`Error deleting lead: ${res.error}`);
+      toast.error(`Error deleting lead: ${res.error}`);
     }
   };
 
@@ -412,7 +424,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
 
     const res = await updateLeadDetails(leadId, { [field]: valueToSave });
     if (!res.success) {
-      alert(`Failed to save: ${res.error}`);
+      toast.error(`Failed to save: ${res.error}`);
       void fetchLeads();
     }
   };
@@ -907,15 +919,20 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
           <div className="flex gap-2">
             <button
               onClick={async () => {
-                if (!confirm(`Are you sure you want to push ${selectedIds.size} selected leads back into active queue?`)) return;
+                const ok = await confirm(`Push ${selectedIds.size} selected leads back into the active dialer queue?`, {
+                  title: 'Recall Selected Leads',
+                  confirmLabel: 'Recall All',
+                });
+                if (!ok) return;
                 setLoading(true);
                 const res = await bulkRestoreLeadsAction(Array.from(selectedIds));
                 setLoading(false);
                 if (res.success) {
+                  toast.success(`${selectedIds.size} leads recalled to queue.`);
                   setSelectedIds(new Set());
                   void fetchLeads();
                 } else {
-                  alert(res.error || 'Failed to restore leads.');
+                  toast.error(res.error || 'Failed to restore leads.');
                 }
               }}
               className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-750 font-bold uppercase cursor-pointer"
@@ -925,15 +942,21 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
             {(callerRole === 'Admin' || callerRole === 'Supervisor') && (
               <button
                 onClick={async () => {
-                  if (!confirm(`WARNING: Are you sure you want to PERMANENTLY delete ${selectedIds.size} selected leads and their calling history?`)) return;
+                  const ok = await confirm(`${selectedIds.size} leads and all their calling history will be permanently erased. This cannot be undone.`, {
+                    title: `Delete ${selectedIds.size} Leads`,
+                    danger: true,
+                    confirmLabel: 'Delete All',
+                  });
+                  if (!ok) return;
                   setLoading(true);
                   const res = await bulkDeleteLeadsAction(Array.from(selectedIds));
                   setLoading(false);
                   if (res.success) {
+                    toast.success(`${selectedIds.size} leads permanently deleted.`);
                     setSelectedIds(new Set());
                     void fetchLeads();
                   } else {
-                    alert(res.error || 'Failed to delete leads.');
+                    toast.error(res.error || 'Failed to delete leads.');
                   }
                 }}
                 className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-750 font-bold uppercase cursor-pointer flex items-center gap-1"
