@@ -538,13 +538,13 @@ export async function generatePitchWithAI(options: {
     options.instagramFollowers ? `Instagram: ${options.instagramFollowers}` : '',
   ].filter(Boolean).join(', ');
 
-  const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web. Présente-toi au nom de l'agence "Castarokio Digital" et fais référence de manière pertinente à leur activité pour justifier l'intérêt de collaborer avec nous, en proposant de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/).
-
+  const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web. Présente-toi obligatoirement sous le nom de "hamid" de l'agence "Web-OS" (n'utilise aucun autre nom) et fais référence de manière pertinente à leur activité pour justifier l'intérêt de collaborer avec nous, en proposant de jeter un coup d'œil à notre portfolio (https://castarokio.github.io/).
+  
 Agence : ${options.agencyName}
 Ville : ${options.area || 'Algérie'}
 Site existant : ${isNoWeb ? "Non (pas de site, réseaux sociaux uniquement)" : `Oui (${options.website})`}
 Qualité site : ${options.websiteQuality || 'Moyenne'}
-Prospecteur : ${options.callerName}
+Prospecteur : hamid
 
 Présence réseaux sociaux : ${hasSocials ? 'Oui' : 'Non'}
 ${options.facebook ? `Facebook : ${options.facebook}` : ''}
@@ -559,7 +559,7 @@ Réponds UNIQUEMENT avec le texte brut du message généré.`;
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: basePrompt }] }],
       generationConfig: {

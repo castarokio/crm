@@ -25,8 +25,8 @@ export function PitchGenerator({ lead, callerName }: PitchGeneratorProps) {
 
       const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
       const defaultPitch = isNoWeb
-        ? `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Castarokio Digital. J'ai remarqué votre forte présence sur les réseaux sociaux, mais l'absence de site web vous fait perdre des réservations directes. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous ouvert à un court échange ?`
-        : `Bonjour ${lead.agency_name || "l'agence"}, c'est ${callerName} de Castarokio Digital. J'ai jeté un coup d'œil à votre site ${lead.website} et noté des lenteurs sur mobile qui freinent vos conversions. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous intéressé par un court audit gratuit ?`;
+        ? `Bonjour l'équipe de ${lead.agency_name || "l'agence"}, c'est hamid de Web-OS. J'ai remarqué votre forte présence sur les réseaux sociaux, mais l'absence de site web vous fait perdre des réservations directes. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous ouvert à un court échange de 5 minutes ?`
+        : `Bonjour l'équipe de ${lead.agency_name || "l'agence"}, c'est hamid de Web-OS. J'ai jeté un coup d'œil à votre site ${lead.website} et noté quelques lenteurs sur mobile qui freinent vos conversions. Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous intéressé par un court audit gratuit de 5 minutes ?`;
       
       setPitch(defaultPitch);
       setInstruction('');

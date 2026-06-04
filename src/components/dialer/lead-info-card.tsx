@@ -230,7 +230,7 @@ export function LeadInfoCard({
 
   const getMailtoUrl = (emailVal: string) => {
     const pitch = localStorage.getItem(`pitch_draft_${lead.id}`) || '';
-    const subject = `Proposition de collaboration Castarokio Digital - ${lead.agency_name}`;
+    const subject = `Proposition de collaboration Web-OS - ${lead.agency_name}`;
     
     let emailBody = pitch;
     if (!emailBody) {
@@ -247,28 +247,39 @@ export function LeadInfoCard({
         ? `\n- Optimisation publicitaire : En reliant vos campagnes à des landing pages optimisées, nous pouvons maximiser l'efficacité de vos publicités actuelles.`
         : '';
 
-      emailBody = `Bonjour,
+      emailBody = `Bonjour l'équipe de ${lead.agency_name},
 
-Je m'appelle ${callerName} de Castarokio Digital. Nous accompagnons les agences de voyages à structurer et accélérer leur présence en ligne pour maximiser leurs réservations.
+Je m'appelle hamid de Web-OS. Je me permets de vous contacter car j'aide les agences de voyages en Algérie à booster leurs réservations directes grâce à des outils web sur-mesure.
 
-J'ai analysé la visibilité digitale de ${lead.agency_name} à ${lead.area || 'votre région'} et identifié des opportunités majeures de croissance :
+En analysant la présence digitale de ${lead.agency_name} à ${lead.area || 'votre région'}, j'ai relevé des points clés :
 
 ${webSection}${reviewSection}${adsSection}
 
-Vous pouvez consulter nos réalisations et notre portfolio directement sur : https://castarokio.github.io/
+Nous avons récemment aidé des agences similaires à capter plus de clients et à automatiser la gestion de leurs circuits/vols. Vous pouvez découvrir nos réalisations et notre portfolio ici : https://castarokio.github.io/
 
-Seriez-vous disponible pour un appel rapide de 10 minutes cette semaine afin d'en discuter ? Je serais ravi de vous proposer un audit gratuit.
+Seriez-vous disponibles pour un court appel de 5 à 10 minutes ce [Jour] ou [Jour] pour un échange rapide ? Je serais ravi de vous offrir un audit complet gratuit de votre présence en ligne.
+
+Dans l'attente de votre retour, je vous souhaite une excellente journée.
 
 Cordialement,
 
-${callerName}
-Castarokio Digital
-Tél : +213 540 21 12 50
+hamid — Web-OS
+Tél/WhatsApp : +213 540 21 12 50
 Email : castarokibusiness@gmail.com
 Portfolio : https://castarokio.github.io/`;
     }
     
-    return `mailto:${emailVal}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
+    let mailtoUrl = `mailto:${emailVal}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
+    
+    // If sending to primary email, and there are alternate emails, add them in CC
+    if (emailVal === lead.email && lead.email_2) {
+      const altEmailsList = lead.email_2.split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (altEmailsList.length > 0) {
+        mailtoUrl += `&cc=${encodeURIComponent(altEmailsList.join(','))}`;
+      }
+    }
+    
+    return mailtoUrl;
   };
 
   const getDmPitch = () => {
@@ -280,10 +291,10 @@ Portfolio : https://castarokio.github.io/`;
     const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
     
     if (isNoWeb) {
-      return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Castarokio Digital. J'adore votre contenu sur Instagram. J'ai remarqué une belle opportunité pour optimiser la présence en ligne de ${agency} (notamment car vous n'avez pas encore de site web pour recevoir des réservations directes). Vous pouvez voir nos réalisations sur https://castarokio.github.io/. Seriez-vous ouvert à y jeter un coup d'œil lors d'un rapide échange ?`;
+      return `Salam! J'espère que vous allez bien. Je m'appelle hamid de Web-OS. J'adore votre contenu sur Instagram, votre visibilité est top! Par contre, c'est dommage de ne pas avoir de site web pour recevoir des réservations directes 24h/7d et crédibiliser votre agence auprès des clients. On a créé des sites super fluides pour des agences en Algérie, jetez un œil ici : https://castarokio.github.io/. Dispo pour en discuter rapidement ?`;
     }
     
-    return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Castarokio Digital. J'ai analysé la présence digitale de ${agency} à ${area} et noté quelques pistes d'optimisation intéressantes sur votre site. Vous pouvez jeter un œil à notre travail sur https://castarokio.github.io/. Seriez-vous ouvert à en discuter brièvement ?`;
+    return `Salam! J'espère que vous allez bien. Je m'appelle hamid de Web-OS. J'ai visité le site de ${agency} et j'ai relevé 2-3 détails techniques (notamment sur mobile) qui ralentissent les chargements et vous font perdre des clients. On est spécialisé dans l'optimisation pour les agences de voyages en Algérie (notre portfolio : https://castarokio.github.io/). Dispo pour un court échange ?`;
   };
 
   const handleSocialDmClick = (e: React.MouseEvent, platform: 'Instagram' | 'Facebook Messenger', handle: string) => {
@@ -293,8 +304,8 @@ Portfolio : https://castarokio.github.io/`;
     toast.success(`${platform} pitch copied to clipboard!`);
     
     const url = platform === 'Instagram' 
-      ? normalizeInstagramDmUrl(handle, isIPhone)
-      : normalizeMessengerUrl(handle, isIPhone);
+      ? normalizeInstagramDmUrl(handle, isIPhone, pitch)
+      : normalizeMessengerUrl(handle, isIPhone, pitch);
       
     window.open(url, '_blank', 'noopener,noreferrer');
   };
