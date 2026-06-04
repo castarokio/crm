@@ -394,6 +394,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
 
             <GlassCard className="border border-slate-200/80 shadow-md p-6">
               <LeadInfoCard
+                key={activeLead?.id ?? 'empty'}
                 lead={activeLead}
                 callerName={callerName}
                 onDial={handleDial}

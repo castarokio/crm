@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Search, Filter, Loader2, DollarSign, Calendar, FileText, Trash2 } from 'lucide-react';
 import { PipelineColumn } from './pipeline-column';
 import { getDeals, createDeal, updateDealStage, updateDeal, deleteDeal } from '@/app/actions/pipeline';
@@ -17,6 +17,71 @@ type PipelineTabProps = {
 
 export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) {
   const [deals, setDeals] = useState<any[]>([]);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const scrollIntervalRef = useRef<number | null>(null);
+  const dragXRef = useRef<number | null>(null);
+
+  const startHorizontalScroll = () => {
+    if (scrollIntervalRef.current) return;
+    
+    const scrollLoop = () => {
+      if (!boardRef.current || dragXRef.current === null) {
+        scrollIntervalRef.current = null;
+        return;
+      }
+      
+      const board = boardRef.current;
+      const rect = board.getBoundingClientRect();
+      const x = dragXRef.current - rect.left;
+      
+      const maxSpeed = 25;
+      const edgeSize = 120;
+      let speed = 0;
+      
+      if (x < edgeSize && x >= 0) {
+        speed = -maxSpeed * (1 - x / edgeSize);
+      } else if (x > rect.width - edgeSize && x <= rect.width) {
+        speed = maxSpeed * ((x - (rect.width - edgeSize)) / edgeSize);
+      }
+      
+      if (speed !== 0) {
+        board.scrollLeft += speed;
+        scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
+      } else {
+        scrollIntervalRef.current = null;
+      }
+    };
+    
+    scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
+  };
+
+  const stopHorizontalScroll = () => {
+    if (scrollIntervalRef.current) {
+      cancelAnimationFrame(scrollIntervalRef.current);
+      scrollIntervalRef.current = null;
+    }
+    dragXRef.current = null;
+  };
+
+  const handleBoardDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragXRef.current = e.clientX;
+    if (!scrollIntervalRef.current) {
+      startHorizontalScroll();
+    }
+  };
+
+  useEffect(() => {
+    const handleDragEnd = () => {
+      stopHorizontalScroll();
+    };
+    window.addEventListener('dragend', handleDragEnd);
+    window.addEventListener('drop', handleDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleDragEnd);
+      window.removeEventListener('drop', handleDragEnd);
+    };
+  }, []);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCaller, setSelectedCaller] = useState<string>('All');
@@ -262,7 +327,11 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
       </div>
 
       {/* Kanban Board Container */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4">
+      <div 
+        ref={boardRef}
+        onDragOver={handleBoardDragOver}
+        className="flex-1 overflow-x-auto overflow-y-hidden pb-4"
+      >
         {loading ? (
           <div className="h-[500px] w-full flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-slate-400">
@@ -277,7 +346,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
                 key={stage}
                 stage={stage}
                 deals={getStageDeals(stage)}
-                onDragOver={handleDragOver}
+                onDragOver={handleBoardDragOver}
                 onDrop={handleDrop}
                 onDragStart={handleDragStart}
                 onDealClick={openEditModal}

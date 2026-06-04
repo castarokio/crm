@@ -40,6 +40,12 @@ import {
   normalizeMessengerUrl 
 } from '@/lib/social-utils';
 
+const isValidSocialLink = (link?: string | null) => {
+  if (!link) return false;
+  const l = link.toLowerCase().trim();
+  return l !== 'not found' && l !== 'none' && l !== '' && l !== 'null';
+};
+
 type LeadInfoCardProps = {
   lead: any;
   callerName: string;
@@ -619,32 +625,32 @@ ${callerName}`;
                 <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/80 rounded-xl p-3">
                   <span className="text-[9px] text-slate-400 font-bold uppercase">Profiles:</span>
                   
-                  {fields.facebook ? (
-                    <a href={normalizeFacebookProfileUrl(fields.facebook)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all" title="Facebook">
+                  {isValidSocialLink(lead.facebook) ? (
+                    <a href={normalizeFacebookProfileUrl(lead.facebook)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all" title="Facebook">
                       <Facebook className="w-4 h-4" />
                     </a>
-                  ) : <Facebook className="w-4 h-4 text-slate-300" />}
+                  ) : <Facebook className="w-4 h-4 text-slate-350" />}
 
-                  {fields.instagram ? (
-                    <a href={normalizeInstagramProfileUrl(fields.instagram)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all" title="Instagram">
+                  {isValidSocialLink(lead.instagram) ? (
+                    <a href={normalizeInstagramProfileUrl(lead.instagram)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all" title="Instagram">
                       <Instagram className="w-4 h-4" />
                     </a>
-                  ) : <Instagram className="w-4 h-4 text-slate-300" />}
+                  ) : <Instagram className="w-4 h-4 text-slate-355" />}
 
-                  {fields.tiktok ? (
-                    <a href={normalizeTikTokProfileUrl(fields.tiktok)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-black text-white hover:bg-slate-800 transition-all font-display text-[9px] px-2 py-0.5 rounded font-extrabold uppercase" title="TikTok">
+                  {isValidSocialLink(lead.tiktok) ? (
+                    <a href={normalizeTikTokProfileUrl(lead.tiktok)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-black text-white hover:bg-slate-800 transition-all font-display text-[9px] px-2 py-0.5 rounded font-extrabold uppercase" title="TikTok">
                       TT
                     </a>
-                  ) : <span className="text-slate-300 text-xs font-bold font-display select-none">TT</span>}
+                  ) : <span className="text-slate-350 text-xs font-bold font-display select-none">TT</span>}
 
-                  {fields.linkedin ? (
-                    <a href={normalizeLinkedInProfileUrl(fields.linkedin)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-indigo-50 text-indigo-650 hover:bg-indigo-100 transition-all" title="LinkedIn">
+                  {isValidSocialLink(lead.linkedin) ? (
+                    <a href={normalizeLinkedInProfileUrl(lead.linkedin)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-indigo-50 text-indigo-650 hover:bg-indigo-100 transition-all" title="LinkedIn">
                       <Linkedin className="w-4 h-4" />
                     </a>
-                  ) : <Linkedin className="w-4 h-4 text-slate-300" />}
+                  ) : <Linkedin className="w-4 h-4 text-slate-355" />}
                   
-                  {fields.social_link && (
-                    <a href={fields.social_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-bold text-[10px] ml-auto hover:text-indigo-850 truncate max-w-[120px]">
+                  {isValidSocialLink(lead.social_link) && (
+                    <a href={lead.social_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-bold text-[10px] ml-auto hover:text-indigo-850 truncate max-w-[120px]">
                       Other Link
                     </a>
                   )}
@@ -652,9 +658,9 @@ ${callerName}`;
 
                 {/* Direct DM chat redirects */}
                 <div className="grid grid-cols-2 gap-2">
-                  {fields.facebook && (
+                  {isValidSocialLink(lead.facebook) && (
                     <a
-                      href={normalizeMessengerUrl(fields.facebook)}
+                      href={normalizeMessengerUrl(lead.facebook)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="px-3 py-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
@@ -663,9 +669,9 @@ ${callerName}`;
                       FB Messenger
                     </a>
                   )}
-                  {fields.instagram && (
+                  {isValidSocialLink(lead.instagram) && (
                     <a
-                      href={normalizeInstagramDmUrl(fields.instagram)}
+                      href={normalizeInstagramDmUrl(lead.instagram)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="px-3 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"

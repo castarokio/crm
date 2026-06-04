@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { DealCard } from './deal-card';
 import { AnimatePresence } from 'framer-motion';
 
@@ -21,6 +21,74 @@ export function PipelineColumn({
   onDealClick,
   onViewSourceLead,
 }: PipelineColumnProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollIntervalRef = useRef<number | null>(null);
+  const dragYRef = useRef<number | null>(null);
+
+  const startVerticalScroll = () => {
+    if (scrollIntervalRef.current) return;
+    
+    const scrollLoop = () => {
+      if (!listRef.current || dragYRef.current === null) {
+        scrollIntervalRef.current = null;
+        return;
+      }
+      
+      const list = listRef.current;
+      const rect = list.getBoundingClientRect();
+      const y = dragYRef.current - rect.top;
+      
+      const maxSpeed = 15;
+      const edgeSize = 60;
+      let speed = 0;
+      
+      if (y < edgeSize && y >= 0) {
+        speed = -maxSpeed * (1 - y / edgeSize);
+      } else if (y > rect.height - edgeSize && y <= rect.height) {
+        speed = maxSpeed * ((y - (rect.height - edgeSize)) / edgeSize);
+      }
+      
+      if (speed !== 0) {
+        list.scrollTop += speed;
+        scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
+      } else {
+        scrollIntervalRef.current = null;
+      }
+    };
+    
+    scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
+  };
+
+  const stopVerticalScroll = () => {
+    if (scrollIntervalRef.current) {
+      cancelAnimationFrame(scrollIntervalRef.current);
+      scrollIntervalRef.current = null;
+    }
+    dragYRef.current = null;
+  };
+
+  const handleColumnDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragYRef.current = e.clientY;
+    if (!scrollIntervalRef.current) {
+      startVerticalScroll();
+    }
+    
+    if (onDragOver) onDragOver(e);
+  };
+
+  useEffect(() => {
+    const handleDragEnd = () => {
+      stopVerticalScroll();
+    };
+    window.addEventListener('dragend', handleDragEnd);
+    window.addEventListener('drop', handleDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleDragEnd);
+      window.removeEventListener('drop', handleDragEnd);
+    };
+  }, []);
+
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
   };
@@ -77,7 +145,11 @@ export function PipelineColumn({
       </div>
 
       {/* Cards list */}
-      <div className="flex-1 overflow-y-auto flex flex-col gap-3 max-h-[calc(100vh-320px)] pr-1">
+      <div 
+        ref={listRef}
+        onDragOver={handleColumnDragOver}
+        className="flex-1 overflow-y-auto flex flex-col gap-3 max-h-[calc(100vh-320px)] pr-1"
+      >
         {deals.length === 0 ? (
           <div className="flex-1 flex items-center justify-center py-10 border border-dashed border-slate-200 rounded-xl">
             <span className="font-body text-[10px] text-slate-350 uppercase tracking-widest font-semibold">Drop Deal Here</span>

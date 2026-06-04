@@ -42,6 +42,20 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { GlassCard } from '../ui/glass-card';
 
+const isValidSocialLink = (link?: string | null) => {
+  if (!link) return false;
+  const l = link.toLowerCase().trim();
+  return l !== 'not found' && l !== 'none' && l !== '' && l !== 'null';
+};
+
+const cleanSocialVal = (val?: string | null) => {
+  if (!val) return '';
+  const v = val.trim();
+  const l = v.toLowerCase();
+  if (l === 'not found' || l === 'none' || l === 'null') return '';
+  return v;
+};
+
 type DirectoryTabProps = {
   callerName: string;
   callerRole: string;
@@ -110,20 +124,20 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     setProfileFields({
       agency_name: lead.agency_name || '',
       area: lead.area || '',
-      address: lead.address || '',
+      address: cleanSocialVal(lead.address),
       priority: lead.priority ?? 3,
       call_status: lead.call_status || 'Not Called',
       phone: lead.phone || '',
-      phone_2: lead.phone_2 || '',
-      email: lead.email || '',
-      email_2: lead.email_2 || '',
-      website: lead.website || '',
+      phone_2: cleanSocialVal(lead.phone_2),
+      email: cleanSocialVal(lead.email),
+      email_2: cleanSocialVal(lead.email_2),
+      website: cleanSocialVal(lead.website),
       website_quality: lead.website_quality || 'Medium',
-      facebook: lead.facebook || '',
-      instagram: lead.instagram || '',
-      tiktok: lead.tiktok || '',
-      linkedin: lead.linkedin || '',
-      social_link: lead.social_link || '',
+      facebook: cleanSocialVal(lead.facebook),
+      instagram: cleanSocialVal(lead.instagram),
+      tiktok: cleanSocialVal(lead.tiktok),
+      linkedin: cleanSocialVal(lead.linkedin),
+      social_link: cleanSocialVal(lead.social_link),
       work_hours: lead.work_hours || '',
       notes: lead.notes || '',
       call_notes: lead.call_notes || '',
@@ -258,21 +272,21 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     setSelectedLead(lead);
     setAgencyName(lead.agency_name || '');
     setPhone(lead.phone || '');
-    setPhone2(lead.phone_2 || '');
-    setEmail(lead.email || '');
-    setEmail2(lead.email_2 || '');
-    setWebsite(lead.website || '');
+    setPhone2(cleanSocialVal(lead.phone_2));
+    setEmail(cleanSocialVal(lead.email));
+    setEmail2(cleanSocialVal(lead.email_2));
+    setWebsite(cleanSocialVal(lead.website));
     setWebsiteQuality(lead.website_quality || 'Medium');
     setLeadArea(lead.area || '');
-    setAddress(lead.address || '');
+    setAddress(cleanSocialVal(lead.address));
     setNotes(lead.notes || '');
     setCallNotes(lead.call_notes || '');
     setLeadPriority(Number(lead.priority) || 3);
-    setFacebook(lead.facebook || '');
-    setInstagram(lead.instagram || '');
-    setTiktok(lead.tiktok || '');
-    setLinkedin(lead.linkedin || '');
-    setSocialLink(lead.social_link || '');
+    setFacebook(cleanSocialVal(lead.facebook));
+    setInstagram(cleanSocialVal(lead.instagram));
+    setTiktok(cleanSocialVal(lead.tiktok));
+    setLinkedin(cleanSocialVal(lead.linkedin));
+    setSocialLink(cleanSocialVal(lead.social_link));
     setIsEditOpen(true);
   };
 
@@ -437,21 +451,37 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
 
   // Render compact social icons row for cell
   const renderSocialBadgesCell = (lead: any) => {
-    const hasFb = !!lead.facebook;
-    const hasIg = !!lead.instagram;
-    const hasTt = !!lead.tiktok;
-    const hasLi = !!lead.linkedin;
+    const hasFb = isValidSocialLink(lead.facebook);
+    const hasIg = isValidSocialLink(lead.instagram);
+    const hasTt = isValidSocialLink(lead.tiktok);
+    const hasLi = isValidSocialLink(lead.linkedin);
 
     if (!hasFb && !hasIg && !hasTt && !hasLi) {
       return <span className="text-slate-350 select-none">-</span>;
     }
 
     return (
-      <div className="flex items-center gap-1.5 text-slate-400">
-        {hasFb && <Facebook className="w-3.5 h-3.5 text-blue-500" />}
-        {hasIg && <Instagram className="w-3.5 h-3.5 text-rose-500" />}
-        {hasTt && <span className="text-[8px] font-extrabold bg-slate-900 text-white px-1 py-0.5 rounded tracking-tighter" title="TikTok">TT</span>}
-        {hasLi && <Linkedin className="w-3.5 h-3.5 text-indigo-650" />}
+      <div className="flex items-center gap-1.5 text-slate-400" onClick={(e) => e.stopPropagation()}>
+        {hasFb && (
+          <a href={lead.facebook} target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-all text-blue-500">
+            <Facebook className="w-3.5 h-3.5" />
+          </a>
+        )}
+        {hasIg && (
+          <a href={lead.instagram} target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-all text-rose-500">
+            <Instagram className="w-3.5 h-3.5" />
+          </a>
+        )}
+        {hasTt && (
+          <a href={lead.tiktok} target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-all text-[8px] font-extrabold bg-slate-900 text-white px-1 py-0.5 rounded tracking-tighter" title="TikTok">
+            TT
+          </a>
+        )}
+        {hasLi && (
+          <a href={lead.linkedin} target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-all text-indigo-650">
+            <Linkedin className="w-3.5 h-3.5" />
+          </a>
+        )}
       </div>
     );
   };
@@ -1156,6 +1186,28 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
             <div>
               <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider">Agency Profile</h3>
               <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">ID: #{profileLead.id}</p>
+            </div>
+            <div className="ml-auto flex items-center gap-2 mr-2">
+              {isValidSocialLink(profileFields.facebook) && (
+                <a href={profileFields.facebook} target="_blank" rel="noopener noreferrer" title="Facebook" className="hover:scale-110 transition-all text-blue-500">
+                  <Facebook className="w-4 h-4" />
+                </a>
+              )}
+              {isValidSocialLink(profileFields.instagram) && (
+                <a href={profileFields.instagram} target="_blank" rel="noopener noreferrer" title="Instagram" className="hover:scale-110 transition-all text-rose-500">
+                  <Instagram className="w-4 h-4" />
+                </a>
+              )}
+              {isValidSocialLink(profileFields.tiktok) && (
+                <a href={profileFields.tiktok} target="_blank" rel="noopener noreferrer" title="TikTok" className="text-[8px] font-extrabold bg-slate-900 text-white px-1.5 py-0.5 rounded tracking-tighter hover:scale-110 transition-all">
+                  TT
+                </a>
+              )}
+              {isValidSocialLink(profileFields.linkedin) && (
+                <a href={profileFields.linkedin} target="_blank" rel="noopener noreferrer" title="LinkedIn" className="hover:scale-110 transition-all text-indigo-650">
+                  <Linkedin className="w-4 h-4" />
+                </a>
+              )}
             </div>
             <button
               onClick={() => setProfileLead(null)}
