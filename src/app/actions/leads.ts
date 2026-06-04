@@ -110,7 +110,7 @@ export async function getLeads(options: {
   try {
     await requireCallerSession();
     const supabase = requireSupabase();
-    let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'planned' });
+    let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'exact' });
 
     if (search) {
       const safeSearch = escapePostgrestFilterValue(search);
@@ -177,7 +177,7 @@ export async function getDialerQueue() {
     // Select leads that are fresh or explicitly recalled
     let q = supabase
       .from('leads')
-      .select(LEAD_LIST_COLUMNS, { count: 'planned' })
+      .select(LEAD_LIST_COLUMNS, { count: 'exact' })
       .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled');
 
     if (effectiveCallerName) {
@@ -397,16 +397,16 @@ export async function getAnalytics() {
     const supabase = requireSupabase();
     
     const [totalRes, todayRes, interestedRes, acceptedRes, configuredRes, callbackRes, notInterestedRes, wrongNumberRes, noAnswerRes, busyRes] = await Promise.all([
-      supabase.from('leads').select('id', { count: 'planned', head: true }),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).gte('last_called_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Interested'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Accepted'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Client Configured'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Callback'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Not Interested'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Wrong Number'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'No Answer'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Busy'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).gte('last_called_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Interested'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Accepted'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Client Configured'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Callback'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Not Interested'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Wrong Number'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'No Answer'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Busy'),
     ]);
 
     const totalLeads = totalRes.count || 0;

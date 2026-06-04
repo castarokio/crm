@@ -16,16 +16,30 @@ const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.NEXT_PUBLIC_SUPABASE_AN
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function test() {
-  console.log('Querying leads...');
-  let q = supabase.from('leads').select('*', { count: 'exact' });
-  q = q.eq('call_status', 'Not Interested');
+  console.log('Querying lead counts grouped by area...');
+  const { data, error } = await supabase.rpc('get_leads_by_area_summary'); // Let's check if there is an RPC or just query areas
   
-  const { data, count, error } = await q.range(0, 11);
-  if (error) {
-    console.error('Query failed:', error.message);
-  } else {
-    console.log('Success! Leads found:', data.length, 'Total count:', count);
+  // If no RPC, let's query all areas and count them manually
+  const { data: areasData, error: areasErr } = await supabase
+    .from('leads')
+    .select('area');
+    
+  if (areasErr) {
+    console.error('Error:', areasErr);
+    return;
   }
+  
+  const areaCounts = {};
+  areasData.forEach(r => {
+    const a = r.area || 'Unknown';
+    areaCounts[a] = (areaCounts[a] || 0) + 1;
+  });
+  
+  const sorted = Object.entries(areaCounts).sort((a, b) => b[1] - a[1]);
+  console.log('Leads count by area:');
+  sorted.forEach(([area, count]) => {
+    console.log(`- ${area}: ${count}`);
+  });
 }
 
 test();
