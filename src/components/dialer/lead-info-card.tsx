@@ -222,14 +222,16 @@ export function LeadInfoCard({
     if (!isPrefilled) return `https://wa.me/${formatted}`;
     
     // Retrieve cached pitch
-    const pitch = localStorage.getItem(`pitch_draft_${lead.id}`) || 
+    const pitch = localStorage.getItem(`pitch_draft_wa_${lead.id}`) || 
+      localStorage.getItem(`pitch_draft_${lead.id}`) || 
       `Bonjour, je suis ${callerName} de Web-OS. Nous aimerions collaborer avec vous pour optimiser la présence en ligne de ${lead.agency_name}.`;
     
     return `https://wa.me/${formatted}?text=${encodeURIComponent(pitch)}`;
   };
 
   const getMailtoUrl = (emailVal: string) => {
-    const pitch = localStorage.getItem(`pitch_draft_${lead.id}`) || '';
+    const pitch = localStorage.getItem(`pitch_draft_email_${lead.id}`) || 
+      localStorage.getItem(`pitch_draft_${lead.id}`) || '';
     const subject = `Proposition de collaboration Web-OS - ${lead.agency_name}`;
     
     let emailBody = pitch;
@@ -283,7 +285,8 @@ Portfolio : https://castarokio.github.io/`;
   };
 
   const getDmPitch = () => {
-    const draft = localStorage.getItem(`pitch_draft_${lead.id}`);
+    const draft = localStorage.getItem(`pitch_draft_wa_${lead.id}`) || 
+      localStorage.getItem(`pitch_draft_${lead.id}`);
     if (draft) return draft;
 
     const agency = lead.agency_name || "l'agence";
