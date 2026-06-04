@@ -418,12 +418,12 @@ export async function getTargetInventoryCounts() {
     await requireCallerSession();
     const supabase = requireSupabase();
     const [totalRes, warmRes, convertedRes, followupRes, lostRes, treatedRes] = await Promise.all([
-      supabase.from('leads').select('id', { count: 'planned', head: true }),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Interested'),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Accepted', 'Client Configured']),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).in('call_status', ['Not Interested', 'Wrong Number']),
-      supabase.from('leads').select('id', { count: 'planned', head: true }).eq('call_status', 'Treated'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Interested'),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Accepted', 'Client Configured']),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Not Interested', 'Wrong Number']),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Treated'),
     ]);
 
     return {
