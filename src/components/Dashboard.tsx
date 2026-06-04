@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight } from 'lucide-react';
+import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X } from 'lucide-react';
 import { DialerTab } from './dialer/dialer-tab';
 import { PipelineTab } from './pipeline/pipeline-tab';
 import { DirectoryTab } from './directory/directory-tab';
@@ -24,6 +24,7 @@ export default function Dashboard({
   onLogoutCaller,
 }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dialer');
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [loadingTargets, setLoadingTargets] = useState<boolean>(true);
   const [targets, setTargets] = useState<{
     daily_call_target: number;
@@ -155,12 +156,46 @@ export default function Dashboard({
       <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-50/30 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-slate-50/80 rounded-full blur-[120px] pointer-events-none" />
 
+      {/* Mobile Top Bar */}
+      <header className="h-[60px] md:hidden bg-white border-b border-slate-200/80 px-4 flex items-center justify-between shrink-0 z-30 shadow-sm font-display">
+        <button 
+          onClick={() => setIsSidebarOpen(true)}
+          className="p-1 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all cursor-pointer"
+        >
+          <Menu className="w-6 h-6" />
+        </button>
+        <h1 className="text-xs font-black uppercase tracking-widest text-slate-850">
+          Call-OS CRM
+        </h1>
+        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold text-xs uppercase border border-indigo-100">
+          {callerName[0]}
+        </div>
+      </header>
+
       {/* Main Grid Layout */}
-      <div className="flex-1 flex flex-col md:flex-row h-screen overflow-hidden z-10">
+      <div className="flex-1 flex flex-col md:flex-row h-[calc(100vh-60px)] md:h-screen overflow-hidden z-10">
         
+        {/* Sidebar Backdrop Overlay for Mobile */}
+        {isSidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/45 z-35 md:hidden transition-all duration-300 backdrop-blur-sm" 
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
         {/* Navigation Sidebar */}
-        <aside className="w-full md:w-64 bg-white/70 border-r border-slate-200/80 p-5 flex flex-col gap-6 backdrop-blur-md shrink-0">
+        <aside className={`
+          fixed inset-y-0 left-0 z-40 w-64 bg-white p-5 flex flex-col gap-6 shadow-2xl transition-transform duration-300 transform md:relative md:translate-x-0 md:shadow-none md:border-r md:border-slate-200/80 md:bg-white/70 md:backdrop-blur-md shrink-0
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}>
           
+          {/* Mobile Close Button */}
+          <div className="md:hidden flex justify-end">
+            <button onClick={() => setIsSidebarOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
           {/* Logo Brand Header */}
           <div className="flex flex-col gap-1.5 border-b border-slate-100 pb-4">
             <div className="flex items-center gap-2">
@@ -182,7 +217,7 @@ export default function Dashboard({
           {/* Sidebar Nav Buttons */}
           <nav className="flex-1 flex flex-col gap-2 font-body text-xs font-semibold">
             <button
-              onClick={() => setActiveTab('dialer')}
+              onClick={() => { setActiveTab('dialer'); setIsSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'dialer'
                   ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
@@ -199,7 +234,7 @@ export default function Dashboard({
             </button>
 
             <button
-              onClick={() => setActiveTab('pipeline')}
+              onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'pipeline'
                   ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
@@ -216,7 +251,7 @@ export default function Dashboard({
             </button>
 
             <button
-              onClick={() => setActiveTab('directory')}
+              onClick={() => { setActiveTab('directory'); setIsSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'directory'
                   ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
@@ -229,7 +264,7 @@ export default function Dashboard({
 
             {isAdminOrSupervisor && (
               <button
-                onClick={() => setActiveTab('admin')}
+                onClick={() => { setActiveTab('admin'); setIsSidebarOpen(false); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                   activeTab === 'admin'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
@@ -302,7 +337,7 @@ export default function Dashboard({
         </aside>
 
         {/* Dynamic View Box */}
-        <main className="flex-1 overflow-hidden p-6 flex flex-col gap-6">
+        <main className="flex-1 overflow-hidden p-3 md:p-6 flex flex-col gap-4 md:gap-6">
           <div className="flex-1 overflow-y-auto pr-1">
             {activeTab === 'dialer' && (
               <DialerTab 

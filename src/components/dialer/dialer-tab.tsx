@@ -45,6 +45,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
   // AI note parsing state
   const [aiNotesInput, setAiNotesInput] = useState<string>('');
   const [parsingAI, setParsingAI] = useState<boolean>(false);
+  const [mobileView, setMobileView] = useState<'queue' | 'call'>('call');
 
   // Add Lead Modal State
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
@@ -87,6 +88,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       const idx = queue.findIndex(l => l.id === activeLeadId);
       if (idx >= 0) {
         setCurrentIndex(idx);
+        setMobileView('call');
         if (onClearActiveLeadId) onClearActiveLeadId();
       } else {
         const fetchAndPrepend = async () => {
@@ -95,6 +97,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
           if (res.success && res.lead) {
             setQueue(prev => [res.lead, ...prev.filter(l => l.id !== activeLeadId)]);
             setCurrentIndex(0);
+            setMobileView('call');
           }
           setLoading(false);
           if (onClearActiveLeadId) onClearActiveLeadId();
@@ -166,6 +169,7 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
 
   const handleSelectIndex = (idx: number) => {
     setCurrentIndex(idx);
+    setMobileView('call');
   };
 
   const handleDial = (phoneNumber: string) => {
@@ -374,55 +378,81 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
-          
-          {/* Dialer Queue (Left Column) */}
-          <div className="lg:col-span-1 h-full">
-            <div className="mb-2">
-              <Button
-                onClick={() => setIsCreateOpen(true)}
-                icon={<UserPlus className="w-4.5 h-4.5" />}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
-              >
-                Add New Contact
-              </Button>
-            </div>
-            <DialerQueue
-              queue={queue}
-              currentIndex={currentIndex}
-              onSelectIndex={handleSelectIndex}
-              callerName={callerName}
-            />
+        <div className="flex flex-col gap-4 h-full">
+          {/* Mobile Tab Select Bar */}
+          <div className="flex lg:hidden bg-white border border-slate-250/70 rounded-2xl p-1 shadow-sm font-display text-xs font-bold w-full">
+            <button
+              type="button"
+              onClick={() => setMobileView('queue')}
+              className={`flex-1 py-2 text-center rounded-xl cursor-pointer transition-all ${
+                mobileView === 'queue' ? 'bg-indigo-650 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Queue ({queue.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileView('call')}
+              className={`flex-1 py-2 text-center rounded-xl cursor-pointer transition-all ${
+                mobileView === 'call' ? 'bg-indigo-650 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Active Call ({activeLead?.agency_name ? (activeLead.agency_name.substring(0, 15) + (activeLead.agency_name.length > 15 ? '...' : '')) : 'None'})
+            </button>
           </div>
 
-          {/* Main Dial Card (Center Column) */}
-          <div className="lg:col-span-2 flex flex-col gap-3">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
             
-            {/* Position indicator */}
-            <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
-              <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
-              <span className="text-[10px] text-slate-800 font-extrabold font-display uppercase">
-                LEAD {currentIndex + 1} of {queue.length} in queue
-              </span>
+            {/* Dialer Queue (Left Column) */}
+            <div className={`lg:col-span-1 h-full ${mobileView === 'queue' ? 'block' : 'hidden lg:block'}`}>
+              <div className="mb-2">
+                <Button
+                  onClick={() => setIsCreateOpen(true)}
+                  icon={<UserPlus className="w-4.5 h-4.5" />}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
+                >
+                  Add New Contact
+                </Button>
+              </div>
+              <DialerQueue
+                queue={queue}
+                currentIndex={currentIndex}
+                onSelectIndex={handleSelectIndex}
+                callerName={callerName}
+              />
             </div>
 
-            <GlassCard className="border border-slate-200/80 shadow-md p-6">
-              <LeadInfoCard
-                key={activeLead?.id ?? 'empty'}
-                lead={activeLead}
-                callerName={callerName}
-                onDial={handleDial}
-                onLeadUpdated={(leadId, fields) => {
-                  setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
-                }}
-              />
-            </GlassCard>
-          </div>
+            {/* Active Call View (Center + Right Columns) */}
+            <div className={`col-span-1 lg:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start ${mobileView === 'call' ? 'grid' : 'hidden lg:grid'}`}>
+              
+              {/* Main Dial Card (Center Column) */}
+              <div className="lg:col-span-2 flex flex-col gap-3">
+                
+                {/* Position indicator */}
+                <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
+                  <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
+                  <span className="text-[10px] text-slate-800 font-extrabold font-display uppercase">
+                    LEAD {currentIndex + 1} of {queue.length} in queue
+                  </span>
+                </div>
 
-          {/* Outcome & AI Panel (Right Column) */}
-          <div className="lg:col-span-1 flex flex-col gap-6">
-            {activeLead && (
-              <>
+                <GlassCard className="border border-slate-200/80 shadow-md p-6">
+                  <LeadInfoCard
+                    key={activeLead?.id ?? 'empty'}
+                    lead={activeLead}
+                    callerName={callerName}
+                    onDial={handleDial}
+                    onLeadUpdated={(leadId, fields) => {
+                      setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
+                    }}
+                  />
+                </GlassCard>
+              </div>
+
+              {/* Outcome & AI Panel (Right Column) */}
+              <div className="lg:col-span-1 flex flex-col gap-6">
+                {activeLead && (
+                  <>
                 {/* Standard Outcome card */}
                 <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4 p-5">
                   <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2">
@@ -597,7 +627,9 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
             )}
           </div>
         </div>
-      )}
+      </div>
+    </div>
+  )}
 
       {/* DateTime Calendar Picker Scheduler Modal */}
       <SchedulerModal

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, Filter, Phone, Mail, Globe, MapPin, AlertCircle, Edit, 
   Trash2, RotateCcw, ChevronLeft, ChevronRight, Loader2, Plus 
@@ -118,6 +118,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
   const [profileLead, setProfileLead] = useState<any | null>(null);
   const [profileFields, setProfileFields] = useState<any>({});
   const [savingProfile, setSavingProfile] = useState<boolean>(false);
+  const profileCardRef = useRef<HTMLDivElement>(null);
 
   const handleSelectProfileLead = (lead: any) => {
     setProfileLead(lead);
@@ -142,6 +143,13 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
       notes: lead.notes || '',
       call_notes: lead.call_notes || '',
     });
+
+    // Automatically scroll down to the profile editor card on mobile
+    setTimeout(() => {
+      if (profileCardRef.current) {
+        profileCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
   };
 
   const handleProfileFieldChange = (field: string, val: any) => {
@@ -1181,7 +1189,8 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
 
       {/* Simple Profile Side Card */}
       {profileLead && (
-        <GlassCard className="w-full xl:w-96 shrink-0 border border-slate-200/80 shadow-md p-5 flex flex-col gap-4 max-h-[calc(100vh-160px)] overflow-y-auto font-body relative bg-white/75 backdrop-blur-md">
+        <div ref={profileCardRef} className="w-full xl:w-96 shrink-0">
+          <GlassCard className="w-full border border-slate-200/80 shadow-md p-5 flex flex-col gap-4 max-h-[calc(100vh-160px)] overflow-y-auto font-body relative bg-white/75 backdrop-blur-md">
           <div className="flex justify-between items-center border-b border-slate-100 pb-2">
             <div>
               <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider">Agency Profile</h3>
@@ -1420,6 +1429,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
             </Button>
           </form>
         </GlassCard>
+        </div>
       )}
     </div>
   );
