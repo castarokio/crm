@@ -30,6 +30,7 @@ import { Input } from '../ui/input';
 import { updateLeadDetails } from '@/app/actions/leads';
 import { PitchGenerator } from './pitch-generator';
 import { CallLogLedger } from './call-log-ledger';
+import { toast } from '@/lib/toast';
 import { 
   formatWhatsappPhone, 
   normalizeFacebookProfileUrl, 
@@ -78,6 +79,14 @@ export function LeadInfoCard({
 
   // Lock lease countdown
   const [lockTimeRemaining, setLockTimeRemaining] = useState<string>('10:00');
+  
+  const [isIPhone, setIsIPhone] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsIPhone(/iPhone|iPad|iPod/i.test(navigator.userAgent));
+    }
+  }, []);
 
   useEffect(() => {
     if (lead) {
@@ -222,13 +231,68 @@ export function LeadInfoCard({
   const getMailtoUrl = (emailVal: string) => {
     const pitch = localStorage.getItem(`pitch_draft_${lead.id}`) || '';
     const subject = `Proposition de collaboration Web-OS - ${lead.agency_name}`;
-    const body = pitch || `Bonjour,
     
-Je suis ${callerName} de Web-OS. J'ai analysé la visibilité de ${lead.agency_name} et souhaiterais vous proposer nos services.
+    let emailBody = pitch;
+    if (!emailBody) {
+      const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
+      const webSection = isNoWeb
+        ? `- Création d'un site internet professionnel : J'ai remarqué votre excellente visibilité sur les réseaux sociaux, mais l'absence d'un site web dédié vous fait perdre des réservations directes au quotidien.`
+        : `- Optimisation de votre site internet (${lead.website}) : J'ai analysé les performances et identifié quelques opportunités d'amélioration pour fluidifier le parcours client et accélérer la vitesse de chargement.`;
+        
+      const reviewSection = lead.google_rating > 0
+        ? `\n- Valorisation de votre réputation Google : Votre note de ${Number(lead.google_rating).toFixed(1)}/5 (${lead.review_count} avis) est un atout exceptionnel que nous pouvons encore mieux rentabiliser.`
+        : '';
+        
+      const adsSection = lead.running_ads === 'Yes'
+        ? `\n- Optimisation publicitaire : En reliant vos campagnes à des landing pages optimisées, nous pouvons maximiser l'efficacité de vos publicités actuelles.`
+        : '';
+
+      emailBody = `Bonjour,
+
+Je m'appelle ${callerName} de Web-OS. Nous accompagnons les entreprises à structurer et accélérer leur présence digitale.
+
+J'ai analysé la visibilité en ligne de ${lead.agency_name} à ${lead.area || 'votre région'} et identifié des axes clés pour maximiser vos réservations :
+
+${webSection}${reviewSection}${adsSection}
+
+Nous proposons un accompagnement clé en main pour automatiser vos processus d'acquisition. Seriez-vous disponible pour un appel rapide de 10 minutes cette semaine afin d'en discuter ? Je serais ravi de vous proposer un audit gratuit.
 
 Cordialement,
-${callerName}`;
-    return `mailto:${emailVal}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+${callerName}
+Web-OS | Solutions Digitales
+Site web : web-os.io`;
+    }
+    
+    return `mailto:${emailVal}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
+  };
+
+  const getDmPitch = () => {
+    const draft = localStorage.getItem(`pitch_draft_${lead.id}`);
+    if (draft) return draft;
+
+    const agency = lead.agency_name || "l'agence";
+    const area = lead.area || "votre région";
+    const isNoWeb = !lead.website || lead.website === 'Not found' || lead.website.toLowerCase() === 'none';
+    
+    if (isNoWeb) {
+      return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Web-OS. J'adore votre contenu sur Instagram. J'ai remarqué une belle opportunité pour optimiser la présence en ligne de ${agency} (notamment car vous n'avez pas encore de site web pour recevoir des réservations directes). Seriez-vous ouvert à y jeter un coup d'œil lors d'un rapide échange ?`;
+    }
+    
+    return `Bonjour ! J'espère que vous allez bien. Je m'appelle ${callerName} de Web-OS. J'ai analysé la présence digitale de ${agency} à ${area} et noté quelques pistes d'optimisation intéressantes sur votre site pour booster vos conversions. Seriez-vous ouvert à en discuter brièvement ?`;
+  };
+
+  const handleSocialDmClick = (e: React.MouseEvent, platform: 'Instagram' | 'Facebook Messenger', handle: string) => {
+    e.preventDefault();
+    const pitch = getDmPitch();
+    void navigator.clipboard.writeText(pitch);
+    toast.success(`${platform} pitch copied to clipboard!`);
+    
+    const url = platform === 'Instagram' 
+      ? normalizeInstagramDmUrl(handle, isIPhone)
+      : normalizeMessengerUrl(handle, isIPhone);
+      
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   // Alternate Phones actions
@@ -659,26 +723,22 @@ ${callerName}`;
                 {/* Direct DM chat redirects */}
                 <div className="grid grid-cols-2 gap-2">
                   {isValidSocialLink(lead.facebook) && (
-                    <a
-                      href={normalizeMessengerUrl(lead.facebook)}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={(e) => handleSocialDmClick(e, 'Facebook Messenger', lead.facebook)}
                       className="px-3 py-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Facebook className="w-3.5 h-3.5 shrink-0" />
                       FB Messenger
-                    </a>
+                    </button>
                   )}
                   {isValidSocialLink(lead.instagram) && (
-                    <a
-                      href={normalizeInstagramDmUrl(lead.instagram)}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={(e) => handleSocialDmClick(e, 'Instagram', lead.instagram)}
                       className="px-3 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Instagram className="w-3.5 h-3.5 shrink-0" />
                       IG Direct DM
-                    </a>
+                    </button>
                   )}
                 </div>
               </div>

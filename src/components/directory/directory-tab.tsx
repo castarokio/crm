@@ -1318,7 +1318,17 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
 
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 font-bold uppercase">Email 1</label>
+                <div className="flex justify-between items-center">
+                  <label className="text-[9px] text-slate-400 font-bold uppercase">Email 1</label>
+                  {profileFields.email && (
+                    <a
+                      href={`mailto:${profileFields.email}`}
+                      className="text-[8.5px] text-indigo-650 hover:text-indigo-850 font-bold flex items-center gap-0.5 hover:underline"
+                    >
+                      <Mail className="w-3 h-3 text-slate-400" /> Send Mail
+                    </a>
+                  )}
+                </div>
                 <Input
                   type="email"
                   value={profileFields.email || ''}
@@ -1326,7 +1336,17 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-slate-400 font-bold uppercase">Email 2</label>
+                <div className="flex justify-between items-center">
+                  <label className="text-[9px] text-slate-400 font-bold uppercase">Email 2</label>
+                  {profileFields.email_2 && (
+                    <a
+                      href={`mailto:${profileFields.email_2}`}
+                      className="text-[8.5px] text-indigo-650 hover:text-indigo-850 font-bold flex items-center gap-0.5 hover:underline"
+                    >
+                      <Mail className="w-3 h-3 text-slate-400" /> Send Mail
+                    </a>
+                  )}
+                </div>
                 <Input
                   type="email"
                   value={profileFields.email_2 || ''}

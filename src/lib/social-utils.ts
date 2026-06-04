@@ -54,14 +54,21 @@ export function normalizeLinkedInProfileUrl(handle: string): string {
   return `https://www.linkedin.com/in/${handle}`;
 }
 
-export function normalizeInstagramDmUrl(handle: string): string {
+export function normalizeInstagramDmUrl(handle: string, isIphone?: boolean): string {
   if (!handle) return '';
   const cleanHandle = extractSocialHandle(handle);
+  if (isIphone) {
+    return `instagram://user?username=${cleanHandle}`;
+  }
   return `https://ig.me/m/${cleanHandle}`;
 }
 
-export function normalizeMessengerUrl(handle: string): string {
+export function normalizeMessengerUrl(handle: string, isIphone?: boolean): string {
   if (!handle) return '';
   const cleanHandle = extractSocialHandle(handle);
+  if (isIphone) {
+    return `fb-messenger://user-thread/${cleanHandle}`;
+  }
   return `https://m.me/${cleanHandle}`;
 }
+
