@@ -9,6 +9,7 @@ type PipelineColumnProps = {
   onDrop: (e: React.DragEvent, stage: string) => void;
   onDragStart: (e: React.DragEvent, id: number) => void;
   onDealClick: (deal: any) => void;
+  onViewSourceLead?: (companyName: string) => void;
 };
 
 export function PipelineColumn({
@@ -18,6 +19,7 @@ export function PipelineColumn({
   onDrop,
   onDragStart,
   onDealClick,
+  onViewSourceLead,
 }: PipelineColumnProps) {
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
@@ -88,6 +90,7 @@ export function PipelineColumn({
                 deal={deal}
                 onDragStart={onDragStart}
                 onClick={onDealClick}
+                onViewSourceLead={onViewSourceLead}
               />
             ))}
           </AnimatePresence>

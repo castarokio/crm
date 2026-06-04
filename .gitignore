@@ -51,3 +51,7 @@ scripts/new-client.js
 scripts/scrape-competitor.js
 scripts/main.c
 scripts/generate_favicons.py
+
+# gemini/vercel
+.gemini/
+.vercel_backup/

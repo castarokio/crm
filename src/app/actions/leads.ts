@@ -444,6 +444,15 @@ export async function generatePitchWithAI(options: {
   area?: string;
   callerName: string;
   customInstruction?: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+  linkedin?: string;
+  socialLink?: string;
+  followers?: string;
+  facebookFollowers?: string;
+  instagramFollowers?: string;
+  runningAds?: string;
 }) {
   await requireWritableSession();
   const apiKey = process.env.GEMINI_API_KEY;
@@ -451,17 +460,31 @@ export async function generatePitchWithAI(options: {
 
   const isNoWeb = !options.website || options.website === 'Not found' || options.website.toLowerCase() === 'none';
 
+  const hasSocials = options.facebook || options.instagram || options.tiktok || options.linkedin || options.socialLink;
+  const followersDesc = [
+    options.followers ? `Général: ${options.followers}` : '',
+    options.facebookFollowers ? `Facebook: ${options.facebookFollowers}` : '',
+    options.instagramFollowers ? `Instagram: ${options.instagramFollowers}` : '',
+  ].filter(Boolean).join(', ');
+
   const basePrompt = `Rédige un message d'accroche personnalisé et très court (maximum 3 phrases) en français, chaleureux et persuasif, destiné à une agence de voyages en Algérie pour lui proposer de créer ou d'optimiser son site web.
 
 Agence : ${options.agencyName}
 Ville : ${options.area || 'Algérie'}
 Site existant : ${isNoWeb ? "Non (pas de site, réseaux sociaux uniquement)" : `Oui (${options.website})`}
-Qualité : ${options.websiteQuality || 'Moyenne'}
+Qualité site : ${options.websiteQuality || 'Moyenne'}
 Prospecteur : ${options.callerName}
+
+Présence réseaux sociaux : ${hasSocials ? 'Oui' : 'Non'}
+${options.facebook ? `Facebook : ${options.facebook}` : ''}
+${options.instagram ? `Instagram : ${options.instagram}` : ''}
+${options.tiktok ? `TikTok : ${options.tiktok}` : ''}
+${followersDesc ? `Abonnés : ${followersDesc}` : ''}
+${options.runningAds ? `Diffuse des publicités actuellement : ${options.runningAds}` : ''}
 
 ${options.customInstruction ? `Consignes supplémentaires : "${options.customInstruction}"` : ''}
 
-Réponds UNIQUEMENT avec le texte du message généré.`;
+Réponds UNIQUEMENT avec le texte brut du message généré. Fais référence de manière pertinente à leur activité sur les réseaux sociaux pour justifier l'intérêt d'un site web professionnel.`;
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -691,6 +714,217 @@ export async function recallLead(leadId: number) {
     return { success: true };
   } catch (error: any) {
     console.error('[recallLead]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function createLeadAction(leadData: {
+  agency_name: string;
+  area: string;
+  phone: string;
+  phone_2?: string | null;
+  email?: string | null;
+  email_2?: string | null;
+  website?: string | null;
+  website_quality?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  tiktok?: string | null;
+  linkedin?: string | null;
+  social_link?: string | null;
+  google_rating?: number | null;
+  review_count?: number | null;
+  address?: string | null;
+  notes?: string | null;
+  priority?: number | null;
+}) {
+  try {
+    const session = await requireWritableSession();
+    const supabase = requireSupabase();
+    
+    const calculatedPriority = leadData.priority || computeLeadPriority({
+      website: leadData.website,
+      facebook: leadData.facebook,
+      instagram: leadData.instagram,
+      review_count: leadData.review_count
+    });
+
+    const payload = {
+      agency_name: leadData.agency_name,
+      area: leadData.area,
+      phone: leadData.phone,
+      phone_2: leadData.phone_2 || null,
+      email: leadData.email || null,
+      email_2: leadData.email_2 || null,
+      website: leadData.website || null,
+      website_quality: leadData.website_quality || 'None',
+      facebook: leadData.facebook || null,
+      instagram: leadData.instagram || null,
+      tiktok: leadData.tiktok || null,
+      linkedin: leadData.linkedin || null,
+      social_link: leadData.social_link || null,
+      google_rating: leadData.google_rating ?? 0.0,
+      review_count: leadData.review_count ?? 0,
+      address: leadData.address || null,
+      notes: leadData.notes || '',
+      priority: calculatedPriority,
+      call_status: 'Not Called',
+      last_updated: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('leads')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    
+    return { success: true, lead: data };
+  } catch (error: any) {
+    console.error('[createLeadAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function recallAllUnansweredAction(callerName: string) {
+  try {
+    const session = await requireWritableSession();
+    const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    const supabase = requireSupabase();
+    
+    const { data: leadsToRecall, error: fetchErr } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('caller_name', effectiveCallerName)
+      .in('call_status', ['Busy', 'No Answer']);
+      
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!leadsToRecall || leadsToRecall.length === 0) {
+      return { success: true, count: 0 };
+    }
+    
+    const leadIds = leadsToRecall.map((l: any) => l.id);
+    
+    const { error: updateErr } = await supabase
+      .from('leads')
+      .update({
+        call_status: 'Not Called',
+        call_notes: '',
+        caller_name: null,
+        assigned_to: null,
+        meeting_date: null,
+        last_called_at: null,
+        last_updated: new Date().toISOString()
+      })
+      .in('id', leadIds);
+      
+    if (updateErr) throw new Error(updateErr.message);
+    
+    for (const leadId of leadIds) {
+      broadcastSse('STATUS_CHANGED', { leadId, status: 'Not Called', user: session.name });
+      broadcastSse('LOCK_RELEASED', { leadId, user: session.name });
+    }
+    
+    return { success: true, count: leadIds.length };
+  } catch (error: any) {
+    console.error('[recallAllUnansweredAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function bulkDeleteLeadsAction(leadIds: number[]) {
+  try {
+    const session = await requireWritableSession();
+    if (session.role !== 'Admin' && session.role !== 'Supervisor') {
+      throw new Error('UNAUTHORIZED');
+    }
+    const supabase = requireSupabase();
+    
+    const { error: histErr } = await supabase
+      .from('call_history')
+      .delete()
+      .in('lead_id', leadIds);
+    if (histErr) throw new Error(histErr.message);
+
+    const { error } = await supabase
+      .from('leads')
+      .delete()
+      .in('id', leadIds);
+    if (error) throw new Error(error.message);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[bulkDeleteLeadsAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function bulkRestoreLeadsAction(leadIds: number[]) {
+  try {
+    await requireWritableSession();
+    const supabase = requireSupabase();
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        call_status: 'Not Called',
+        call_notes: '',
+        caller_name: null,
+        assigned_to: null,
+        meeting_date: null,
+        last_called_at: null,
+        last_updated: new Date().toISOString(),
+      })
+      .in('id', leadIds);
+    if (error) throw new Error(error.message);
+    
+    for (const leadId of leadIds) {
+      broadcastSse('LOCK_RELEASED', { leadId, user: 'system' });
+      broadcastSse('STATUS_CHANGED', { leadId, status: 'Not Called', user: 'system' });
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[bulkRestoreLeadsAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getUpcomingCallbacksAction(callerName: string) {
+  try {
+    const session = await requireCallerSession();
+    const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    const supabase = requireSupabase();
+
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id, agency_name, meeting_date, call_notes')
+      .eq('call_status', 'Callback')
+      .or(`assigned_to.eq.${escapePostgrestFilterValue(effectiveCallerName)},caller_name.eq.${escapePostgrestFilterValue(effectiveCallerName)}`)
+      .not('meeting_date', 'is', null);
+
+    if (error) throw new Error(error.message);
+
+    return { success: true, callbacks: data || [] };
+  } catch (error: any) {
+    console.error('[getUpcomingCallbacksAction]', error.message);
+    return { success: false, error: error.message, callbacks: [] };
+  }
+}
+
+export async function getSingleLeadAction(leadId: number) {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('leads')
+      .select(LEAD_LIST_COLUMNS)
+      .eq('id', leadId)
+      .single();
+    if (error) throw new Error(error.message);
+    return { success: true, lead: data };
+  } catch (error: any) {
+    console.error('[getSingleLeadAction]', error.message);
     return { success: false, error: error.message };
   }
 }

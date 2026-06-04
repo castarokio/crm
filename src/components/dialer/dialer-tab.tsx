@@ -1,25 +1,37 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Phone, CheckCircle, RefreshCw, AlertCircle, Sparkles, Loader2, Calendar } from 'lucide-react';
+import { Phone, CheckCircle, RefreshCw, AlertCircle, Sparkles, Loader2, Calendar, UserPlus } from 'lucide-react';
 import { DialerQueue } from './dialer-queue';
 import { LeadInfoCard } from './lead-info-card';
-import { CallLogLedger } from './call-log-ledger';
-import { PitchGenerator } from './pitch-generator';
 import { GlassCard } from '../ui/glass-card';
 import { Input, Textarea } from '../ui/input';
 import { Button } from '../ui/button';
+import { Modal } from '../ui/modal';
 import { useOfflineEdits } from '@/hooks/use-offline-edits';
-import { getDialerQueue, updateCallStatus, lockLead, unlockLead, updateCallStatusWithAI } from '@/app/actions/leads';
+import { useRealtimeSync } from '@/hooks/use-realtime-sync';
+import { SchedulerModal } from './scheduler-modal';
+import { 
+  getDialerQueue, 
+  updateCallStatus, 
+  lockLead, 
+  unlockLead, 
+  updateCallStatusWithAI,
+  deleteLeadPermanently,
+  createLeadAction,
+  recallAllUnansweredAction,
+  getSingleLeadAction
+} from '@/app/actions/leads';
 
 type DialerTabProps = {
   callerName: string;
+  activeLeadId?: number | null;
+  onClearActiveLeadId?: () => void;
 };
 
-export function DialerTab({ callerName }: DialerTabProps) {
+export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: DialerTabProps) {
   const [queue, setQueue] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [loading, setLoading] = useState<boolean>(true);
   const [savingOutcome, setSavingOutcome] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'pitch' | 'history'>('info');
 
   // Outcome Form State
   const [outcomeStatus, setOutcomeStatus] = useState<string>('');
@@ -30,6 +42,14 @@ export function DialerTab({ callerName }: DialerTabProps) {
   // AI note parsing state
   const [aiNotesInput, setAiNotesInput] = useState<string>('');
   const [parsingAI, setParsingAI] = useState<boolean>(false);
+
+  // Add Lead Modal State
+  const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
+  const [newAgencyName, setNewAgencyName] = useState<string>('');
+  const [newArea, setNewArea] = useState<string>('');
+  const [newPhone, setNewPhone] = useState<string>('');
+  const [newWebsite, setNewWebsite] = useState<string>('');
+  const [newEmail, setNewEmail] = useState<string>('');
 
   // Offline Hook
   const { isOffline, queueEdit } = useOfflineEdits();
@@ -57,6 +77,57 @@ export function DialerTab({ callerName }: DialerTabProps) {
   useEffect(() => {
     void loadQueue();
   }, [loadQueue]);
+
+  // Load target lead if activeLeadId changes
+  useEffect(() => {
+    if (activeLeadId) {
+      const idx = queue.findIndex(l => l.id === activeLeadId);
+      if (idx >= 0) {
+        setCurrentIndex(idx);
+        if (onClearActiveLeadId) onClearActiveLeadId();
+      } else {
+        const fetchAndPrepend = async () => {
+          setLoading(true);
+          const res = await getSingleLeadAction(activeLeadId);
+          if (res.success && res.lead) {
+            setQueue(prev => [res.lead, ...prev.filter(l => l.id !== activeLeadId)]);
+            setCurrentIndex(0);
+          }
+          setLoading(false);
+          if (onClearActiveLeadId) onClearActiveLeadId();
+        };
+        void fetchAndPrepend();
+      }
+    }
+  }, [activeLeadId, queue, onClearActiveLeadId]);
+
+  // Wire Real-time SSE updates for queue synchronization
+  useRealtimeSync({
+    onLockAcquired: (leadId, user) => {
+      if (user !== callerName) {
+        setQueue(prev => prev.map(l => l.id === leadId ? { ...l, assigned_to: user } : l));
+      }
+    },
+    onLockReleased: (leadId, user) => {
+      if (user !== callerName) {
+        setQueue(prev => prev.map(l => l.id === leadId ? (l.assigned_to === user ? { ...l, assigned_to: null } : l) : l));
+      }
+    },
+    onStatusChanged: (leadId, status, user) => {
+      if (user !== callerName) {
+        // If someone else handled the lead, remove it from current list
+        if (!['Not Called', 'Recalled'].includes(status)) {
+          setQueue(prev => {
+            const updated = prev.filter(l => l.id !== leadId);
+            // Re-adjust current index if current item is deleted
+            return updated;
+          });
+        } else {
+          setQueue(prev => prev.map(l => l.id === leadId ? { ...l, call_status: status } : l));
+        }
+      }
+    }
+  });
 
   const activeLead = currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
 
@@ -98,9 +169,10 @@ export function DialerTab({ callerName }: DialerTabProps) {
     setOutcomeNotes(prev => (prev ? `${logText} ${prev}` : logText));
   };
 
-  const handleSaveOutcome = async () => {
+  const handleSaveOutcome = async (overrideStatus?: string) => {
     if (!activeLead) return;
-    if (!outcomeStatus) {
+    const status = overrideStatus || outcomeStatus;
+    if (!status) {
       alert('Please select a call outcome status.');
       return;
     }
@@ -112,7 +184,7 @@ export function DialerTab({ callerName }: DialerTabProps) {
         // Queue edit offline
         const success = queueEdit(
           activeLead.id,
-          outcomeStatus,
+          status,
           activeLead.notes || '',
           outcomeNotes,
           callerName,
@@ -129,7 +201,7 @@ export function DialerTab({ callerName }: DialerTabProps) {
       } else {
         const res = await updateCallStatus(
           activeLead.id,
-          outcomeStatus,
+          status,
           activeLead.notes || '',
           outcomeNotes,
           callerName,
@@ -173,6 +245,53 @@ export function DialerTab({ callerName }: DialerTabProps) {
     }
   };
 
+  const handleDeleteFalseLead = async () => {
+    if (!activeLead) return;
+    if (!confirm('Are you sure you want to permanently delete this lead? This cannot be undone.')) return;
+    
+    setSavingOutcome(true);
+    const res = await deleteLeadPermanently(activeLead.id);
+    setSavingOutcome(false);
+    
+    if (res.success) {
+      setQueue(prev => prev.filter(l => l.id !== activeLead.id));
+      if (currentIndex >= queue.length - 1) {
+        setCurrentIndex(prev => Math.max(0, prev - 1));
+      }
+    } else {
+      alert(`Delete failed: ${res.error}`);
+    }
+  };
+
+  const handleCreateLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAgencyName || !newArea || !newPhone) return;
+
+    setSavingOutcome(true);
+    const res = await createLeadAction({
+      agency_name: newAgencyName,
+      area: newArea,
+      phone: newPhone,
+      website: newWebsite,
+      email: newEmail,
+    });
+    setSavingOutcome(false);
+
+    if (res.success && res.lead) {
+      setQueue(prev => [res.lead, ...prev]);
+      setCurrentIndex(0);
+      setIsCreateOpen(false);
+      // Reset
+      setNewAgencyName('');
+      setNewArea('');
+      setNewPhone('');
+      setNewWebsite('');
+      setNewEmail('');
+    } else {
+      alert(`Failed to add new contact: ${res.error}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -182,197 +301,346 @@ export function DialerTab({ callerName }: DialerTabProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
-      {/* Dialer Queue (Left Column) */}
-      <div className="lg:col-span-1 h-full">
-        <DialerQueue
-          queue={queue}
-          currentIndex={currentIndex}
-          onSelectIndex={handleSelectIndex}
-          callerName={callerName}
-        />
-      </div>
+    <div className="flex flex-col gap-4 h-full">
+      {/* Low Queue Warning Banner */}
+      {queue.length < 80 && queue.length > 0 && (
+        <div className="p-3 bg-amber-50 border border-amber-250 text-amber-800 rounded-xl flex items-center justify-between font-body text-xs font-semibold shadow-sm animate-pulse">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>Outbound queue is depleting ({queue.length} leads remaining). Request new lists.</span>
+          </div>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              const res = await recallAllUnansweredAction(callerName);
+              if (res.success && res.count) {
+                alert(`Recalled ${res.count} unanswered leads.`);
+                await loadQueue();
+              } else {
+                alert('No busy/unanswered leads found to recall.');
+              }
+              setLoading(false);
+            }}
+            className="text-[9px] font-bold text-indigo-700 hover:text-indigo-850 underline uppercase cursor-pointer"
+          >
+            Quick Recall
+          </button>
+        </div>
+      )}
 
-      {/* Main Dial Card (Center Column) */}
-      <div className="lg:col-span-2 flex flex-col gap-6">
-        <GlassCard className="border border-slate-200/80 shadow-md">
-          {/* Sub-tabs header */}
-          <div className="flex gap-4 border-b border-slate-100 pb-3 mb-4">
-            <button
-              onClick={() => setActiveTab('info')}
-              className={`font-display text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 px-1 transition-all ${
-                activeTab === 'info'
-                  ? 'border-indigo-650 text-indigo-700 font-extrabold'
-                  : 'border-transparent text-slate-400 hover:text-slate-650'
-              }`}
+      {/* Main Grid View */}
+      {queue.length === 0 ? (
+        /* Empty State */
+        <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10">
+          <AlertCircle className="w-8 h-8 text-amber-500 animate-bounce" />
+          <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Queue Depleted</h3>
+          <p className="text-xs text-slate-450 text-center font-medium leading-relaxed max-w-sm">
+            There are no active or uncalled leads left in your dialer queue. Please contact the administrator to assign more lead ranges, or click below to recall unanswered attempts.
+          </p>
+          <div className="flex gap-3">
+            <Button
+              onClick={async () => {
+                setLoading(true);
+                const res = await recallAllUnansweredAction(callerName);
+                if (res.success && res.count) {
+                  alert(`Successfully recalled ${res.count} busy/unanswered leads to your queue!`);
+                  await loadQueue();
+                } else {
+                  alert('No unanswered leads to recall at the moment.');
+                }
+                setLoading(false);
+              }}
+              className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold uppercase text-[10px]"
             >
-              Lead Details
-            </button>
-            <button
-              onClick={() => setActiveTab('pitch')}
-              className={`font-display text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 px-1 transition-all ${
-                activeTab === 'pitch'
-                  ? 'border-indigo-650 text-indigo-700 font-extrabold'
-                  : 'border-transparent text-slate-400 hover:text-slate-650'
-              }`}
-            >
-              Outreach Script
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`font-display text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 px-1 transition-all ${
-                activeTab === 'history'
-                  ? 'border-indigo-650 text-indigo-700 font-extrabold'
-                  : 'border-transparent text-slate-400 hover:text-slate-650'
-              }`}
-            >
-              Call History
-            </button>
+              Recall Unanswered Leads
+            </Button>
+            <Button onClick={() => setIsCreateOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px]">
+              + ADD NEW CONTACT
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
+          
+          {/* Dialer Queue (Left Column) */}
+          <div className="lg:col-span-1 h-full">
+            <div className="mb-2">
+              <Button
+                onClick={() => setIsCreateOpen(true)}
+                icon={<UserPlus className="w-4.5 h-4.5" />}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
+              >
+                Add New Contact
+              </Button>
+            </div>
+            <DialerQueue
+              queue={queue}
+              currentIndex={currentIndex}
+              onSelectIndex={handleSelectIndex}
+              callerName={callerName}
+            />
           </div>
 
-          {/* Sub-tab view renderer */}
-          {activeTab === 'info' && (
-            <LeadInfoCard
-              lead={activeLead}
-              callerName={callerName}
-              onDial={handleDial}
-              onLeadUpdated={(leadId, fields) => {
-                setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
-              }}
-            />
-          )}
-          {activeTab === 'pitch' && <PitchGenerator lead={activeLead} callerName={callerName} />}
-          {activeTab === 'history' && activeLead && <CallLogLedger leadId={activeLead.id} />}
-        </GlassCard>
-      </div>
+          {/* Main Dial Card (Center Column) */}
+          <div className="lg:col-span-2 flex flex-col gap-3">
+            
+            {/* Position indicator */}
+            <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
+              <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
+              <span className="text-[10px] text-slate-800 font-extrabold font-display uppercase">
+                LEAD {currentIndex + 1} of {queue.length} in queue
+              </span>
+            </div>
 
-      {/* Outcome & AI Panel (Right Column) */}
-      <div className="lg:col-span-1 flex flex-col gap-6">
-        {activeLead && (
-          <>
-            {/* Standard Outcome card */}
-            <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4">
-              <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2">
-                Call Outcome Form
-              </h3>
+            <GlassCard className="border border-slate-200/80 shadow-md p-6">
+              <LeadInfoCard
+                lead={activeLead}
+                callerName={callerName}
+                onDial={handleDial}
+                onLeadUpdated={(leadId, fields) => {
+                  setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
+                }}
+              />
+            </GlassCard>
+          </div>
 
-              <div className="flex flex-col gap-3 font-body text-xs">
-                {/* Status Dropdown */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Select Call Status</label>
-                  <select
-                    value={outcomeStatus}
-                    onChange={(e) => setOutcomeStatus(e.target.value)}
-                    className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-indigo-500 text-xs cursor-pointer"
-                  >
-                    <option value="">-- Choose Status --</option>
-                    <option value="Interested">Interested</option>
-                    <option value="Callback">Callback</option>
-                    <option value="Busy">Busy</option>
-                    <option value="No Answer">No Answer</option>
-                    <option value="Not Interested">Not Interested</option>
-                    <option value="Wrong Number">Wrong Number</option>
-                    <option value="Accepted">Accepted / Booked</option>
-                    <option value="Client Configured">Client Configured</option>
-                  </select>
-                </div>
+          {/* Outcome & AI Panel (Right Column) */}
+          <div className="lg:col-span-1 flex flex-col gap-6">
+            {activeLead && (
+              <>
+                {/* Standard Outcome card */}
+                <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4 p-5">
+                  <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2">
+                    Call Outcome Form
+                  </h3>
 
-                {/* Conditional Callback schedule picker */}
-                {outcomeStatus === 'Callback' && (
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[9px] text-slate-400 uppercase font-bold">Callback Date & Time</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={meetingDate}
-                        onChange={(e) => setMeetingDate(e.target.value)}
-                        placeholder="e.g. 2026-06-05 14:00"
-                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-400 text-slate-700"
-                      />
-                      <button
-                        onClick={() => setShowScheduler(!showScheduler)}
-                        className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 cursor-pointer transition-all"
-                        title="Pick Date"
-                      >
-                        <Calendar className="w-4 h-4" />
-                      </button>
-                    </div>
-                    {showScheduler && (
-                      <div className="p-3 bg-white border border-slate-200 rounded-xl mt-1 shadow-md">
-                        {/* Basic inline calendar mockup */}
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="datetime-local"
-                            onChange={(e) => {
-                              const date = e.target.value.replace('T', ' ');
-                              setMeetingDate(date);
-                              setShowScheduler(false);
+                  <div className="flex flex-col gap-3 font-body text-xs">
+                    {/* Quick-Log Buttons */}
+                    <div className="flex flex-col gap-1.5 mb-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Quick Log Status</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { label: 'Interested', value: 'Interested', color: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100/80 hover:border-indigo-300' },
+                          { label: 'Callback', value: 'Callback', color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100/80 hover:border-amber-300' },
+                          { label: 'Busy', value: 'Busy', color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100/80 hover:border-blue-300' },
+                          { label: 'No Answer', value: 'No Answer', color: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/85 hover:border-slate-300' },
+                          { label: 'Not Interested', value: 'Not Interested', color: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100/80 hover:border-rose-300' },
+                          { label: 'Wrong Number', value: 'Wrong Number', color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100/80 hover:border-purple-300' },
+                          { label: 'Accepted', value: 'Accepted', color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80 hover:border-emerald-300' },
+                          { label: 'Configured', value: 'Client Configured', color: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100/80 hover:border-teal-300' },
+                        ].map((btn) => (
+                          <button
+                            key={btn.value}
+                            type="button"
+                            onClick={() => {
+                              setOutcomeStatus(btn.value);
+                              if (['Callback', 'Interested', 'Accepted'].includes(btn.value)) {
+                                alert(`Status set to "${btn.label}". Please enter a Callback / Meeting Date below and click "Save Call Log".`);
+                              } else {
+                                void handleSaveOutcome(btn.value);
+                              }
                             }}
-                            className="w-full text-xs p-1 border border-slate-200 rounded outline-none"
+                            className={`px-2.5 py-1.5 border rounded-xl text-[10px] font-bold text-center transition-all cursor-pointer active:scale-95 flex items-center justify-center shadow-sm ${btn.color}`}
+                          >
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Status Dropdown */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Select Call Status</label>
+                      <select
+                        value={outcomeStatus}
+                        onChange={(e) => setOutcomeStatus(e.target.value)}
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-indigo-500 text-xs cursor-pointer font-bold"
+                      >
+                        <option value="">-- Choose Status --</option>
+                        <option value="Interested">Interested</option>
+                        <option value="Callback">Callback</option>
+                        <option value="Busy">Busy</option>
+                        <option value="No Answer">No Answer</option>
+                        <option value="Not Interested">Not Interested</option>
+                        <option value="Wrong Number">Wrong Number</option>
+                        <option value="Accepted">Accepted / Booked</option>
+                        <option value="Client Configured">Client Configured</option>
+                      </select>
+                    </div>
+
+                    {/* Conditional Callback schedule picker (Shows for Callback, Interested, and Accepted) */}
+                    {['Callback', 'Interested', 'Accepted'].includes(outcomeStatus) && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-slate-400 uppercase font-bold">Callback / Meeting Date</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={meetingDate}
+                            onChange={(e) => setMeetingDate(e.target.value)}
+                            placeholder="e.g. 2026-06-05 14:00"
+                            className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-400 text-slate-700 font-bold"
                           />
+                          <button
+                            onClick={() => setShowScheduler(true)}
+                            className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 cursor-pointer transition-all"
+                            title="Pick Date"
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     )}
+
+                    {/* Outcome notes */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Outcome Notes</label>
+                      <textarea
+                        rows={4}
+                        value={outcomeNotes}
+                        onChange={(e) => setOutcomeNotes(e.target.value)}
+                        placeholder="Enter call notes summary..."
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    {/* Save button */}
+                    <Button
+                      onClick={() => handleSaveOutcome()}
+                      loading={savingOutcome}
+                      variant="primary"
+                      className="w-full mt-1 bg-indigo-600 hover:bg-indigo-700 font-bold uppercase"
+                    >
+                      Save Call Log
+                    </Button>
+                    
+                    {/* Delete if not related button */}
+                    <Button
+                      onClick={handleDeleteFalseLead}
+                      variant="secondary"
+                      className="w-full text-rose-600 hover:text-rose-800 hover:bg-rose-50/50 border border-rose-200 font-bold uppercase text-[9px] mt-1"
+                    >
+                      Disqualify / Delete Lead
+                    </Button>
                   </div>
-                )}
+                </GlassCard>
 
-                {/* Outcome notes */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Outcome Notes</label>
-                  <textarea
-                    rows={4}
-                    value={outcomeNotes}
-                    onChange={(e) => setOutcomeNotes(e.target.value)}
-                    placeholder="Enter call notes summary..."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-medium text-slate-800"
-                  />
-                </div>
+                {/* AI Post Call Parser Card */}
+                <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4 p-5">
+                  <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
+                    Gemini AI Summary Parser
+                  </h3>
 
-                {/* Save button */}
-                <Button
-                  onClick={handleSaveOutcome}
-                  loading={savingOutcome}
-                  variant="primary"
-                  className="w-full mt-2"
-                >
-                  Save Call Log
-                </Button>
-              </div>
-            </GlassCard>
+                  <div className="flex flex-col gap-3 font-body text-xs">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Paste Raw Notes / Transcript</label>
+                      <textarea
+                        rows={3}
+                        value={aiNotesInput}
+                        onChange={(e) => setAiNotesInput(e.target.value)}
+                        placeholder="Paste call notes (AI will auto extract status, date, and details)..."
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-medium text-slate-850"
+                      />
+                    </div>
 
-            {/* AI Post Call Parser Card */}
-            <GlassCard className="border border-slate-200/80 shadow-md flex flex-col gap-4">
-              <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
-                Gemini AI Summary Parser
-              </h3>
+                    <Button
+                      onClick={handleSaveOutcomeAI}
+                      loading={parsingAI}
+                      variant="secondary"
+                      icon={<Sparkles className="w-3.5 h-3.5 text-indigo-600" />}
+                      className="w-full text-indigo-700 hover:text-indigo-850 border border-indigo-200 bg-indigo-50/50"
+                    >
+                      Analyze & Save
+                    </Button>
+                  </div>
+                </GlassCard>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
-              <div className="flex flex-col gap-3 font-body text-xs">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Paste Raw Notes / Transcript</label>
-                  <textarea
-                    rows={3}
-                    value={aiNotesInput}
-                    onChange={(e) => setAiNotesInput(e.target.value)}
-                    placeholder="Paste call notes (AI will auto extract status, date, and details)..."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-medium text-slate-850"
-                  />
-                </div>
+      {/* DateTime Calendar Picker Scheduler Modal */}
+      <SchedulerModal
+        isOpen={showScheduler}
+        onClose={() => setShowScheduler(false)}
+        onSelect={(dt) => setMeetingDate(dt)}
+        currentValue={meetingDate}
+      />
 
-                <Button
-                  onClick={handleSaveOutcomeAI}
-                  loading={parsingAI}
-                  variant="secondary"
-                  icon={<Sparkles className="w-3.5 h-3.5 text-indigo-600" />}
-                  className="w-full text-indigo-700 hover:text-indigo-850 border border-indigo-200 bg-indigo-50/50"
-                >
-                  Analyze & Save
-                </Button>
-              </div>
-            </GlassCard>
-          </>
-        )}
-      </div>
+      {/* Manual Create Lead Modal */}
+      {isCreateOpen && (
+        <Modal
+          isOpen={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          title="Add New Outbound Contact"
+          subtitle="Manually insert a travel agency lead directly into the caller's queue"
+        >
+          <form onSubmit={handleCreateLead} className="flex flex-col gap-4 font-body text-xs">
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-450 font-bold uppercase">Agency / Company Name *</label>
+              <Input
+                type="text"
+                required
+                value={newAgencyName}
+                onChange={(e) => setNewAgencyName(e.target.value)}
+                placeholder="e.g. Travel & Tours Algeria"
+              />
+            </div>
+            
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-450 font-bold uppercase">Area / City *</label>
+              <Input
+                type="text"
+                required
+                value={newArea}
+                onChange={(e) => setNewArea(e.target.value)}
+                placeholder="e.g. Algiers"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-455 font-bold uppercase">Phone Number *</label>
+              <Input
+                type="text"
+                required
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="e.g. 0555123456"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-455 font-bold uppercase">Website Link (Optional)</label>
+              <Input
+                type="text"
+                value={newWebsite}
+                onChange={(e) => setNewWebsite(e.target.value)}
+                placeholder="e.g. traveltours.dz"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-455 font-bold uppercase">Email Address (Optional)</label>
+              <Input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="e.g. contact@traveltours.dz"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 mt-2">
+              <Button type="button" variant="secondary" onClick={() => setIsCreateOpen(false)}>
+                CANCEL
+              </Button>
+              <Button type="submit" loading={savingOutcome} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold">
+                CREATE CONTACT
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }

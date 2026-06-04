@@ -12,9 +12,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 type PipelineTabProps = {
   callerName: string;
+  onViewSourceLead?: (companyName: string) => void;
 };
 
-export function PipelineTab({ callerName }: PipelineTabProps) {
+export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) {
   const [deals, setDeals] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -280,6 +281,7 @@ export function PipelineTab({ callerName }: PipelineTabProps) {
                 onDrop={handleDrop}
                 onDragStart={handleDragStart}
                 onDealClick={openEditModal}
+                onViewSourceLead={onViewSourceLead}
               />
             ))}
           </div>

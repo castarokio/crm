@@ -43,6 +43,15 @@ export function PitchGenerator({ lead, callerName }: PitchGeneratorProps) {
         area: lead.area,
         callerName,
         customInstruction: instruction,
+        facebook: lead.facebook,
+        instagram: lead.instagram,
+        tiktok: lead.tiktok,
+        linkedin: lead.linkedin,
+        socialLink: lead.social_link,
+        followers: lead.followers_if_visible,
+        facebookFollowers: lead.facebook_followers,
+        instagramFollowers: lead.instagram_followers,
+        runningAds: lead.running_ads,
       });
 
       if (res.success && res.pitch) {

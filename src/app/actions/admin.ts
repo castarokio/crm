@@ -779,3 +779,62 @@ export async function submitInquiryAction(name: string, phone: string, destinati
     return { success: false, error: error.message };
   }
 }
+
+export async function createCallerDirectlyAction(params: {
+  name: string;
+  gender: string;
+  pin: string;
+  role: string;
+  daily_call_target?: number;
+  weekly_appointment_target?: number;
+}) {
+  try {
+    const session = await requireAdminSession();
+    const supabase = requireSupabase();
+
+    if (!params.name || !params.pin) {
+      throw new Error('Name and PIN are required.');
+    }
+
+    const { error } = await supabase
+      .from('caller_profiles')
+      .insert({
+        name: params.name,
+        pin: hashCallerPin(params.pin),
+        gender: params.gender,
+        role: params.role || 'Caller',
+        daily_call_target: params.daily_call_target ?? 80,
+        weekly_appointment_target: params.weekly_appointment_target ?? 15
+      });
+
+    if (error) throw new Error(error.message);
+
+    await logAuditEvent(session.name, 'CREATE_CALLER_DIRECT', `Created caller profile directly: ${params.name} (${params.role})`);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[createCallerDirectlyAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateCallerRoleAction(name: string, role: string) {
+  try {
+    const session = await requireAdminSession();
+    const supabase = requireSupabase();
+
+    const { error } = await supabase
+      .from('caller_profiles')
+      .update({ role })
+      .eq('name', name);
+
+    if (error) throw new Error(error.message);
+
+    await logAuditEvent(session.name, 'UPDATE_CALLER_ROLE', `Updated role of caller ${name} to ${role}`);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[updateCallerRoleAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}

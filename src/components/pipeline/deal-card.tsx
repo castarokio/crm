@@ -7,9 +7,10 @@ type DealCardProps = {
   deal: any;
   onDragStart: (e: React.DragEvent, id: number) => void;
   onClick: (deal: any) => void;
+  onViewSourceLead?: (companyName: string) => void;
 };
 
-export function DealCard({ deal, onDragStart, onClick }: DealCardProps) {
+export function DealCard({ deal, onDragStart, onClick, onViewSourceLead }: DealCardProps) {
   const formatCurrency = (val?: number) => {
     if (val === undefined || val === null) return '$0.00';
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
@@ -60,6 +61,18 @@ export function DealCard({ deal, onDragStart, onClick }: DealCardProps) {
               <Clock className="w-3.5 h-3.5" />
               <span>Target: {deal.expected_close_date}</span>
             </div>
+          )}
+
+          {deal.lead_id && onViewSourceLead && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewSourceLead(deal.company_name);
+              }}
+              className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold hover:underline mt-1.5 inline-flex items-center gap-0.5 cursor-pointer bg-transparent border-none p-0 text-left active:scale-95 transition-all"
+            >
+              View Source Lead
+            </button>
           )}
         </div>
       </GlassCard>

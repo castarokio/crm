@@ -153,13 +153,36 @@ export async function getCallerTarget(callerName: string) {
       .gte('created_at', startOfToday.toISOString());
     if (countErr) throw new Error(countErr.message);
 
+    // Count appointments logged this week (since Monday 00:00:00)
+    const startOfWeek = new Date();
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const { count: apptCount, error: apptErr } = await supabase
+      .from('call_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('caller_name', effectiveCallerName)
+      .gte('created_at', startOfWeek.toISOString())
+      .in('call_status', ['Callback', 'Accepted', 'Client Configured', 'Interested']);
+    if (apptErr) throw new Error(apptErr.message);
+
     return {
       success: true,
       daily_call_target: data?.daily_call_target ?? 80,
       weekly_appointment_target: data?.weekly_appointment_target ?? 15,
-      calls_today: count ?? 0
+      calls_today: count ?? 0,
+      appointments_this_week: apptCount ?? 0,
     };
   } catch (error: any) {
-    return { success: false, error: error.message, daily_call_target: 80, weekly_appointment_target: 15, calls_today: 0 };
+    return { 
+      success: false, 
+      error: error.message, 
+      daily_call_target: 80, 
+      weekly_appointment_target: 15, 
+      calls_today: 0,
+      appointments_this_week: 0 
+    };
   }
 }
