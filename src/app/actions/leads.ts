@@ -210,8 +210,9 @@ async function syncDealFromCallStatus(supabase: any, leadId: number, status: str
   else if (status === 'Callback') stage = 'Appointment Booked';
   else if (['Accepted', 'Client Configured'].includes(status)) stage = 'Won';
   else if (['Not Interested', 'Wrong Number'].includes(status)) stage = 'Lost';
+  else if (['Busy', 'No Answer', 'Treated'].includes(status)) stage = 'Contacted';
 
-  if (!stage) return; // For busy/no answer/etc, we don't automatically create or transition deals
+  if (!stage) return; // For un-contacted statuses, do not create pipeline entries
 
   // Check if deal already exists for this lead_id
   const { data: existingDeal, error: dealFetchErr } = await supabase
@@ -234,24 +235,22 @@ async function syncDealFromCallStatus(supabase: any, leadId: number, status: str
       console.error('[syncDealFromCallStatus update error]', updateErr.message);
     }
   } else {
-    // Only create deals automatically if the new status is Interested, Callback, Accepted, or Client Configured
-    if (['Interested', 'Callback', 'Accepted', 'Client Configured'].includes(status)) {
-      const { error: insertErr } = await supabase
-        .from('deals')
-        .insert({
-          deal_name: `${agencyName || 'Leads'} Deal`,
-          company_name: agencyName || '',
-          caller_name: callerName,
-          lead_id: leadId,
-          stage,
-          setup_value: 0.00,
-          recurring_value: 0.00,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      if (insertErr) {
-        console.error('[syncDealFromCallStatus insert error]', insertErr.message);
-      }
+    // Automatically create deals for any status mapped to a valid pipeline stage
+    const { error: insertErr } = await supabase
+      .from('deals')
+      .insert({
+        deal_name: `${agencyName || 'Leads'} Deal`,
+        company_name: agencyName || '',
+        caller_name: callerName,
+        lead_id: leadId,
+        stage,
+        setup_value: 0.00,
+        recurring_value: 0.00,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    if (insertErr) {
+      console.error('[syncDealFromCallStatus insert error]', insertErr.message);
     }
   }
 }
@@ -339,7 +338,7 @@ export async function updateLeadDetails(id: number, fields: any) {
 
     const { data: currentLead, error: fetchErr } = await supabase
       .from('leads')
-      .select('assigned_to')
+      .select('assigned_to, agency_name, call_status')
       .eq('id', id)
       .single();
 
@@ -369,6 +368,18 @@ export async function updateLeadDetails(id: number, fields: any) {
     }).eq('id', id);
 
     if (error) throw new Error(error.message);
+
+    // Sync deal to pipeline if call status has changed
+    if (fields.call_status && fields.call_status !== currentLead.call_status) {
+      await syncDealFromCallStatus(
+        supabase, 
+        id, 
+        fields.call_status, 
+        fields.agency_name || currentLead.agency_name, 
+        session.name
+      );
+    }
+
     return { success: true };
   } catch (error: any) {
     console.error('[updateLeadDetails]', error.message);
