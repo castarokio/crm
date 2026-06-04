@@ -103,10 +103,6 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
   const [lostReason, setLostReason] = useState<string>('');
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     setLoading(true);
     const res = await getDeals();
@@ -120,6 +116,10 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const handleDragStart = (e: React.DragEvent, id: number) => {
     e.dataTransfer.setData('text/plain', String(id));
