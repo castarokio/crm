@@ -257,7 +257,16 @@ async function syncDealFromCallStatus(supabase: any, leadId: number, status: str
   }
 }
 
-export async function updateCallStatus(id: number, status: string, notes: string, callNotes: string, callerName: string, meetingDate?: string) {
+export async function updateCallStatus(
+  id: number,
+  status: string,
+  notes: string,
+  callNotes: string,
+  callerName: string,
+  meetingDate?: string,
+  contactPerson?: string | null,
+  email?: string | null
+) {
   try {
     const session = await requireWritableSession();
     assertAllowedCallStatus(status);
@@ -282,6 +291,12 @@ export async function updateCallStatus(id: number, status: string, notes: string
 
     if (meetingDate !== undefined) {
       updatePayload.meeting_date = meetingDate;
+    }
+    if (contactPerson !== undefined) {
+      updatePayload.contact_person = contactPerson;
+    }
+    if (email !== undefined) {
+      updatePayload.email = email;
     }
 
     // Auto-release lock if status is Lost

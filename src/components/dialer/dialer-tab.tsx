@@ -18,7 +18,8 @@ import {
   deleteLeadPermanently,
   createLeadAction,
   recallAllUnansweredAction,
-  getSingleLeadAction
+  getSingleLeadAction,
+  processCallSummaryWithAI
 } from '@/app/actions/leads';
 
 type DialerTabProps = {
@@ -37,6 +38,8 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
   const [outcomeStatus, setOutcomeStatus] = useState<string>('');
   const [outcomeNotes, setOutcomeNotes] = useState<string>('');
   const [meetingDate, setMeetingDate] = useState<string>('');
+  const [contactPerson, setContactPerson] = useState<string>('');
+  const [leadEmail, setLeadEmail] = useState<string>('');
   const [showScheduler, setShowScheduler] = useState<boolean>(false);
 
   // AI note parsing state
@@ -148,6 +151,8 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
       setOutcomeStatus(activeLead.call_status && activeLead.call_status !== 'Not Called' ? activeLead.call_status : '');
       setOutcomeNotes(activeLead.call_notes || '');
       setMeetingDate(activeLead.meeting_date || '');
+      setContactPerson(activeLead.contact_person || '');
+      setLeadEmail(activeLead.email || '');
       setAiNotesInput('');
     }
 
@@ -205,7 +210,9 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
           activeLead.notes || '',
           outcomeNotes,
           callerName,
-          meetingDate
+          meetingDate,
+          contactPerson || null,
+          leadEmail || null
         );
         if (res.success) {
           // Release lock and remove lead from queue list upon status update
@@ -229,17 +236,24 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
 
     setParsingAI(true);
     try {
-      const res = await updateCallStatusWithAI(activeLead.id, callerName, aiNotesInput);
-      if (res.success) {
-        setQueue(prev => prev.filter(l => l.id !== activeLead.id));
-        if (currentIndex >= queue.length - 1) {
-          setCurrentIndex(prev => Math.max(0, prev - 1));
-        }
+      const res = await processCallSummaryWithAI(aiNotesInput);
+      if (res.success && res.extractedData) {
+        const data = res.extractedData;
+        
+        // Pre-fill form state variables
+        if (data.call_status) setOutcomeStatus(data.call_status);
+        if (data.summary) setOutcomeNotes(data.summary);
+        if (data.meeting_date) setMeetingDate(data.meeting_date);
+        if (data.contact_person) setContactPerson(data.contact_person);
+        if (data.updated_email) setLeadEmail(data.updated_email);
+        
+        alert("AI analysis complete! The parsed details have been pre-filled in the Call Outcome Form above. Please review them and click 'Save Call Log' to save.");
       } else {
-        alert(res.error || 'AI note parsing failed. Please input notes manually.');
+        alert(res.error || 'AI note parsing failed. Please check your Gemini configuration.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[AI notes save error]', err);
+      alert('Error parsing notes with AI.');
     } finally {
       setParsingAI(false);
     }
@@ -501,6 +515,30 @@ export function DialerTab({ callerName, activeLeadId, onClearActiveLeadId }: Dia
                         onChange={(e) => setOutcomeNotes(e.target.value)}
                         placeholder="Enter call notes summary..."
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    {/* Contact Person Name */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Contact Person Name</label>
+                      <input
+                        type="text"
+                        value={contactPerson}
+                        onChange={(e) => setContactPerson(e.target.value)}
+                        placeholder="e.g. Oussama (Directeur)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    {/* Lead Email Address */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] text-slate-400 uppercase font-bold">Lead Email Address</label>
+                      <input
+                        type="email"
+                        value={leadEmail}
+                        onChange={(e) => setLeadEmail(e.target.value)}
+                        placeholder="e.g. contact@agency.com"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 font-semibold text-slate-800"
                       />
                     </div>
 
