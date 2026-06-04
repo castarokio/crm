@@ -1,95 +1,66 @@
 @import "tailwindcss";
 
 :root {
-  --background: #010101;
-  --foreground: #f1f1f1;
-  --font-oswald: 'Oswald';
-  --font-space-grotesk: 'Space Grotesk';
+  --background: #f8fafc; /* hsl(210, 20%, 98%) */
+  --foreground: #0f172a; /* hsl(222, 47%, 11%) */
+  --font-display: var(--font-outfit), sans-serif;
+  --font-body: var(--font-space-grotesk), sans-serif;
 }
 
 @theme inline {
-  --color-primary: #f1f1f1;
-  --color-secondary: #121212;
-  --color-tertiary: #374151;
-  --color-neutral: #010101;
-  --color-surface: #121212;
-  --color-on-surface: #f1f1f1;
-  --color-accent: #ffffff;
-  --font-display: var(--font-oswald), sans-serif;
-  --font-body: var(--font-space-grotesk), sans-serif;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 16px;
-}
-
-/* Custom 3D Utilities */
-.perspective-1000 {
-  perspective: 1000px;
-}
-.perspective-1500 {
-  perspective: 1500px;
-}
-.preserve-3d {
-  transform-style: preserve-3d;
-}
-.backface-hidden {
-  backface-visibility: hidden;
+  --color-primary: #1e3a8a; /* hsl(226, 64%, 32%) */
+  --color-secondary: #f1f5f9;
+  --color-tertiary: #cbd5e1;
+  --color-neutral: #ffffff;
+  --color-surface: #ffffff;
+  --color-on-surface: #0f172a;
+  --color-accent: #1e3a8a;
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-space-grotesk), sans-serif;
+  font-family: var(--font-body);
   overflow-x: hidden;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-oswald), sans-serif;
+  font-family: var(--font-display);
 }
 
-@keyframes float-orb-1 {
-  0% { transform: translate(0px, 0px) scale(1); }
-  33% { transform: translate(40px, -50px) scale(1.1); }
-  66% { transform: translate(-30px, 30px) scale(0.9); }
-  100% { transform: translate(0px, 0px) scale(1); }
-}
-@keyframes float-orb-2 {
-  0% { transform: translate(0px, 0px) scale(1); }
-  50% { transform: translate(-50px, 60px) scale(0.85); }
-  100% { transform: translate(0px, 0px) scale(1); }
-}
-@keyframes float-orb-3 {
-  0% { transform: translate(0px, 0px) scale(1); }
-  40% { transform: translate(50px, 40px) scale(1.15); }
-  80% { transform: translate(-40px, -30px) scale(0.9); }
-  100% { transform: translate(0px, 0px) scale(1); }
+/* Glassmorphic Light Panels */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
-.animate-float-1 {
-  animation: float-orb-1 15s infinite ease-in-out;
+.glass-card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.animate-float-2 {
-  animation: float-orb-2 18s infinite ease-in-out;
-}
-.animate-float-3 {
-  animation: float-orb-3 12s infinite ease-in-out;
-}
-
-.cyber-grid {
-  background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+.glass-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
+  border-color: rgba(30, 58, 138, 0.15);
 }
 
-.light-cyber-grid {
-  background-image: 
-    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-
-
-
-
-
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

@@ -1,49 +1,57 @@
 import { NextRequest } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase-admin';
-import { getCallerSession } from '@/lib/auth-session';
+import { addSseClient, removeSseClient } from '@/lib/sse-broker';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const session = await getCallerSession();
-  if (!session) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-
-  const responseHeaders = {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-  };
+  const clientId = Math.random().toString(36).substring(2, 15);
 
   const stream = new ReadableStream({
     start(controller) {
-      const supabase = getSupabaseAdmin();
-      if (!supabase) {
-        controller.enqueue('data: {"error": "DB_NOT_CONFIGURED"}\n\n');
-        controller.close();
-        return;
-      }
+      const encoder = new TextEncoder();
 
-      controller.enqueue('data: {"status": "connected"}\n\n');
+      // Enqueue keep-alive comment immediately to open connection
+      controller.enqueue(encoder.encode(': ok\n\n'));
 
-      const channel = supabase
-        .channel('server-leads-channel')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'leads' },
-          (payload: any) => {
-            controller.enqueue(`data: ${JSON.stringify(payload)}\n\n`);
+      // Keep connection alive every 20 seconds
+      const keepAliveInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keep-alive\n\n'));
+        } catch {
+          // Stream might have closed, handled in abort listener
+        }
+      }, 20000);
+
+      // Register client to global broker
+      addSseClient({
+        id: clientId,
+        enqueue: (data: string) => {
+          try {
+            controller.enqueue(encoder.encode(data));
+          } catch {
+            // Already closed, ignore
           }
-        )
-        .subscribe();
-
-      req.signal.addEventListener('abort', () => {
-        supabase.removeChannel(channel);
-        controller.close();
+        },
       });
-    }
+
+      // Cleanup on disconnect
+      req.signal.addEventListener('abort', () => {
+        clearInterval(keepAliveInterval);
+        removeSseClient(clientId);
+        try {
+          controller.close();
+        } catch {
+          // Already closed
+        }
+      });
+    },
   });
 
-  return new Response(stream, { headers: responseHeaders });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+    },
+  });
 }

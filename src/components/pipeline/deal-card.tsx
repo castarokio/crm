@@ -1,0 +1,68 @@
+import React from 'react';
+import { DollarSign, User, Clock, Edit } from 'lucide-react';
+import { GlassCard } from '../ui/glass-card';
+import { motion } from 'framer-motion';
+
+type DealCardProps = {
+  deal: any;
+  onDragStart: (e: React.DragEvent, id: number) => void;
+  onClick: (deal: any) => void;
+};
+
+export function DealCard({ deal, onDragStart, onClick }: DealCardProps) {
+  const formatCurrency = (val?: number) => {
+    if (val === undefined || val === null) return '$0.00';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+  };
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', String(deal.id));
+    onDragStart(e, deal.id);
+  };
+
+  return (
+    <motion.div
+      draggable
+      onDragStart={handleDragStart as any}
+      onClick={() => onClick(deal)}
+      className="cursor-grab active:cursor-grabbing select-none"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      whileHover={{ y: -3, scale: 1.01 }}
+      transition={{ duration: 0.15, ease: 'easeOut' }}
+    >
+      <GlassCard
+        padded={false}
+        className="p-4 bg-white/90 border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all duration-200"
+      >
+        <div className="flex justify-between items-start gap-2">
+          <h4 className="font-display text-xs font-bold text-slate-800 uppercase tracking-wide truncate max-w-[130px]">
+            {deal.deal_name || 'Unnamed Deal'}
+          </h4>
+          <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+            {formatCurrency(deal.recurring_value)}/m
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1.5 mt-3 text-[10px] text-slate-500 font-body">
+          {deal.company_name && (
+            <span className="truncate text-slate-700 font-medium">{deal.company_name}</span>
+          )}
+          
+          <div className="flex items-center gap-1 mt-1 text-[9px] text-slate-400">
+            <User className="w-3.5 h-3.5" />
+            <span className="font-bold uppercase tracking-wider">Caller: {deal.caller_name}</span>
+          </div>
+
+          {deal.expected_close_date && (
+            <div className="flex items-center gap-1 text-[9px] text-slate-400">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Target: {deal.expected_close_date}</span>
+            </div>
+          )}
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
+}

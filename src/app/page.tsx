@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import Dashboard from '@/components/Dashboard';
 import { User, ShieldAlert, ArrowRight, Lock, AlertCircle, Laptop, Loader2 } from 'lucide-react';
 import {
   getCallerProfiles,
@@ -10,8 +9,11 @@ import {
   verifyCallerPinAction,
   submitTeamApplication,
   verifyPortalPinAction,
-} from '@/app/actions';
+} from '@/app/actions/auth';
 import { gsap } from 'gsap';
+
+// Note: Dashboard tab module is imported dynamically or after auth verification to keep chunk sizes modular.
+import Dashboard from '@/components/Dashboard';
 
 export default function Home() {
   // Authentication states
@@ -50,15 +52,13 @@ export default function Home() {
     const res = await getCallerProfiles();
     if (res && res.success) {
       setCallerProfiles(res.profiles);
-      if ('dbOffline' in res) {
-        setDbOffline(!!res.dbOffline);
-      } else {
-        setDbOffline(false);
-      }
+      setDbOffline(false);
+    } else if (res && res.error === 'DATABASE_NOT_CONFIGURED') {
+      setDbOffline(true);
     }
   }, []);
 
-  // Restore only the server-verified HTTP-only session.
+  // Restore session on load
   useEffect(() => {
     void getCurrentSessionAction().then(session => {
       if (!session.success) return;
@@ -90,15 +90,12 @@ export default function Home() {
   // Verify Primary Portal PIN securely server-side
   const verifyPortalPin = useCallback(async (pin: string) => {
     setVerifying(true);
-    await new Promise(resolve => setTimeout(resolve, 500)); // Tactile delay
-
     const res = await verifyPortalPinAction(pin);
     if (res.success) {
       setPortalUnlocked(true);
       setEnteredPortalPin('');
       portalPinRef.current = '';
       setPortalError(false);
-      // Fetch caller profiles when portal is unlocked
       loadCallerProfiles();
     } else {
       setPortalError(true);
@@ -180,7 +177,6 @@ export default function Home() {
   // Core physical keyboard typing listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // If fully logged in, disable page auth inputs
       if (callerName) return;
 
       // Handle numbers 0-9
@@ -236,298 +232,304 @@ export default function Home() {
     setEnteredCallerPin('');
   };
 
+  if (callerName) {
+    return (
+      <Dashboard
+        callerName={callerName}
+        callerRole={callerRole}
+        onLogoutCaller={handleLogoutCaller}
+      />
+    );
+  }
+
   return (
-    <main className="w-full min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-start">
-      {callerName ? (
-        <Dashboard callerName={callerName} callerRole={callerRole} onLogoutCaller={handleLogoutCaller} />
-      ) : (
-        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 relative overflow-hidden select-none">
-          {/* Animated Light Cyber Grid Overlay */}
-          <div className="light-cyber-grid absolute inset-0 opacity-[0.5] pointer-events-none z-0" />
+    <main className="w-full min-h-screen bg-[#f8fafc] text-slate-800 flex flex-col justify-start relative overflow-hidden select-none">
+      {/* Premium Minimalist Background Grids */}
+      <div className="light-cyber-grid absolute inset-0 opacity-[0.25] pointer-events-none z-0" />
 
-          {/* Decorative Blur Orbs */}
-          <div className="absolute top-1/4 left-1/4 w-[450px] h-[450px] bg-sky-300/20 rounded-full blur-[100px] pointer-events-none animate-float-1" />
-          <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-pink-300/15 rounded-full blur-[100px] pointer-events-none animate-float-2" />
+      {/* Elegant, restrained blurred decorative blobs (Alabaster system) */}
+      <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-indigo-100/40 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-1/4 right-1/4 w-[450px] h-[450px] bg-slate-100/50 rounded-full blur-[100px] pointer-events-none" />
 
-          <div className="w-full max-w-2xl flex flex-col items-center gap-8 relative z-10">
-            {dbOffline && (
-              <div className="w-full max-w-md bg-rose-50 border border-rose-200 text-rose-700 px-5 py-3.5 rounded-3xl flex items-center gap-3 animate-pulse shadow-md">
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-                <div className="flex flex-col text-left">
-                  <span className="font-display text-xs font-bold uppercase tracking-widest">Database Connection Offline</span>
-                  <span className="font-body text-[10px] text-rose-600 font-semibold mt-0.5">LOCAL SIMULATION MODE ACTIVE — CHANGES WILL NOT BE PERSISTED</span>
-                </div>
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 relative z-10 w-full max-w-4xl mx-auto">
+        <div className="w-full max-w-md flex flex-col items-center gap-8">
+          {dbOffline && (
+            <div className="w-full bg-amber-50 border border-amber-200 text-amber-800 px-5 py-3.5 rounded-2xl flex items-center gap-3 shadow-sm animate-pulse">
+              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0" />
+              <div className="flex flex-col text-left">
+                <span className="font-display text-xs font-bold uppercase tracking-wider">Database Offline</span>
+                <span className="font-body text-[10px] text-amber-600 font-semibold mt-0.5">LOCAL MODE ACTIVE — CHANGES WILL NOT BE SAVED TO CLOUD</span>
               </div>
-            )}
-            
-            {/* Header section */}
-            <div className="text-center flex flex-col gap-2 gsap-login-header">
-              <span className="font-body text-[9px] text-indigo-600 font-bold tracking-widest uppercase bg-indigo-50 border border-indigo-100 px-4 py-1.5 rounded-full inline-block mx-auto mb-1">
-                Call-OS Secure Portal
-              </span>
-              
-              <h1 className="font-display text-3xl font-black text-slate-900 tracking-wide uppercase leading-none">
-                {!portalUnlocked 
-                  ? 'Portal Access Required' 
-                  : promptPinFor 
-                  ? `${promptPinFor}'s Session` 
-                  : 'Select Session Profile'
-                }
-              </h1>
-              
-              <p className="font-body text-xs text-slate-500 max-w-xs mx-auto">
-                {!portalUnlocked 
-                  ? 'Enter primary PIN using your physical keyboard or the keypad.'
-                  : promptPinFor 
-                  ? `Enter ${promptPinFor}'s unique PIN to unlock caller dashboard.`
-                  : 'Welcome team. Choose your profile to begin cold-calling travel agencies.'
-                }
-              </p>
             </div>
+          )}
+          
+          {/* Header section */}
+          <div className="text-center flex flex-col gap-2 gsap-login-header">
+            <span className="font-body text-[9px] text-indigo-700 font-bold tracking-widest uppercase bg-indigo-50/80 border border-indigo-100 px-4 py-1.5 rounded-full inline-block mx-auto mb-1">
+              Call-OS Client Console
+            </span>
+            
+            <h1 className="font-display text-3xl font-bold text-slate-900 tracking-tight uppercase leading-none">
+              {!portalUnlocked 
+                ? 'Portal Code Required' 
+                : promptPinFor 
+                ? `${promptPinFor}'s Session` 
+                : 'Choose Caller Profile'
+              }
+            </h1>
+            
+            <p className="font-body text-xs text-slate-500 max-w-xs mx-auto mt-1">
+              {!portalUnlocked 
+                ? 'Type in your portal passcode. Physical keyboard number keys are enabled.'
+                : promptPinFor 
+                ? `Please enter the PIN code assigned to ${promptPinFor}.`
+                : 'Select your team caller profile below to enter the outreach layout.'
+              }
+            </p>
+          </div>
 
-            {/* STATE 1: Primary Portal Lock */}
-            {!portalUnlocked && (
-              <div className="gsap-login-card w-full max-w-sm bg-white/80 border border-slate-200 rounded-3xl p-8 shadow-sm flex flex-col items-center gap-6 backdrop-blur-md">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all duration-300 ${
-                  portalError ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-indigo-50 border-indigo-100 text-indigo-600'
-                }`}>
-                  <Lock className="w-5 h-5" />
-                </div>
-
-                <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-200/50 rounded-full font-body text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                  <Laptop className="w-3.5 h-3.5 text-indigo-600" />
-                  Keyboard input active
-                </div>
-
-                {/* PIN dot indicators */}
-                <div className="flex gap-4">
-                  {[...Array(6)].map((_, i) => (
-                    <div
-                      key={i}
-                      className={`w-3.5 h-3.5 rounded-full border transition-all duration-300 ${
-                        i < enteredPortalPin.length
-                          ? portalError
-                            ? 'bg-rose-500 border-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
-                            : 'bg-indigo-600 border-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]'
-                          : 'bg-transparent border-slate-300'
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                {portalError && (
-                  <p className="font-body text-[10px] text-rose-600 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    Incorrect PIN. Access Denied.
-                  </p>
-                )}
-                {verifying && (
-                  <p className="font-body text-[10px] text-indigo-600 tracking-wider uppercase flex items-center gap-1.5 font-bold">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Verifying PIN...
-                  </p>
-                )}
-
-                {/* Keypad Numeric grid */}
-                <div className="grid grid-cols-3 gap-3 w-full">
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
-                    <button
-                      key={num}
-                      onClick={() => handleDigitPress(num)}
-                      className="py-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
-                    >
-                      {num}
-                    </button>
-                  ))}
-                  <button
-                    onClick={handleClearPress}
-                    className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={() => handleDigitPress('0')}
-                    className="py-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
-                  >
-                    0
-                  </button>
-                  <button
-                    onClick={handleDeletePress}
-                    className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
-                  >
-                    Del
-                  </button>
-                </div>
+          {/* STATE 1: Primary Portal Lock */}
+          {!portalUnlocked && (
+            <div className="gsap-login-card w-full bg-white/80 border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100 flex flex-col items-center gap-6 backdrop-blur-lg">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 ${
+                portalError ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-indigo-50 border-indigo-100 text-indigo-700'
+              }`}>
+                <Lock className="w-5 h-5" />
               </div>
-            )}
 
-            {/* STATE 2: Caller Profile PIN lock */}
-            {portalUnlocked && promptPinFor && (
-              <div className="gsap-login-card w-full max-w-sm bg-white/80 border border-slate-200 rounded-3xl p-8 shadow-sm flex flex-col items-center gap-6 backdrop-blur-md">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all duration-300 ${
-                  callerError ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-indigo-50 border-indigo-100 text-indigo-600'
-                }`}>
-                  <Lock className="w-5 h-5" />
-                </div>
-
-                <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-200/50 rounded-full font-body text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                  <Laptop className="w-3.5 h-3.5 text-indigo-600" />
-                  Keyboard input active
-                </div>
-
-                {/* PIN dot indicators */}
-                <div className="flex gap-4">
-                  {[...Array(6)].map((_, i) => (
-                    <div
-                      key={i}
-                      className={`w-3.5 h-3.5 rounded-full border transition-all duration-300 ${
-                        i < enteredCallerPin.length
-                          ? callerError
-                            ? 'bg-rose-500 border-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
-                            : 'bg-indigo-600 border-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]'
-                          : 'bg-transparent border-slate-300'
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                {callerError && (
-                  <p className="font-body text-[10px] text-rose-600 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    Incorrect PIN. Access Refused.
-                  </p>
-                )}
-                {verifying && (
-                  <p className="font-body text-[10px] text-indigo-600 tracking-wider uppercase flex items-center gap-1.5 font-bold">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Unlocking session...
-                  </p>
-                )}
-
-                {/* Keypad Numeric grid */}
-                <div className="grid grid-cols-3 gap-3 w-full">
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
-                    <button
-                      key={num}
-                      onClick={() => handleDigitPress(num)}
-                      className="py-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
-                    >
-                      {num}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => {
-                      setPromptPinFor('');
-                      callerPinRef.current = '';
-                      setEnteredCallerPin('');
-                      setCallerError(false);
-                    }}
-                    className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
-                  >
-                    Back
-                  </button>
-                  <button
-                    onClick={() => handleDigitPress('0')}
-                    className="py-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
-                  >
-                    0
-                  </button>
-                  <button
-                    onClick={handleDeletePress}
-                    className="py-3.5 rounded-2xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
-                  >
-                    Del
-                  </button>
-                </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-200/50 rounded-full font-body text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                <Laptop className="w-3.5 h-3.5 text-indigo-600" />
+                Keyboard input active
               </div>
-            )}
 
-            {/* STATE 3: Profile Selection Grid */}
-            {portalUnlocked && !promptPinFor && (
-              <div className="gsap-login-card flex flex-col gap-6 w-full">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
-                  {callerProfiles.map((user) => {
-                    const genderStyle = user.gender === 'Female'
-                      ? 'border-rose-200 hover:border-rose-500 hover:shadow-rose-500/5 text-rose-600'
-                      : user.name === 'Hamid'
-                      ? 'border-blue-200 hover:border-blue-500 hover:shadow-blue-500/5 text-blue-600'
-                      : user.name === 'Oussama'
-                      ? 'border-indigo-200 hover:border-indigo-500 hover:shadow-indigo-500/5 text-indigo-600'
-                      : 'border-cyan-200 hover:border-cyan-500 hover:shadow-cyan-500/5 text-cyan-600';
-                      
-                    return (
-                      <button
-                        key={user.name}
-                        onClick={() => handleSelectCaller(user.name)}
-                        className={`flex flex-col items-center gap-4 p-8 rounded-3xl border-2 bg-white/80 backdrop-blur-md shadow-sm transition-all duration-300 transform hover:-translate-y-1.5 cursor-pointer text-center group ${genderStyle}`}
-                      >
-                        <div className="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200/50 flex items-center justify-center text-slate-500 group-hover:scale-105 transition-transform duration-300 relative">
-                          <User className="w-7 h-7" />
-                          <div className="absolute -top-1 -right-1 bg-slate-100 border border-slate-200 text-slate-400 p-1 rounded-lg">
-                            <Lock className="w-3 h-3" />
-                          </div>
-                        </div>
-                        <div>
-                          <h3 className="font-display text-base font-bold text-slate-800 uppercase tracking-wide">
-                            {user.name}
-                          </h3>
-                          <p className="font-body text-[9px] text-slate-400 mt-1 uppercase tracking-wider font-bold">
-                            LOCKED PROFILE
-                          </p>
-                        </div>
-                        <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-slate-700 group-hover:translate-x-1 transition-all duration-300" />
-                      </button>
-                    );
-                  })}
-                </div>
+              {/* PIN dot indicators */}
+              <div className="flex gap-4">
+                {[...Array(6)].map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3 h-3 rounded-full border transition-all duration-300 ${
+                      i < enteredPortalPin.length
+                        ? portalError
+                          ? 'bg-rose-600 border-rose-500 shadow-[0_0_8px_rgba(225,29,72,0.3)]'
+                          : 'bg-indigo-700 border-indigo-600 shadow-[0_0_8px_rgba(30,58,138,0.3)]'
+                        : 'bg-transparent border-slate-300'
+                    }`}
+                  />
+                ))}
+              </div>
 
-                {/* Exit system & lock button */}
+              {portalError && (
+                <p className="font-body text-[10px] text-rose-700 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Passcode incorrect. Retry.
+                </p>
+              )}
+              {verifying && (
+                <p className="font-body text-[10px] text-indigo-700 tracking-wider uppercase flex items-center gap-1.5 font-bold">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Verifying...
+                </p>
+              )}
+
+              {/* Keypad Numeric grid */}
+              <div className="grid grid-cols-3 gap-3 w-full">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
+                  <button
+                    key={num}
+                    onClick={() => handleDigitPress(num)}
+                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                  >
+                    {num}
+                  </button>
+                ))}
                 <button
-                  onClick={handleLockPortal}
-                  className="mt-6 font-body text-xs font-semibold text-slate-400 hover:text-slate-700 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1.5 self-center"
+                  onClick={handleClearPress}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
                 >
-                  <ShieldAlert className="w-4 h-4" />
-                  Exit & Lock Portal
+                  Clear
+                </button>
+                <button
+                  onClick={() => handleDigitPress('0')}
+                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                >
+                  0
+                </button>
+                <button
+                  onClick={handleDeletePress}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                >
+                  Del
                 </button>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Apply to Join Team Button */}
-            {!callerName && (
+          {/* STATE 2: Caller Profile PIN lock */}
+          {portalUnlocked && promptPinFor && (
+            <div className="gsap-login-card w-full bg-white/80 border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100 flex flex-col items-center gap-6 backdrop-blur-lg">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 ${
+                callerError ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-indigo-50 border-indigo-100 text-indigo-700'
+              }`}>
+                <Lock className="w-5 h-5" />
+              </div>
+
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-200/50 rounded-full font-body text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                <Laptop className="w-3.5 h-3.5 text-indigo-600" />
+                Keyboard input active
+              </div>
+
+              {/* PIN dot indicators */}
+              <div className="flex gap-4">
+                {[...Array(6)].map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3 h-3 rounded-full border transition-all duration-300 ${
+                      i < enteredCallerPin.length
+                        ? callerError
+                          ? 'bg-rose-600 border-rose-500 shadow-[0_0_8px_rgba(225,29,72,0.3)]'
+                          : 'bg-indigo-700 border-indigo-600 shadow-[0_0_8px_rgba(30,58,138,0.3)]'
+                        : 'bg-transparent border-slate-300'
+                    }`}
+                  />
+                ))}
+              </div>
+
+              {callerError && (
+                <p className="font-body text-[10px] text-rose-700 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Incorrect Profile PIN.
+                </p>
+              )}
+              {verifying && (
+                <p className="font-body text-[10px] text-indigo-700 tracking-wider uppercase flex items-center gap-1.5 font-bold">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Authorizing...
+                </p>
+              )}
+
+              {/* Keypad Numeric grid */}
+              <div className="grid grid-cols-3 gap-3 w-full">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
+                  <button
+                    key={num}
+                    onClick={() => handleDigitPress(num)}
+                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    setPromptPinFor('');
+                    callerPinRef.current = '';
+                    setEnteredCallerPin('');
+                    setCallerError(false);
+                  }}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => handleDigitPress('0')}
+                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                >
+                  0
+                </button>
+                <button
+                  onClick={handleDeletePress}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                >
+                  Del
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STATE 3: Profile Selection Grid */}
+          {portalUnlocked && !promptPinFor && (
+            <div className="gsap-login-card flex flex-col gap-6 w-full max-w-xl">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 w-full">
+                {callerProfiles.map((user) => {
+                  const genderStyle = user.gender === 'Female'
+                    ? 'border-rose-100 hover:border-rose-400 hover:shadow-rose-100 text-rose-700'
+                    : user.name === 'Hamid'
+                    ? 'border-blue-100 hover:border-blue-400 hover:shadow-blue-100 text-blue-700'
+                    : user.name === 'Oussama'
+                    ? 'border-indigo-100 hover:border-indigo-400 hover:shadow-indigo-100 text-indigo-700'
+                    : 'border-slate-100 hover:border-slate-400 hover:shadow-slate-100 text-slate-700';
+                    
+                  return (
+                    <button
+                      key={user.name}
+                      onClick={() => handleSelectCaller(user.name)}
+                      className={`flex flex-col items-center gap-3 p-6 rounded-2xl border bg-white/90 backdrop-blur-md shadow-sm transition-all duration-300 transform hover:-translate-y-1 cursor-pointer text-center group ${genderStyle}`}
+                    >
+                      <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-200/40 flex items-center justify-center text-slate-400 group-hover:scale-105 transition-transform duration-300 relative">
+                        <User className="w-6 h-6" />
+                        <div className="absolute -top-1 -right-1 bg-slate-100 border border-slate-200 text-slate-400 p-0.5 rounded">
+                          <Lock className="w-2.5 h-2.5" />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="font-display text-sm font-bold text-slate-800 uppercase tracking-wider">
+                          {user.name}
+                        </h3>
+                        <p className="font-body text-[9px] text-slate-400 mt-0.5 uppercase tracking-widest font-bold">
+                          {user.role || 'Caller'}
+                        </p>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-600 group-hover:translate-x-0.5 transition-all duration-300 mt-1" />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Exit system & lock button */}
               <button
-                onClick={() => {
-                  setShowJoinModal(true);
-                  setAppSuccess('');
-                  setAppError('');
-                }}
-                className="gsap-login-footer font-body text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1 border border-indigo-100 hover:border-indigo-200 bg-white/70 backdrop-blur-md px-5 py-2.5 rounded-xl shadow-sm mt-4"
+                onClick={handleLockPortal}
+                className="mt-6 font-body text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1.5 self-center"
               >
-                Apply to Join Team
+                <ShieldAlert className="w-4 h-4" />
+                Exit & Lock Portal
               </button>
-            )}
+            </div>
+          )}
 
-          </div>
+          {/* Apply to Join Team Button */}
+          {!callerName && (
+            <button
+              onClick={() => {
+                setShowJoinModal(true);
+                setAppSuccess('');
+                setAppError('');
+              }}
+              className="gsap-login-footer font-body text-[10px] font-bold text-indigo-700 hover:text-indigo-900 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1 border border-slate-200/60 bg-white/70 backdrop-blur-md px-5 py-2.5 rounded-xl shadow-sm mt-4 hover:shadow-md"
+            >
+              Apply to Join Team
+            </button>
+          )}
+
         </div>
-      )}
+      </div>
 
       {/* Team Join Request Modal */}
       {showJoinModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-sm flex flex-col gap-5 relative animate-in fade-in zoom-in-95 duration-200">
             <div>
-              <h3 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
+              <h3 className="font-display text-sm font-bold text-slate-800 uppercase tracking-wide">
                 Apply to Join Team
               </h3>
-              <p className="font-body text-[10px] text-slate-400 mt-1 uppercase tracking-wider font-semibold">
-                Submit details for admin review
+              <p className="font-body text-[9px] text-slate-400 mt-0.5 uppercase tracking-wider font-semibold">
+                Submit details for coordinator review
               </p>
             </div>
 
             {appSuccess ? (
               <div className="flex flex-col gap-4 items-center text-center py-4">
-                <span className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl font-bold border border-emerald-100">✓</span>
-                <p className="font-body text-xs text-slate-600 font-bold uppercase tracking-wide">Application Submitted!</p>
-                <p className="font-body text-[10px] text-slate-400">Your request is pending review by the administrator.</p>
+                <span className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center text-lg font-bold border border-emerald-100">✓</span>
+                <p className="font-body text-xs text-slate-700 font-bold uppercase tracking-wider">Application Saved</p>
+                <p className="font-body text-[10px] text-slate-400">Your profile details are pending admin review.</p>
                 <button
                   onClick={() => setShowJoinModal(false)}
                   className="mt-2 px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-body text-xs font-bold uppercase tracking-wider transition-all"
@@ -559,8 +561,8 @@ export default function Home() {
                     required
                     value={appForm.name}
                     onChange={(e) => setAppForm({ ...appForm, name: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:border-blue-300"
-                    placeholder="e.g. John Doe"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
+                    placeholder="e.g. Oussama Dz"
                   />
                 </div>
 
@@ -571,8 +573,8 @@ export default function Home() {
                     required
                     value={appForm.email}
                     onChange={(e) => setAppForm({ ...appForm, email: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:border-blue-300"
-                    placeholder="e.g. john@example.com"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
+                    placeholder="e.g. name@domain.com"
                   />
                 </div>
 
@@ -583,8 +585,8 @@ export default function Home() {
                     required
                     value={appForm.phone}
                     onChange={(e) => setAppForm({ ...appForm, phone: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:border-blue-300"
-                    placeholder="e.g. +213 555 123 456"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
+                    placeholder="e.g. 0550123456"
                   />
                 </div>
 
@@ -593,7 +595,7 @@ export default function Home() {
                   <select
                     value={appForm.gender}
                     onChange={(e) => setAppForm({ ...appForm, gender: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:border-blue-300 cursor-pointer"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300 cursor-pointer"
                   >
                     <option value="Male">Male</option>
                     <option value="Female">Female</option>
@@ -601,7 +603,7 @@ export default function Home() {
                 </div>
 
                 {appError && (
-                  <p className="text-rose-600 font-bold text-[10px] uppercase tracking-wide">{appError}</p>
+                  <p className="text-rose-700 font-bold text-[10px] uppercase tracking-wide">{appError}</p>
                 )}
 
                 <div className="flex gap-3 mt-2">
@@ -615,7 +617,7 @@ export default function Home() {
                   <button
                     type="submit"
                     disabled={isSubmittingApp}
-                    className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase transition-all shadow-sm shadow-blue-500/10 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase transition-all shadow-sm cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                   >
                     {isSubmittingApp ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Apply'}
                   </button>

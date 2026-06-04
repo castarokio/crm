@@ -1,42 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { unlockLead } from '@/app/actions';
+import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { getCallerSession } from '@/lib/auth-session';
-
-export const dynamic = 'force-dynamic';
+import { broadcastSse } from '@/lib/sse-broker';
 
 export async function POST(req: NextRequest) {
   try {
     const session = await getCallerSession();
-    if (!session) {
-      return new Response('Unauthorized', { status: 401 });
-    }
+    if (!session) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
 
-    let leadId: number | null = null;
-    const contentType = req.headers.get('content-type') || '';
+    const body = await req.json();
+    const { leadId } = body;
+    if (!leadId) return NextResponse.json({ error: 'LEAD_ID_REQUIRED' }, { status: 400 });
 
-    if (contentType.includes('application/json')) {
-      const body = await req.json();
-      leadId = Number(body.leadId);
-    } else {
-      const text = await req.text();
-      try {
-        const body = JSON.parse(text);
-        leadId = Number(body.leadId);
-      } catch {
-        const match = text.match(/"leadId":\s*(\d+)/) || text.match(/leadId=(\d+)/);
-        if (match && match[1]) {
-          leadId = Number(match[1]);
-        }
-      }
-    }
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return NextResponse.json({ error: 'DB_NOT_CONFIGURED' }, { status: 500 });
 
-    if (!leadId || isNaN(leadId)) {
-      return NextResponse.json({ success: false, error: 'INVALID_LEAD_ID' }, { status: 400 });
-    }
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        assigned_to: null,
+        last_updated: new Date().toISOString()
+      })
+      .eq('id', leadId)
+      .eq('assigned_to', session.name);
 
-    const res = await unlockLead(leadId, session.name);
-    return NextResponse.json(res);
+    if (error) throw new Error(error.message);
+
+    // Broadcast SSE unlock event to all callers
+    broadcastSse('LOCK_RELEASED', { leadId, user: session.name });
+
+    return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    console.error('[unlock-lead API Error]', error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

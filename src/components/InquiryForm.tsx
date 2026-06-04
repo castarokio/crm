@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { submitInquiryAction } from "@/app/actions";
 
 export default function InquiryForm() {
   const [formData, setFormData] = useState({
@@ -11,16 +12,29 @@ export default function InquiryForm() {
     month: "",
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.phone || !formData.month) {
       setError("Please populate all parameters.");
       return;
     }
     setError("");
-    setIsSubmitted(true);
+    setIsSubmitting(true);
+    try {
+      const res = await submitInquiryAction(formData.name, formData.phone, formData.destination, formData.month);
+      if (res.success) {
+        setIsSubmitted(true);
+      } else {
+        setError(res.error || "Failed to submit request. Please try again.");
+      }
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -107,10 +121,20 @@ export default function InquiryForm() {
 
             <button
               type="submit"
-              className="mt-4 flex items-center justify-between w-full h-[52px] px-6 rounded-sm bg-[#f1f1f1] text-[#010101] hover:bg-white transition-all duration-200 hover:scale-[1.01] font-body text-xs font-bold tracking-[0.2em] uppercase cursor-pointer"
+              disabled={isSubmitting}
+              className="mt-4 flex items-center justify-between w-full h-[52px] px-6 rounded-sm bg-[#f1f1f1] text-[#010101] hover:bg-white transition-all duration-200 hover:scale-[1.01] font-body text-xs font-bold tracking-[0.2em] uppercase cursor-pointer disabled:opacity-50"
             >
-              <span>SUBMIT CALLBACK REQUEST</span>
-              <ArrowRight className="w-4 h-4 text-[#010101]" />
+              {isSubmitting ? (
+                <>
+                  <span>SUBMITTING REQUEST...</span>
+                  <Loader2 className="w-4 h-4 text-[#010101] animate-spin" />
+                </>
+              ) : (
+                <>
+                  <span>SUBMIT CALLBACK REQUEST</span>
+                  <ArrowRight className="w-4 h-4 text-[#010101]" />
+                </>
+              )}
             </button>
           </form>
         ) : (
