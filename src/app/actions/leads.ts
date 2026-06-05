@@ -115,6 +115,7 @@ export async function getLeads(options: {
     await runAutoExpirations();
     let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'exact' });
 
+    let isIdSearch = false;
     if (search) {
       const trimmedSearch = search.trim();
       if (trimmedSearch.startsWith('#')) {
@@ -122,6 +123,7 @@ export async function getLeads(options: {
         const leadId = parseInt(idString, 10);
         if (!isNaN(leadId) && /^\d+$/.test(idString)) {
           q = q.eq('id', leadId);
+          isIdSearch = true;
         } else {
           const safeSearch = escapePostgrestFilterValue(search);
           q = q.or([
@@ -164,27 +166,29 @@ export async function getLeads(options: {
       }
     }
 
-    if (status === 'Followups') {
-      q = q.in('call_status', FOLLOWUP_STATUSES);
-    } else if (status === 'No Answer / Busy') {
-      q = q.in('call_status', ['Busy', 'No Answer']);
-    } else if (status === 'WarmLeads') {
-      q = q.in('call_status', WARM_STATUSES);
-    } else if (status === 'GoodClients') {
-      q = q.in('call_status', CONVERTED_STATUSES);
-    } else if (status === 'Lost') {
-      q = q.in('call_status', ['Not Interested', 'Wrong Number']);
-    } else if (status === 'Treated') {
-      q = q.in('call_status', TREATED_STATUSES);
-    } else if (status) {
-      q = q.eq('call_status', status);
-    } else if (excludeLost) {
-      // Correct Filter: exclude Lost leads only so other states remain visible
-      q = q.not('call_status', 'in', '("Not Interested","Wrong Number")');
-    }
+    if (!isIdSearch) {
+      if (status === 'Followups') {
+        q = q.in('call_status', FOLLOWUP_STATUSES);
+      } else if (status === 'No Answer / Busy') {
+        q = q.in('call_status', ['Busy', 'No Answer']);
+      } else if (status === 'WarmLeads') {
+        q = q.in('call_status', WARM_STATUSES);
+      } else if (status === 'GoodClients') {
+        q = q.in('call_status', CONVERTED_STATUSES);
+      } else if (status === 'Lost') {
+        q = q.in('call_status', ['Not Interested', 'Wrong Number']);
+      } else if (status === 'Treated') {
+        q = q.in('call_status', TREATED_STATUSES);
+      } else if (status) {
+        q = q.eq('call_status', status);
+      } else if (excludeLost) {
+        // Correct Filter: exclude Lost leads only so other states remain visible
+        q = q.not('call_status', 'in', '("Not Interested","Wrong Number")');
+      }
 
-    if (priority) q = q.eq('priority', parseInt(priority, 10));
-    if (area) q = q.ilike('area', `%${area}%`);
+      if (priority) q = q.eq('priority', parseInt(priority, 10));
+      if (area) q = q.ilike('area', `%${area}%`);
+    }
 
     const { data, count, error } = await q
       .order('priority', { ascending: true })
