@@ -45,6 +45,11 @@ function verifyCallerPin(storedPin: string, suppliedPin: string) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function getCleanPin(pinVar: string | undefined): string {
+  if (!pinVar) return '';
+  return pinVar.replace(/[^0-9]/g, '');
+}
+
 export async function getCallerProfiles() {
   try {
     if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
@@ -95,19 +100,19 @@ export async function verifyCallerPinAction(name: string, pin: string) {
         let expectedPin = '';
         let role = 'Caller';
         if (name === 'Hamid') {
-          expectedPin = (process.env.HAMID_PIN || '').trim();
+          expectedPin = getCleanPin(process.env.HAMID_PIN || process.env.NEXT_PUBLIC_HAMID_PIN);
           role = 'Admin';
         } else if (name === 'Oussama') {
-          expectedPin = (process.env.OUSSAMA_PIN || '').trim();
+          expectedPin = getCleanPin(process.env.OUSSAMA_PIN || process.env.NEXT_PUBLIC_OUSSAMA_PIN);
           role = 'Caller';
         } else if (name === 'Kamel') {
-          expectedPin = (process.env.KAMEL_PIN || '').trim();
+          expectedPin = getCleanPin(process.env.KAMEL_PIN || process.env.NEXT_PUBLIC_KAMEL_PIN);
           role = 'Caller';
         } else if (name === 'Yacine') {
-          expectedPin = (process.env.YACINE_PIN || '').trim();
+          expectedPin = getCleanPin(process.env.YACINE_PIN || process.env.NEXT_PUBLIC_YACINE_PIN);
           role = 'Supervisor';
         } else if (name === 'Sofiane') {
-          expectedPin = (process.env.SOFIANE_PIN || '').trim();
+          expectedPin = getCleanPin(process.env.SOFIANE_PIN || process.env.NEXT_PUBLIC_SOFIANE_PIN);
           role = 'Viewer';
         }
 
@@ -117,8 +122,10 @@ export async function verifyCallerPinAction(name: string, pin: string) {
             .update({ pin: hashCallerPin(pin) })
             .eq('name', name);
           const finalRole = (data.role || role) as CallerRole;
-          await setCallerSession(name, finalRole);
-          return { success: true, role: finalRole };
+          const trustLevel = data.trust_level || 'New';
+          const agreementVersion = data.agreement_accepted_version || null;
+          await setCallerSession(name, finalRole, trustLevel, agreementVersion);
+          return { success: true, role: finalRole, agreementAcceptedVersion: agreementVersion };
         }
       }
       
@@ -128,19 +135,19 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     let expectedPin = '';
     let role = 'Caller';
     if (name === 'Hamid') {
-      expectedPin = (process.env.HAMID_PIN || '').replace(/[^0-9]/g, '');
+      expectedPin = getCleanPin(process.env.HAMID_PIN || process.env.NEXT_PUBLIC_HAMID_PIN);
       role = 'Admin';
     } else if (name === 'Oussama') {
-      expectedPin = (process.env.OUSSAMA_PIN || '').replace(/[^0-9]/g, '');
+      expectedPin = getCleanPin(process.env.OUSSAMA_PIN || process.env.NEXT_PUBLIC_OUSSAMA_PIN);
       role = 'Caller';
     } else if (name === 'Kamel') {
-      expectedPin = (process.env.KAMEL_PIN || '').replace(/[^0-9]/g, '');
+      expectedPin = getCleanPin(process.env.KAMEL_PIN || process.env.NEXT_PUBLIC_KAMEL_PIN);
       role = 'Caller';
     } else if (name === 'Yacine') {
-      expectedPin = (process.env.YACINE_PIN || '').trim();
+      expectedPin = getCleanPin(process.env.YACINE_PIN || process.env.NEXT_PUBLIC_YACINE_PIN);
       role = 'Supervisor';
     } else if (name === 'Sofiane') {
-      expectedPin = (process.env.SOFIANE_PIN || '').trim();
+      expectedPin = getCleanPin(process.env.SOFIANE_PIN || process.env.NEXT_PUBLIC_SOFIANE_PIN);
       role = 'Viewer';
     }
     
@@ -171,7 +178,7 @@ export async function verifyPortalPinAction(pin: string) {
       
       // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
       if (verifyCallerPin(customPinObj.pin, '000000')) {
-        const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
+        const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
         if (expectedPortalPin && safeStringEqual(expectedPortalPin, pin)) {
           await supabase
             .from('caller_profiles')
@@ -184,7 +191,7 @@ export async function verifyPortalPinAction(pin: string) {
       
       return { success: false };
     } else {
-      const expectedPortalPin = (process.env.PORTAL_PIN || '').replace(/[^0-9]/g, '');
+      const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
       if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
       const success = safeStringEqual(expectedPortalPin, pin);
       if (success) await setPortalSession();
