@@ -1404,6 +1404,35 @@ export async function getCallActivityLogs() {
       .limit(100);
     if (skipErr) throw new Error(skipErr.message);
 
+    // Collect all unique lead_ids
+    const leadIds = Array.from(
+      new Set(
+        [
+          ...(callHistory || []).map((c: any) => c.lead_id),
+          ...(skipLogs || []).map((s: any) => s.lead_id)
+        ].filter(Boolean)
+      )
+    );
+
+    // Batch fetch lead details (agency_name, phone, email)
+    const leadMap: Record<number, { agency_name: string; phone?: string; email?: string }> = {};
+    if (leadIds.length > 0) {
+      const { data: leadData, error: leadErr } = await supabase
+        .from('leads')
+        .select('id, agency_name, phone, email')
+        .in('id', leadIds);
+
+      if (!leadErr && leadData) {
+        leadData.forEach((l: any) => {
+          leadMap[l.id] = {
+            agency_name: l.agency_name,
+            phone: l.phone || undefined,
+            email: l.email || undefined
+          };
+        });
+      }
+    }
+
     // Map to unified schema
     const formattedCalls = (callHistory || []).map((c: any) => ({
       id: `call_${c.id}`,
@@ -1411,6 +1440,9 @@ export async function getCallActivityLogs() {
       caller_name: c.caller_name,
       action_type: `CALL: ${c.call_status}`,
       lead_id: c.lead_id,
+      agency_name: leadMap[c.lead_id]?.agency_name || 'Unknown Lead',
+      lead_phone: leadMap[c.lead_id]?.phone || '',
+      lead_email: leadMap[c.lead_id]?.email || '',
       details: c.notes || 'No call notes recorded.'
     }));
 
@@ -1420,6 +1452,9 @@ export async function getCallActivityLogs() {
       caller_name: s.caller_name,
       action_type: s.action_type,
       lead_id: s.lead_id,
+      agency_name: leadMap[s.lead_id]?.agency_name || 'Unknown Lead',
+      lead_phone: leadMap[s.lead_id]?.phone || '',
+      lead_email: leadMap[s.lead_id]?.email || '',
       details: s.details
     }));
 
