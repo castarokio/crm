@@ -95,13 +95,13 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     let expectedPin = '';
     let role = 'Caller';
     if (name === 'Hamid') {
-      expectedPin = (process.env.HAMID_PIN || '').trim();
+      expectedPin = (process.env.HAMID_PIN || '').replace(/[^0-9]/g, '');
       role = 'Admin';
     } else if (name === 'Oussama') {
-      expectedPin = (process.env.OUSSAMA_PIN || '').trim();
+      expectedPin = (process.env.OUSSAMA_PIN || '').replace(/[^0-9]/g, '');
       role = 'Caller';
     } else if (name === 'Kamel') {
-      expectedPin = (process.env.KAMEL_PIN || '').trim();
+      expectedPin = (process.env.KAMEL_PIN || '').replace(/[^0-9]/g, '');
       role = 'Caller';
     }
     
@@ -131,7 +131,7 @@ export async function verifyPortalPinAction(pin: string) {
       }
       return { success: false };
     } else {
-      const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
+      const expectedPortalPin = (process.env.PORTAL_PIN || '').replace(/[^0-9]/g, '');
       if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
       const success = safeStringEqual(expectedPortalPin, pin);
       if (success) await setPortalSession();
@@ -175,16 +175,42 @@ export async function logoutAction() {
   return { success: true };
 }
 
-export async function submitTeamApplication(name: string, email: string, phone: string, gender: string) {
+export async function submitTeamApplication(
+  name: string,
+  email: string,
+  phone: string,
+  gender: string,
+  telegram?: string,
+  experience?: string,
+  hours?: string
+) {
   try {
     const normalizedName = name.trim();
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPhone = phone.trim();
+    const cleanPhone = phone.trim().replace(/[^0-9+]/g, '');
+    const cleanTelegram = (telegram || '').trim().replace(/^@/, '');
+    const cleanExperience = (experience || '').trim();
+    const cleanHours = (hours || '').trim();
     const normalizedGender = gender.trim();
+
     if (normalizedName.length < 2 || normalizedName.length > 100) throw new Error('INVALID_NAME');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('INVALID_EMAIL_FORMAT');
-    if (normalizedPhone.length < 6 || normalizedPhone.length > 50) throw new Error('INVALID_PHONE');
+    if (cleanPhone.length < 6 || cleanPhone.length > 15) throw new Error('INVALID_PHONE');
     if (!['Male', 'Female', 'Other'].includes(normalizedGender)) throw new Error('INVALID_GENDER');
+
+    // Pack details into phone column (restricted to VARCHAR(50))
+    // Format: [phone]|TG:[telegram]|E:[experience]|H:[hours]
+    const packedParts = [
+      cleanPhone,
+      cleanTelegram ? `TG:${cleanTelegram}` : '',
+      cleanExperience ? `E:${cleanExperience}` : '',
+      cleanHours ? `H:${cleanHours}` : ''
+    ].filter(Boolean);
+
+    const packedPhone = packedParts.join('|');
+    if (packedPhone.length > 50) {
+      throw new Error('APPLICATION_DATA_TOO_LONG');
+    }
 
     const supabase = requireSupabase();
     const { data: existing, error: existingError } = await supabase
@@ -199,7 +225,7 @@ export async function submitTeamApplication(name: string, email: string, phone: 
     const { error } = await supabase.from('team_applications').insert({
       name: normalizedName,
       email: normalizedEmail,
-      phone: normalizedPhone,
+      phone: packedPhone,
       gender: normalizedGender,
       status: 'Pending'
     });

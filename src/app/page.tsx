@@ -1,7 +1,23 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { User, ShieldAlert, ArrowRight, Lock, AlertCircle, Laptop, Loader2 } from 'lucide-react';
+import {
+  User,
+  ShieldAlert,
+  ArrowRight,
+  Lock,
+  AlertCircle,
+  Laptop,
+  Loader2,
+  UserPlus,
+  Mail,
+  Phone,
+  MessageSquare,
+  Clock,
+  Briefcase,
+  ShieldCheck,
+  Users
+} from 'lucide-react';
 import {
   getCallerProfiles,
   getCurrentSessionAction,
@@ -13,6 +29,7 @@ import {
 import { gsap } from 'gsap';
 
 import { AgreementGate } from '@/components/auth/AgreementGate';
+import { TermsOfUseModal } from '@/components/auth/TermsOfUseModal';
 import Dashboard from '@/components/Dashboard';
 
 export default function Home() {
@@ -44,7 +61,17 @@ export default function Home() {
     { name: 'Kamel', gender: 'Male' }
   ]);
   const [showJoinModal, setShowJoinModal] = useState<boolean>(false);
-  const [appForm, setAppForm] = useState({ name: '', email: '', phone: '', gender: 'Male' });
+  const [showTermsModal, setShowTermsModal] = useState<boolean>(false);
+  const [appForm, setAppForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    gender: 'Male',
+    telegram: '',
+    experience: 'none',
+    hours: '1-2h',
+    termsAccepted: false
+  });
   const [isSubmittingApp, setIsSubmittingApp] = useState<boolean>(false);
   const [appSuccess, setAppSuccess] = useState<string>('');
   const [appError, setAppError] = useState<string>('');
@@ -519,18 +546,31 @@ export default function Home() {
             </div>
           )}
 
-          {/* Apply to Join Team Button */}
+          {/* Outreach Team Opportunities Card */}
           {!callerName && (
-            <button
-              onClick={() => {
-                setShowJoinModal(true);
-                setAppSuccess('');
-                setAppError('');
-              }}
-              className="gsap-login-footer font-body text-[10px] font-bold text-indigo-700 hover:text-indigo-900 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1 border border-slate-200/60 bg-white/70 backdrop-blur-md px-5 py-2.5 rounded-xl shadow-sm mt-4 hover:shadow-md"
-            >
-              Apply to Join Team
-            </button>
+            <div className="gsap-login-footer w-full bg-white/40 border border-slate-200/50 rounded-3xl p-6 shadow-md flex flex-col gap-4 backdrop-blur-md mt-4 text-center">
+              <div>
+                <h3 className="font-display text-xs font-bold text-slate-850 uppercase tracking-wider flex items-center justify-center gap-1.5">
+                  <UserPlus className="w-4 h-4 text-indigo-600" />
+                  Outreach Team Opportunities
+                </h3>
+                <p className="font-body text-[10px] text-slate-500 mt-1 max-w-sm mx-auto">
+                  Are you an outbound caller or appointment setter looking to join our travel outreach campaign? Submit your application to request access.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowJoinModal(true);
+                  setAppSuccess('');
+                  setAppError('');
+                }}
+                className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-body text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Submit Registration Application
+              </button>
+            </div>
           )}
 
         </div>
@@ -539,10 +579,10 @@ export default function Home() {
       {/* Team Join Request Modal */}
       {showJoinModal && (
         <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-sm flex flex-col gap-5 relative animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl w-full max-w-md flex flex-col gap-5 relative animate-in fade-in zoom-in-95 duration-200">
             <div>
               <h3 className="font-display text-sm font-bold text-slate-800 uppercase tracking-wide">
-                Apply to Join Team
+                Outbound Team Registration
               </h3>
               <p className="font-body text-[9px] text-slate-400 mt-0.5 uppercase tracking-wider font-semibold">
                 Submit details for coordinator review
@@ -555,8 +595,9 @@ export default function Home() {
                 <p className="font-body text-xs text-slate-700 font-bold uppercase tracking-wider">Application Saved</p>
                 <p className="font-body text-[10px] text-slate-400">Your profile details are pending admin review.</p>
                 <button
+                  type="button"
                   onClick={() => setShowJoinModal(false)}
-                  className="mt-2 px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-body text-xs font-bold uppercase tracking-wider transition-all"
+                  className="mt-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-body text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
                 >
                   Close
                 </button>
@@ -565,13 +606,34 @@ export default function Home() {
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  if (!appForm.termsAccepted) {
+                    setAppError('You must read and accept the Terms of Use.');
+                    return;
+                  }
                   setIsSubmittingApp(true);
                   setAppError('');
-                  const res = await submitTeamApplication(appForm.name, appForm.email, appForm.phone, appForm.gender);
+                  const res = await submitTeamApplication(
+                    appForm.name,
+                    appForm.email,
+                    appForm.phone,
+                    appForm.gender,
+                    appForm.telegram,
+                    appForm.experience,
+                    appForm.hours
+                  );
                   setIsSubmittingApp(false);
                   if (res.success) {
                     setAppSuccess('Application submitted successfully!');
-                    setAppForm({ name: '', email: '', phone: '', gender: 'Male' });
+                    setAppForm({
+                      name: '',
+                      email: '',
+                      phone: '',
+                      gender: 'Male',
+                      telegram: '',
+                      experience: 'none',
+                      hours: '1-2h',
+                      termsAccepted: false
+                    });
                   } else {
                     setAppError(res.error || 'Failed to submit application.');
                   }
@@ -579,51 +641,145 @@ export default function Home() {
                 className="flex flex-col gap-4 font-body text-xs"
               >
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={appForm.name}
-                    onChange={(e) => setAppForm({ ...appForm, name: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
-                    placeholder="e.g. Oussama Dz"
-                  />
+                  <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Full Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      value={appForm.name}
+                      onChange={(e) => setAppForm({ ...appForm, name: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-3.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                      placeholder="e.g. Oussama Dz"
+                    />
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    value={appForm.email}
-                    onChange={(e) => setAppForm({ ...appForm, email: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
-                    placeholder="e.g. name@domain.com"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Email Address</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="email"
+                        required
+                        value={appForm.email}
+                        onChange={(e) => setAppForm({ ...appForm, email: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-3.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                        placeholder="name@domain.com"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Phone Number</label>
+                    <div className="relative">
+                      <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="tel"
+                        required
+                        value={appForm.phone}
+                        onChange={(e) => setAppForm({ ...appForm, phone: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-3.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                        placeholder="e.g. 0550123456"
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Phone Number</label>
-                  <input
-                    type="tel"
-                    required
-                    value={appForm.phone}
-                    onChange={(e) => setAppForm({ ...appForm, phone: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300"
-                    placeholder="e.g. 0550123456"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Telegram Username</label>
+                    <div className="relative">
+                      <MessageSquare className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        value={appForm.telegram}
+                        onChange={(e) => setAppForm({ ...appForm, telegram: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-3.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                        placeholder="e.g. oussama_dz"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5 text-slate-400" /> Gender
+                    </label>
+                    <select
+                      value={appForm.gender}
+                      onChange={(e) => setAppForm({ ...appForm, gender: e.target.value })}
+                      className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all cursor-pointer"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <label className="text-[9px] text-slate-400 uppercase font-bold">Gender</label>
-                  <select
-                    value={appForm.gender}
-                    onChange={(e) => setAppForm({ ...appForm, gender: e.target.value })}
-                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-850 focus:outline-none focus:border-indigo-300 cursor-pointer"
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider flex items-center gap-1">
+                      <Briefcase className="w-3 h-3 text-slate-400" /> Calling Experience
+                    </label>
+                    <select
+                      value={appForm.experience}
+                      onChange={(e) => setAppForm({ ...appForm, experience: e.target.value })}
+                      className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all cursor-pointer"
+                    >
+                      <option value="none">No Experience</option>
+                      <option value="1-6m">1-6 Months</option>
+                      <option value="6-12m">6-12 Months</option>
+                      <option value="1y+">1+ Years</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-400" /> Hours Available
+                    </label>
+                    <select
+                      value={appForm.hours}
+                      onChange={(e) => setAppForm({ ...appForm, hours: e.target.value })}
+                      className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 text-xs font-body focus:outline-none focus:border-indigo-500 focus:bg-white transition-all cursor-pointer"
+                    >
+                      <option value="1-2h">1-2 hrs/day</option>
+                      <option value="2-4h">2-4 hrs/day</option>
+                      <option value="4-6h">4-6 hrs/day</option>
+                      <option value="6h+">6+ hrs/day</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Terms Acceptance Viewport */}
+                <div className="flex items-start gap-2.5 bg-indigo-50/40 border border-indigo-100/30 rounded-xl p-3.5">
+                  <input
+                    type="checkbox"
+                    id="termsAccepted"
+                    required
+                    checked={appForm.termsAccepted}
+                    onChange={(e) => setAppForm({ ...appForm, termsAccepted: e.target.checked })}
+                    className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <label htmlFor="termsAccepted" className="font-body text-[10px] text-slate-650 leading-normal select-none">
+                    I have read and agree to the{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowTermsModal(true)}
+                      className="text-indigo-700 hover:text-indigo-950 font-bold underline cursor-pointer inline"
+                    >
+                      WEB-OS Caller Terms of Use
+                    </button>{' '}
+                    and understand that work is commission-based.
+                  </label>
+                </div>
+
+                {/* GDPR Notice */}
+                <div className="flex items-start gap-1.5 px-1 font-body text-[9px] text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5" />
+                  <span>
+                    Privacy Notice: Your registration details are logged securely and only used by WEB-OS coordinators for recruiting and session setups.
+                  </span>
                 </div>
 
                 {appError && (
@@ -634,16 +790,16 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setShowJoinModal(false)}
-                    className="flex-1 py-3 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 font-bold uppercase transition-all border border-slate-100 cursor-pointer"
+                    className="flex-1 py-3 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 font-bold uppercase transition-all border border-slate-200/50 cursor-pointer text-[10px] tracking-wider"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmittingApp}
-                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase transition-all shadow-sm cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase transition-all shadow-sm cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 text-[10px] tracking-wider"
                   >
-                    {isSubmittingApp ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Apply'}
+                    {isSubmittingApp ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Register'}
                   </button>
                 </div>
               </form>
@@ -651,6 +807,9 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* Terms of Use Viewport Dialog */}
+      <TermsOfUseModal isOpen={showTermsModal} onClose={() => setShowTermsModal(false)} />
     </main>
   );
 }

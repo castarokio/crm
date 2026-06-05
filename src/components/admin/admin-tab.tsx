@@ -34,6 +34,46 @@ import { Input } from '../ui/input';
 import { Modal } from '../ui/modal';
 import { toast, confirm } from '@/lib/toast';
 
+function parseApplicationPhone(phoneString: string) {
+  const parts = (phoneString || '').split('|');
+  const phone = parts[0] || '';
+  let telegram = '';
+  let experience = '';
+  let hours = '';
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    if (part.startsWith('TG:')) {
+      telegram = part.substring(3);
+    } else if (part.startsWith('E:')) {
+      experience = part.substring(2);
+    } else if (part.startsWith('H:')) {
+      hours = part.substring(2);
+    }
+  }
+
+  const experienceLabels: Record<string, string> = {
+    'none': 'No Experience',
+    '1-6m': '1-6 Months',
+    '6-12m': '6-12 Months',
+    '1y+': '1+ Years'
+  };
+
+  const hoursLabels: Record<string, string> = {
+    '1-2h': '1-2 hrs/day',
+    '2-4h': '2-4 hrs/day',
+    '4-6h': '4-6 hrs/day',
+    '6h+': '6+ hrs/day'
+  };
+
+  return {
+    phone,
+    telegram,
+    experience: experienceLabels[experience] || experience || 'No Experience',
+    hours: hoursLabels[hours] || hours || '1-2 hrs/day'
+  };
+}
+
 type AdminTabProps = {
   callerName: string;
   callerRole: string;
@@ -1004,7 +1044,9 @@ export function AdminTab({ callerName, callerRole }: AdminTabProps) {
                 <table className="w-full text-left border-collapse font-body text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 font-display text-[9px] text-slate-450 uppercase font-bold tracking-wider">
-                      <th className="px-4 py-2.5">Candidate Name</th>
+                      <th className="px-4 py-2.5">Candidate Name / Email</th>
+                      <th className="px-4 py-2.5">Phone / Telegram</th>
+                      <th className="px-4 py-2.5">Experience / Hours</th>
                       <th className="px-4 py-2.5">Gender</th>
                       <th className="px-4 py-2.5">Submitted Date</th>
                       <th className="px-4 py-2.5">Status</th>
@@ -1012,45 +1054,84 @@ export function AdminTab({ callerName, callerRole }: AdminTabProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {applications.map(app => (
-                      <tr key={app.id} className="border-b border-slate-100 hover:bg-slate-50/40">
-                        <td className="px-4 py-3 font-bold uppercase text-slate-800">{app.name}</td>
-                        <td className="px-4 py-3 capitalize">{app.gender}</td>
-                        <td className="px-4 py-3 text-slate-400 text-[10px]">{new Date(app.created_at).toLocaleString()}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
-                            app.status === 'Pending' 
-                              ? 'bg-amber-50 text-amber-700 border-amber-100'
-                              : app.status === 'Accepted'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                : 'bg-rose-50 text-rose-700 border-rose-100'
-                          }`}>
-                            {app.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {app.status === 'Pending' && (
-                            <div className="flex justify-end gap-1.5">
-                              <button
-                                onClick={() => {
-                                  setSelectedApp(app);
-                                  setAppPin('');
-                                }}
-                                className="p-1 rounded bg-indigo-50 border border-indigo-100 text-indigo-700 hover:bg-indigo-650 hover:text-white transition-all cursor-pointer font-bold text-[9px] uppercase px-2 py-1"
+                    {applications.map(app => {
+                      const { phone, telegram, experience, hours } = parseApplicationPhone(app.phone);
+                      return (
+                        <tr key={app.id} className="border-b border-slate-100 hover:bg-slate-50/40">
+                          <td className="px-4 py-3">
+                            <div className="font-bold uppercase text-slate-800">{app.name}</div>
+                            <div className="text-[10px] text-slate-400 lowercase mt-0.5">{app.email}</div>
+                          </td>
+                          <td className="px-4 py-3 font-body">
+                            <div className="font-semibold text-slate-700">{phone || 'N/A'}</div>
+                            {telegram ? (
+                              <a
+                                href={`https://t.me/${telegram}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold hover:underline flex items-center gap-0.5 mt-0.5"
                               >
-                                APPROVE
-                              </button>
-                              <button
-                                onClick={() => handleApplicationDecisionSubmit(app.id, 'Rejected')}
-                                className="p-1 rounded bg-rose-50 border border-rose-100 text-rose-700 hover:bg-rose-650 hover:text-white transition-all cursor-pointer font-bold text-[9px] uppercase px-2 py-1"
-                              >
-                                REJECT
-                              </button>
+                                @{telegram}
+                              </a>
+                            ) : (
+                              <div className="text-[10px] text-slate-400">No Telegram</div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-body text-[10px]">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className={`px-2 py-0.5 rounded font-bold uppercase text-[9px] ${
+                                experience === '1+ Years'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : experience === '6-12 Months'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                  : experience === '1-6 Months'
+                                  ? 'bg-slate-50 text-slate-600 border border-slate-200'
+                                  : 'bg-slate-50 text-slate-400 border border-slate-150'
+                              }`}>
+                                {experience}
+                              </span>
+                              <span className="text-slate-500 font-semibold uppercase text-[9px] tracking-wide mt-0.5">
+                                🕒 {hours}
+                              </span>
                             </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="px-4 py-3 capitalize">{app.gender}</td>
+                          <td className="px-4 py-3 text-slate-400 text-[10px]">{new Date(app.created_at).toLocaleString()}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                              app.status === 'Pending' 
+                                ? 'bg-amber-50 text-amber-700 border-amber-100'
+                                : app.status === 'Accepted'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                  : 'bg-rose-50 text-rose-700 border-rose-100'
+                            }`}>
+                              {app.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {app.status === 'Pending' && (
+                              <div className="flex justify-end gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    setSelectedApp(app);
+                                    setAppPin('');
+                                  }}
+                                  className="p-1 rounded bg-indigo-50 border border-indigo-100 text-indigo-700 hover:bg-indigo-650 hover:text-white transition-all cursor-pointer font-bold text-[9px] uppercase px-2 py-1"
+                                >
+                                  APPROVE
+                                </button>
+                                <button
+                                  onClick={() => handleApplicationDecisionSubmit(app.id, 'Rejected')}
+                                  className="p-1 rounded bg-rose-50 border border-rose-100 text-rose-700 hover:bg-rose-650 hover:text-white transition-all cursor-pointer font-bold text-[9px] uppercase px-2 py-1"
+                                >
+                                  REJECT
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

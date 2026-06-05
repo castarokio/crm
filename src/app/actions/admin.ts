@@ -330,7 +330,7 @@ export async function downloadFullBackup(adminCallerName: string = 'Hamid') {
 export async function resetCampaign(pin: string, adminCallerName: string = 'Hamid') {
   try {
     const session = await requireAdminSession();
-    const adminPin = (process.env.ADMIN_RESET_PIN || '').trim();
+    const adminPin = (process.env.ADMIN_RESET_PIN || '').replace(/[^0-9]/g, '');
     if (!adminPin || adminPin.length < 6) throw new Error('ADMIN_RESET_PIN_NOT_CONFIGURED');
     if (!safeStringEqual(adminPin, pin)) {
       throw new Error('INVALID_ADMIN_PIN');
