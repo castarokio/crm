@@ -9,9 +9,16 @@ function requireSupabase() {
   return supabase;
 }
 
-export async function verifyDailyViewLimits(callerName: string, trustLevel: string) {
+export async function verifyDailyViewLimits(callerName: string, trustLevel: string, callerRole?: string) {
   try {
     const supabase = requireSupabase();
+    
+    // Bypass limit checks for Admin, Manager, and Supervisor roles
+    const unrestrictedRoles = ['Admin', 'Manager', 'Supervisor'];
+    if (callerRole && unrestrictedRoles.includes(callerRole)) {
+      return { allowed: true, currentCount: 0, limit: 999999 };
+    }
+
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const startOfDay = `${today}T00:00:00.000Z`;
 
@@ -19,8 +26,8 @@ export async function verifyDailyViewLimits(callerName: string, trustLevel: stri
     const { count, error } = await supabase
       .from('audit_logs')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', callerName)
-      .eq('action', 'VIEW_LEAD_DETAILS')
+      .eq('caller_name', callerName)
+      .eq('action_type', 'VIEW_LEAD_DETAILS')
       .gte('created_at', startOfDay);
 
     if (error) throw new Error(error.message);
@@ -60,7 +67,7 @@ export async function logLeadViewAction(leadId: number) {
     const supabase = requireSupabase();
 
     // 1. Verify limit first
-    const limitCheck = await verifyDailyViewLimits(session.name, session.trust_level || 'New');
+    const limitCheck = await verifyDailyViewLimits(session.name, session.trust_level || 'New', session.role);
     if (!limitCheck.allowed) {
       return { success: false, error: 'DAILY_VIEW_LIMIT_EXCEEDED', limit: limitCheck.limit };
     }
