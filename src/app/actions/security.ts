@@ -39,11 +39,10 @@ export async function verifyDailyViewLimits(callerName: string, trustLevel: stri
     if (currentCount >= limit) {
       // Log suspicious activity
       await supabase.from('audit_logs').insert({
-        user_id: callerName,
-        action: 'DAILY_LIMIT_EXCEEDED',
-        entity_type: 'caller_profiles',
-        severity: 'Suspicious',
-        notes: `Caller viewed ${currentCount} leads today. Daily limit: ${limit}. Action blocked.`
+        caller_name: callerName,
+        action_type: 'DAILY_LIMIT_EXCEEDED',
+        details: `Caller viewed ${currentCount} leads today. Daily limit: ${limit}. Action blocked.`,
+        lead_id: null
       });
       return { allowed: false, currentCount, limit };
     }
@@ -68,12 +67,10 @@ export async function logLeadViewAction(leadId: number) {
 
     // 2. Insert audit log for lead view
     const { error } = await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'VIEW_LEAD_DETAILS',
-      entity_type: 'leads',
-      entity_id: leadId.toString(),
-      severity: 'Info',
-      notes: `Lead details loaded by ${session.name} (Daily views: ${limitCheck.currentCount + 1}/${limitCheck.limit === 999999 ? 'unlimited' : limitCheck.limit})`
+      caller_name: session.name,
+      action_type: 'VIEW_LEAD_DETAILS',
+      details: `Lead details loaded by ${session.name} (Daily views: ${limitCheck.currentCount + 1}/${limitCheck.limit === 999999 ? 'unlimited' : limitCheck.limit})`,
+      lead_id: leadId
     });
 
     if (error) throw new Error(error.message);
@@ -92,12 +89,10 @@ export async function logClipboardAction(payload: { leadId: number; channel: str
 
     // Log the copy event
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: `CLIPBOARD_COPY`,
-      entity_type: 'leads',
-      entity_id: payload.leadId.toString(),
-      severity: 'Info',
-      notes: `Copied ${payload.channel} value: "${payload.targetValue.substring(0, 5)}***" on active lead card.`
+      caller_name: session.name,
+      action_type: `CLIPBOARD_COPY`,
+      details: `Copied ${payload.channel} value: "${payload.targetValue.substring(0, 5)}***" on active lead card.`,
+      lead_id: payload.leadId
     });
 
     // Check if the lead copied is in the trap_leads registry
@@ -126,12 +121,10 @@ export async function logClipboardAction(payload: { leadId: number; channel: str
 
       // Log a CRITICAL security event in audit logs
       await supabase.from('audit_logs').insert({
-        user_id: session.name,
-        action: 'TRAP_LEAD_TRIGGERED',
-        entity_type: 'leads',
-        entity_id: payload.leadId.toString(),
-        severity: 'Critical',
-        notes: `CANARY TRAP ENGAGED. Caller ${session.name} copied sensitive trap data via ${payload.channel}.`
+        caller_name: session.name,
+        action_type: 'TRAP_LEAD_TRIGGERED',
+        details: `CANARY TRAP ENGAGED. Caller ${session.name} copied sensitive trap data via ${payload.channel}.`,
+        lead_id: payload.leadId
       });
 
       return { success: true, trapTriggered: true };
@@ -213,12 +206,10 @@ export async function sweepExpiredLocksAction() {
 
           // Log in audits
           await supabase.from('audit_logs').insert({
-            user_id: 'SYSTEM_SWEEPER',
-            action: 'OWNERSHIP_EXPIRED_INACTIVITY',
-            entity_type: 'leads',
-            entity_id: owner.lead_id.toString(),
-            severity: 'Info',
-            notes: `Ownership lock of ${owner.locked_by} expired due to 14 days inactivity.`
+            caller_name: 'SYSTEM_SWEEPER',
+            action_type: 'OWNERSHIP_EXPIRED_INACTIVITY',
+            details: `Ownership lock of ${owner.locked_by} expired due to 14 days inactivity.`,
+            lead_id: owner.lead_id
           });
         }
       }
@@ -229,11 +220,10 @@ export async function sweepExpiredLocksAction() {
 
     if (sweptActiveCount > 0 || swept60DayCount > 0 || inactiveCount > 0) {
       await supabase.from('audit_logs').insert({
-        user_id: session.name,
-        action: 'EXECUTE_LOCK_SWEEP',
-        entity_type: 'lead_locks',
-        severity: 'Info',
-        notes: `Locks sweeper swept ${sweptActiveCount} active locks, ${swept60DayCount} 60-day leases, and ${inactiveCount} inactive 14-day leases.`
+        caller_name: session.name,
+        action_type: 'EXECUTE_LOCK_SWEEP',
+        details: `Locks sweeper swept ${sweptActiveCount} active locks, ${swept60DayCount} 60-day leases, and ${inactiveCount} inactive 14-day leases.`,
+        lead_id: null
       });
     }
 
@@ -255,11 +245,10 @@ export async function logExportAction(leadCount: number) {
     const supabase = requireSupabase();
 
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'EXPORT_LEADS',
-      entity_type: 'leads',
-      severity: 'Warning',
-      notes: `User exported ${leadCount} leads to CSV file.`
+      caller_name: session.name,
+      action_type: 'EXPORT_LEADS',
+      details: `User exported ${leadCount} leads to CSV file.`,
+      lead_id: null
     });
 
     return { success: true };

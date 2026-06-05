@@ -1231,12 +1231,10 @@ async function expireOwnership(supabase: any, leadId: number, lockId: number, re
   }).eq('id', leadId);
 
   await supabase.from('audit_logs').insert({
-    user_id: 'SYSTEM',
-    action: `EXPIRE_OWNERSHIP_${reason}`,
-    entity_type: 'leads',
-    entity_id: leadId.toString(),
-    severity: 'Info',
-    notes: `Lead ownership held by ${ownerName} expired due to ${reason.toLowerCase().replace(/_/g, ' ')}.`
+    caller_name: 'SYSTEM',
+    action_type: `EXPIRE_OWNERSHIP_${reason}`,
+    details: `Lead ownership held by ${ownerName} expired due to ${reason.toLowerCase().replace(/_/g, ' ')}.`,
+    lead_id: leadId
   });
 
   broadcastSse('LOCK_RELEASED', { leadId, user: 'system' });
@@ -1341,12 +1339,10 @@ export async function getNextLeadAction(callerName: string) {
         
         // Log view lead event in audit logs
         await supabase.from('audit_logs').insert({
-          user_id: effectiveCallerName,
-          action: 'VIEW_LEAD_DETAILS',
-          entity_type: 'leads',
-          entity_id: candidate.id.toString(),
-          severity: 'Info',
-          notes: `Lead details viewed inside dialer card cursor.`
+          caller_name: effectiveCallerName,
+          action_type: 'VIEW_LEAD_DETAILS',
+          details: `Lead details viewed inside dialer card cursor.`,
+          lead_id: candidate.id
         });
 
         return { success: true, lead };
@@ -1356,6 +1352,32 @@ export async function getNextLeadAction(callerName: string) {
     return { success: false, error: 'ALL_CANDIDATES_LOCKED' };
   } catch (error: any) {
     console.error('[getNextLeadAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function skipLeadAction(leadId: number, callerName: string, callerRole: string, reason?: string) {
+  try {
+    const supabase = requireSupabase();
+    
+    if (callerRole !== 'Admin') {
+      if (!reason || reason.trim().length < 5) {
+        return { success: false, error: 'A skip reason (minimum 5 characters) is required for non-admin accounts.' };
+      }
+    }
+    
+    const logDetails = reason ? `Reason: ${reason.trim()}` : `Skipped by Admin.`;
+    await supabase.from('audit_logs').insert({
+      caller_name: callerName,
+      action_type: 'SKIP_LEAD',
+      details: logDetails,
+      lead_id: leadId
+    });
+    
+    const res = await releaseActiveLock(leadId, callerName);
+    return { success: res.success, error: res.error };
+  } catch (error: any) {
+    console.error('[skipLeadAction]', error.message);
     return { success: false, error: error.message };
   }
 }

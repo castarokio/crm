@@ -59,12 +59,10 @@ export async function approveCommissionAction(commissionId: number) {
 
     // Audit log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'APPROVE_COMMISSION',
-      entity_type: 'commissions',
-      entity_id: commissionId.toString(),
-      severity: 'Info',
-      notes: `Commission ID ${commissionId} approved by ${session.name}.`
+      caller_name: session.name,
+      action_type: 'APPROVE_COMMISSION',
+      details: `Commission ID ${commissionId} approved by ${session.name}.`,
+      lead_id: null
     });
 
     return { success: true, commission: data };
@@ -96,12 +94,10 @@ export async function payCommissionAction(commissionId: number, proofUrl?: strin
 
     // Audit log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'PAY_COMMISSION',
-      entity_type: 'commissions',
-      entity_id: commissionId.toString(),
-      severity: 'Info',
-      notes: `Commission ID ${commissionId} marked as Paid by ${session.name}. Proof URL: ${proofUrl || 'none'}`
+      caller_name: session.name,
+      action_type: 'PAY_COMMISSION',
+      details: `Commission ID ${commissionId} marked as Paid by ${session.name}. Proof URL: ${proofUrl || 'none'}`,
+      lead_id: null
     });
 
     return { success: true, commission: data };

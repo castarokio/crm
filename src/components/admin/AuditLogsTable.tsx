@@ -2,27 +2,25 @@
 
 import React, { useEffect, useState } from 'react';
 import { getSupabase } from '@/lib/supabase';
-import { Search, ShieldAlert, FileText, Calendar, User, Eye, ArrowUpDown } from 'lucide-react';
+import { Search, ShieldAlert, Eye } from 'lucide-react';
 import { GlassCard } from '../ui/glass-card';
 
 export function AuditLogsTable() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [severityFilter, setSeverityFilter] = useState('All');
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
 
   const fetchLogs = async () => {
     setLoading(true);
     try {
       const db = getSupabase();
-      let query = db.from('audit_logs').select('*');
+      const { data, error } = await db
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
 
-      if (severityFilter !== 'All') {
-        query = query.eq('severity', severityFilter);
-      }
-
-      const { data, error } = await query.order('created_at', { ascending: false }).limit(200);
       if (error) throw error;
       setLogs(data || []);
     } catch (err: any) {
@@ -34,22 +32,22 @@ export function AuditLogsTable() {
 
   useEffect(() => {
     void fetchLogs();
-  }, [severityFilter]);
+  }, []);
 
   const filteredLogs = logs.filter(log => {
     const term = search.toLowerCase();
     return (
-      log.user_id?.toLowerCase().includes(term) ||
-      log.action?.toLowerCase().includes(term) ||
-      log.entity_type?.toLowerCase().includes(term) ||
-      log.notes?.toLowerCase().includes(term)
+      log.caller_name?.toLowerCase().includes(term) ||
+      log.action_type?.toLowerCase().includes(term) ||
+      log.details?.toLowerCase().includes(term) ||
+      (log.lead_id?.toString() || '').includes(term)
     );
   });
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Search and Filter Panel */}
-      <GlassCard className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* Search Panel */}
+      <GlassCard className="p-4 flex items-center justify-between gap-4">
         <div className="relative w-full sm:max-w-xs">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
@@ -59,21 +57,6 @@ export function AuditLogsTable() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-indigo-500 font-medium"
           />
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] text-slate-450 uppercase font-black tracking-wider">Severity:</span>
-          <select
-            value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 cursor-pointer focus:outline-none"
-          >
-            <option value="All">All Levels</option>
-            <option value="Info">Info</option>
-            <option value="Warning">Warning</option>
-            <option value="Suspicious">Suspicious</option>
-            <option value="Critical">Critical</option>
-          </select>
         </div>
       </GlassCard>
 
@@ -86,9 +69,9 @@ export function AuditLogsTable() {
                 <th className="py-3 px-4">Timestamp</th>
                 <th className="py-3 px-4">User</th>
                 <th className="py-3 px-4">Action</th>
-                <th className="py-3 px-4">Entity Type</th>
-                <th className="py-3 px-4">Severity</th>
-                <th className="py-3 px-4 text-right">Details</th>
+                <th className="py-3 px-4">Lead ID</th>
+                <th className="py-3 px-4">Details</th>
+                <th className="py-3 px-4 text-right">View</th>
               </tr>
             </thead>
             <tbody>
@@ -111,23 +94,16 @@ export function AuditLogsTable() {
                       {new Date(log.created_at).toLocaleString()}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">
-                      {log.user_id}
+                      {log.caller_name}
                     </td>
                     <td className="py-3 px-4 font-mono font-bold text-indigo-750">
-                      {log.action}
+                      {log.action_type}
                     </td>
-                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
-                      {log.entity_type} {log.entity_id ? `(${log.entity_id})` : ''}
+                    <td className="py-3 px-4 text-slate-600 whitespace-nowrap font-bold">
+                      {log.lead_id ? `#${log.lead_id}` : '-'}
                     </td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide uppercase ${
-                        log.severity === 'Critical' ? 'bg-rose-50 text-rose-700 border border-rose-100 animate-pulse' :
-                        log.severity === 'Suspicious' ? 'bg-amber-50 text-amber-700 border border-amber-100' :
-                        log.severity === 'Warning' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                        {log.severity}
-                      </span>
+                    <td className="py-3 px-4 text-slate-550 max-w-xs truncate">
+                      {log.details}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -149,13 +125,10 @@ export function AuditLogsTable() {
       {/* Log Detail Modal */}
       {selectedLog && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <GlassCard className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-4 border border-slate-200/50">
+          <GlassCard className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-4 border border-slate-200/50 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-start border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <ShieldAlert className={`w-5 h-5 ${
-                  selectedLog.severity === 'Critical' ? 'text-rose-600' :
-                  selectedLog.severity === 'Suspicious' ? 'text-amber-500' : 'text-indigo-650'
-                }`} />
+                <ShieldAlert className="w-5 h-5 text-indigo-650" />
                 <h3 className="font-display font-black text-xs text-slate-800 uppercase tracking-widest">
                   Compliance Log Details
                 </h3>
@@ -175,39 +148,22 @@ export function AuditLogsTable() {
               </div>
               <div className="flex justify-between py-1 border-b border-slate-50">
                 <span className="text-slate-400 font-bold uppercase text-[9.5px]">Triggered By:</span>
-                <span className="font-bold text-slate-900">{selectedLog.user_id}</span>
+                <span className="font-bold text-slate-900">{selectedLog.caller_name}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-50">
                 <span className="text-slate-400 font-bold uppercase text-[9.5px]">Action Code:</span>
-                <span className="font-mono font-bold text-indigo-700">{selectedLog.action}</span>
+                <span className="font-mono font-bold text-indigo-700">{selectedLog.action_type}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-400 font-bold uppercase text-[9.5px]">Target Entity:</span>
-                <span className="font-medium text-slate-800">{selectedLog.entity_type} ({selectedLog.entity_id || 'none'})</span>
+                <span className="text-slate-400 font-bold uppercase text-[9.5px]">Associated Lead:</span>
+                <span className="font-medium text-slate-800">{selectedLog.lead_id ? `#${selectedLog.lead_id}` : 'None'}</span>
               </div>
 
-              {selectedLog.notes && (
+              {selectedLog.details && (
                 <div className="flex flex-col gap-1 mt-1">
                   <span className="text-slate-400 font-bold uppercase text-[9.5px]">Activity Details:</span>
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] font-medium text-slate-700 leading-relaxed font-body">
-                    {selectedLog.notes}
-                  </div>
-                </div>
-              )}
-
-              {(selectedLog.old_value || selectedLog.new_value) && (
-                <div className="grid grid-cols-2 gap-3 mt-1.5 font-mono text-[10px]">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-slate-400 font-bold uppercase text-[8.5px] font-body">Old Data Value:</span>
-                    <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap max-h-28">
-                      {selectedLog.old_value || 'NULL'}
-                    </pre>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-slate-400 font-bold uppercase text-[8.5px] font-body">New Data Value:</span>
-                    <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap max-h-28">
-                      {selectedLog.new_value || 'NULL'}
-                    </pre>
+                    {selectedLog.details}
                   </div>
                 </div>
               )}

@@ -245,12 +245,10 @@ export async function acceptCallerAgreementAction(name: string) {
 
     // Log to audit log table
     await supabase.from('audit_logs').insert({
-      user_id: name,
-      action: `ACCEPT_AGREEMENT_V${latestVersion}`,
-      entity_type: 'caller_profiles',
-      entity_id: name,
-      severity: 'Info',
-      notes: `Guidelines and Commission Agreement version ${latestVersion} accepted.`
+      caller_name: name,
+      action_type: `ACCEPT_AGREEMENT_V${latestVersion}`,
+      details: `Guidelines and Commission Agreement version ${latestVersion} accepted.`,
+      lead_id: null
     });
 
     return { success: true, acceptedVersion: latestVersion };

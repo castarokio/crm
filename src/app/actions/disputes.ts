@@ -17,7 +17,7 @@ export async function getDisputesAction() {
     let query = supabase.from('disputes').select(`
       *,
       leads (
-        company_name,
+        agency_name,
         phone,
         status
       ),
@@ -87,12 +87,10 @@ export async function fileDisputeAction(payload: {
 
     // Audit Log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'FILE_DISPUTE',
-      entity_type: 'disputes',
-      entity_id: data.id.toString(),
-      severity: 'Warning',
-      notes: `Dispute of type "${payload.disputeType}" opened by ${session.name}. Reason: ${payload.explanation.substring(0, 60)}...`
+      caller_name: session.name,
+      action_type: 'FILE_DISPUTE',
+      details: `Dispute of type "${payload.disputeType}" opened by ${session.name}. Reason: ${payload.explanation.substring(0, 60)}...`,
+      lead_id: payload.leadId || null
     });
 
     return { success: true, dispute: data };
@@ -145,12 +143,10 @@ export async function resolveDisputeAction(disputeId: number, decision: string, 
 
     // Audit Log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'RESOLVE_DISPUTE',
-      entity_type: 'disputes',
-      entity_id: disputeId.toString(),
-      severity: 'Info',
-      notes: `Dispute ID ${disputeId} resolved as "${status}" by ${session.name}. Decision: ${decision}`
+      caller_name: session.name,
+      action_type: 'RESOLVE_DISPUTE',
+      details: `Dispute ID ${disputeId} resolved as "${status}" by ${session.name}. Decision: ${decision}`,
+      lead_id: null
     });
 
     return { success: true, dispute: data };

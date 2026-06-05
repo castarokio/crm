@@ -53,7 +53,7 @@ export function DisputesTab({ callerName, callerRole }: DisputesTabProps) {
     try {
       const db = getSupabase();
       // Fetch some recent leads for the dispute form dropdown
-      const { data } = await db.from('leads').select('id, company_name').order('created_at', { ascending: false }).limit(50);
+      const { data } = await db.from('leads').select('id, agency_name').order('created_at', { ascending: false }).limit(50);
       setLeads(data || []);
     } catch (err) {
       console.error('[loadLeads] failed:', err);
@@ -134,7 +134,7 @@ export function DisputesTab({ callerName, callerRole }: DisputesTabProps) {
                     Dispute ID #{d.id} | Type: {d.dispute_type.toUpperCase()}
                   </span>
                   <h4 className="text-sm font-extrabold text-slate-800 font-display mt-0.5">
-                    Lead: {d.leads?.company_name || 'Unnamed Company'}
+                    Lead: {d.leads?.agency_name || 'Unnamed Company'}
                   </h4>
                 </div>
 
@@ -228,7 +228,7 @@ export function DisputesTab({ callerName, callerRole }: DisputesTabProps) {
                 >
                   <option value="">Select Lead...</option>
                   {leads.map(l => (
-                    <option key={l.id} value={l.id}>{l.company_name} (ID: {l.id})</option>
+                    <option key={l.id} value={l.id}>{l.agency_name} (ID: {l.id})</option>
                   ))}
                 </select>
               </div>

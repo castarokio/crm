@@ -80,14 +80,10 @@ export async function assignDeveloperAction(projectId: number, developerId: stri
 
     // Audit Log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'ASSIGN_DEVELOPER',
-      entity_type: 'projects',
-      entity_id: projectId.toString(),
-      old_value: project?.assigned_developer_id || 'none',
-      new_value: developerId,
-      severity: 'Info',
-      notes: `Project ID ${projectId} assigned to developer ${developerId} by ${session.name}.`
+      caller_name: session.name,
+      action_type: 'ASSIGN_DEVELOPER',
+      details: `Project ID ${projectId} assigned to developer ${developerId} by ${session.name}. (Old Dev: ${project?.assigned_developer_id || 'none'})`,
+      lead_id: null
     });
 
     return { success: true, project: data };
@@ -131,14 +127,10 @@ export async function updateProjectChecklistAction(projectId: number, checklist:
 
     // Log in audits
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'UPDATE_PROJECT_CHECKLIST',
-      entity_type: 'projects',
-      entity_id: projectId.toString(),
-      old_value: JSON.stringify(oldChecklist),
-      new_value: JSON.stringify(checklist),
-      severity: 'Info',
-      notes: `Project ID ${projectId} content checklist updated by ${session.name}.`
+      caller_name: session.name,
+      action_type: 'UPDATE_PROJECT_CHECKLIST',
+      details: `Project ID ${projectId} content checklist updated by ${session.name}.`,
+      lead_id: null
     });
 
     return { success: true, project: data };
@@ -189,14 +181,10 @@ export async function updateProjectStageAction(projectId: number, stage: string,
 
     // Audit log
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'UPDATE_PROJECT_STAGE',
-      entity_type: 'projects',
-      entity_id: projectId.toString(),
-      old_value: project?.current_stage || 'unknown',
-      new_value: stage,
-      severity: 'Info',
-      notes: `Project ID ${projectId} stage updated to "${stage}" by ${session.name}.${previewUrl ? ` Preview URL: ${previewUrl}` : ''}`
+      caller_name: session.name,
+      action_type: 'UPDATE_PROJECT_STAGE',
+      details: `Project ID ${projectId} stage updated to "${stage}" by ${session.name}.${previewUrl ? ` Preview URL: ${previewUrl}` : ''} (Old Stage: ${project?.current_stage || 'unknown'})`,
+      lead_id: null
     });
 
     return { success: true, project: data };

@@ -19,7 +19,8 @@ import {
   createLeadAction,
   recallAllUnansweredAction,
   getSingleLeadAction,
-  getNextLeadAction
+  getNextLeadAction,
+  skipLeadAction
 } from '@/app/actions/leads';
 
 type DialerTabProps = {
@@ -53,6 +54,33 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
   const [newPhone, setNewPhone] = useState<string>('');
   const [newWebsite, setNewWebsite] = useState<string>('');
   const [newEmail, setNewEmail] = useState<string>('');
+
+  // Skip Lead State
+  const [isSkipOpen, setIsSkipOpen] = useState<boolean>(false);
+  const [skipReason, setSkipReason] = useState<string>('');
+  const [skipping, setSkipping] = useState<boolean>(false);
+
+  const handleSkipLead = async () => {
+    if (!activeLead) return;
+    if (callerRole === 'Admin') {
+      const ok = await confirm('Are you sure you want to skip this lead?');
+      if (!ok) return;
+      setSkipping(true);
+      const res = await skipLeadAction(activeLead.id, callerName, callerRole);
+      setSkipping(false);
+      if (res.success) {
+        toast.success('Lead skipped.');
+        setQueue(prev => prev.filter(l => l.id !== activeLead.id));
+        if (currentIndex >= queue.length - 1) {
+          setCurrentIndex(prev => Math.max(0, prev - 1));
+        }
+      } else {
+        toast.error(res.error || 'Failed to skip lead.');
+      }
+    } else {
+      setIsSkipOpen(true);
+    }
+  };
 
   // Offline Hook
   const { isOffline, queueEdit } = useOfflineEdits();
@@ -408,78 +436,41 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
         )
       ) : (
         <div className="flex flex-col gap-4 h-full">
-          {/* Mobile Tab Select Bar */}
-          <div className="flex lg:hidden bg-white border border-slate-250/70 rounded-2xl p-1 shadow-sm font-display text-xs font-bold w-full">
-            <button
-              type="button"
-              onClick={() => setMobileView('queue')}
-              className={`flex-1 py-2 text-center rounded-xl cursor-pointer transition-all ${
-                mobileView === 'queue' ? 'bg-indigo-650 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Queue ({queue.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setMobileView('call')}
-              className={`flex-1 py-2 text-center rounded-xl cursor-pointer transition-all ${
-                mobileView === 'call' ? 'bg-indigo-650 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Active Call ({activeLead?.agency_name ? (activeLead.agency_name.substring(0, 15) + (activeLead.agency_name.length > 15 ? '...' : '')) : 'None'})
-            </button>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start h-full">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start w-full">
             
-            {/* Dialer Queue (Left Column) */}
-            {callerRole !== 'Caller' && (
-              <div className={`lg:col-span-1 h-full ${mobileView === 'queue' ? 'block' : 'hidden lg:block'}`}>
-                <div className="mb-2">
-                  <Button
-                    onClick={() => setIsCreateOpen(true)}
-                    icon={<UserPlus className="w-4.5 h-4.5" />}
-                    className="w-full bg-indigo-650 hover:bg-indigo-700 text-white font-bold uppercase text-[10px] shadow"
-                  >
-                    Add New Contact
-                  </Button>
-                </div>
-                <DialerQueue
-                  queue={queue}
-                  currentIndex={currentIndex}
-                  onSelectIndex={handleSelectIndex}
-                  callerName={callerName}
-                />
-              </div>
-            )}
-
-            {/* Active Call View (Center + Right Columns) */}
-            <div className={`${
-              callerRole === 'Caller' ? 'col-span-1 lg:col-span-4' : 'col-span-1 lg:col-span-3'
-            } grid grid-cols-1 lg:grid-cols-3 gap-6 items-start ${mobileView === 'call' ? 'grid' : 'hidden lg:grid'}`}>
+            {/* Main Dial Card (Left Column) */}
+            <div className="lg:col-span-2 flex flex-col gap-3">
               
-              {/* Main Dial Card (Center Column) */}
-              <div className="lg:col-span-2 flex flex-col gap-3">
-                
-                {/* Position indicator */}
-                <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
-                  <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
+              {/* Position indicator */}
+              <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
+                <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
+                <div className="flex items-center gap-3">
                   <span className="text-[10px] text-slate-800 font-extrabold font-display uppercase">
                     LEAD {currentIndex + 1} of {queue.length} in queue
                   </span>
+                  {callerRole !== 'Caller' && (
+                    <Button
+                      onClick={() => setIsCreateOpen(true)}
+                      className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-750 font-bold uppercase text-[9px] py-1 px-2.5 h-auto rounded-lg cursor-pointer"
+                    >
+                      + Add Contact
+                    </Button>
+                  )}
                 </div>
-
-                <GlassCard className="border border-slate-200/80 shadow-md p-6">
-                  <LeadInfoCard
-                    key={activeLead?.id ?? 'empty'}
-                    lead={activeLead}
-                    callerName={callerName}
-                    onDial={handleDial}
-                    onLeadUpdated={(leadId, fields) => {
-                      setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
-                    }}
-                  />
-                </GlassCard>
               </div>
+
+              <GlassCard className="border border-slate-200/80 shadow-md p-6">
+                <LeadInfoCard
+                  key={activeLead?.id ?? 'empty'}
+                  lead={activeLead}
+                  callerName={callerName}
+                  onDial={handleDial}
+                  onLeadUpdated={(leadId, fields) => {
+                    setQueue(prev => prev.map(l => l.id === leadId ? { ...l, ...fields } : l));
+                  }}
+                />
+              </GlassCard>
+            </div>
 
               {/* Outcome & AI Panel (Right Column) */}
               <div className="lg:col-span-1 flex flex-col gap-6">
@@ -614,6 +605,16 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
                       Save Call Log
                     </Button>
                     
+                    {/* Skip Lead button */}
+                    <Button
+                      onClick={handleSkipLead}
+                      loading={skipping}
+                      variant="secondary"
+                      className="w-full mt-2 bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-amber-800 font-bold uppercase cursor-pointer"
+                    >
+                      Skip Lead
+                    </Button>
+                    
                     {/* Delete if not related button */}
                     {callerRole !== 'Caller' && (
                       <Button
@@ -633,8 +634,73 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
           </div>
         </div>
       </div>
-    </div>
   )}
+
+      {/* Skip Reason Modal */}
+      {isSkipOpen && (
+        <Modal
+          isOpen={isSkipOpen}
+          onClose={() => { setIsSkipOpen(false); setSkipReason(''); }}
+          title="Reason for Skip"
+          subtitle={`Please explain why you are skipping ${activeLead?.agency_name || 'this lead'}`}
+        >
+          <form 
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!activeLead) return;
+              if (skipReason.trim().length < 5) {
+                toast.warning('Please enter a descriptive reason (minimum 5 characters).');
+                return;
+              }
+              setSkipping(true);
+              const res = await skipLeadAction(activeLead.id, callerName, callerRole, skipReason);
+              setSkipping(false);
+              if (res.success) {
+                toast.success('Lead skipped.');
+                setIsSkipOpen(false);
+                setSkipReason('');
+                setQueue(prev => prev.filter(l => l.id !== activeLead.id));
+                if (currentIndex >= queue.length - 1) {
+                  setCurrentIndex(prev => Math.max(0, prev - 1));
+                }
+              } else {
+                toast.error(res.error || 'Failed to skip lead.');
+              }
+            }}
+            className="flex flex-col gap-4 font-body text-xs"
+          >
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-slate-450 font-bold uppercase">Skip Reason *</label>
+              <textarea
+                required
+                rows={3}
+                value={skipReason}
+                onChange={(e) => setSkipReason(e.target.value)}
+                placeholder="e.g. Agency has permanently closed, wrong business type, invalid phone number, etc."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-xs placeholder-slate-350 resize-none font-semibold text-slate-800"
+              />
+            </div>
+            
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 mt-2">
+              <Button 
+                type="button" 
+                variant="secondary" 
+                onClick={() => { setIsSkipOpen(false); setSkipReason(''); }}
+              >
+                CANCEL
+              </Button>
+              <Button 
+                type="submit" 
+                loading={skipping} 
+                className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold"
+                disabled={skipReason.trim().length < 5}
+              >
+                CONFIRM SKIP
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* DateTime Calendar Picker Scheduler Modal */}
       <SchedulerModal

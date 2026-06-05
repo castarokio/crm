@@ -38,12 +38,10 @@ export async function createPaymentRecord(payload: {
 
     // Log to audit logs
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'CREATE_PAYMENT_RECORD',
-      entity_type: 'payments',
-      entity_id: data.id.toString(),
-      severity: 'Info',
-      notes: `Expected payment of ${payload.amountExpected} DZD created for deal ID ${payload.dealId}.`
+      caller_name: session.name,
+      action_type: 'CREATE_PAYMENT_RECORD',
+      details: `Expected payment of ${payload.amountExpected} DZD created for deal ID ${payload.dealId}.`,
+      lead_id: null
     });
 
     return { success: true, payment: data };
@@ -76,12 +74,10 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
 
     // Log to audit logs
     await supabase.from('audit_logs').insert({
-      user_id: session.name,
-      action: 'CONFIRM_PAYMENT',
-      entity_type: 'payments',
-      entity_id: paymentId.toString(),
-      severity: 'Info',
-      notes: `Payment of ${amountReceived} DZD confirmed by ${session.name}.`
+      caller_name: session.name,
+      action_type: 'CONFIRM_PAYMENT',
+      details: `Payment of ${amountReceived} DZD confirmed by ${session.name}.`,
+      lead_id: null
     });
 
     // 2. Query deal details to find owner and commission rate
@@ -107,11 +103,10 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
 
       // Log commission calculation in audit logs
       await supabase.from('audit_logs').insert({
-        user_id: 'SYSTEM',
-        action: 'CALCULATE_COMMISSION',
-        entity_type: 'commissions',
-        severity: 'Info',
-        notes: `Commission of ${commissionAmt} DZD calculated for ${deal.owner_caller_id} (Rate: ${deal.commission_rate}%).`
+        caller_name: 'SYSTEM',
+        action_type: 'CALCULATE_COMMISSION',
+        details: `Commission of ${commissionAmt} DZD calculated for ${deal.owner_caller_id} (Rate: ${deal.commission_rate}%).`,
+        lead_id: null
       });
     }
 
