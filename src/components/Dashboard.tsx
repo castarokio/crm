@@ -380,7 +380,7 @@ export default function Dashboard({
               </button>
             )}
 
-            {['Admin', 'Auditor'].includes(callerRole) && (
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('audit'); setIsSidebarOpen(false); }}
                 className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
@@ -390,10 +390,10 @@ export default function Dashboard({
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
                     : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
-                title={isSidebarCollapsed ? "Compliance Audit" : ""}
+                title={isSidebarCollapsed ? "Call Activity Feed" : ""}
               >
                 <ClipboardList className="w-4 h-4 shrink-0" />
-                {!isSidebarCollapsed && <span>Compliance Audit</span>}
+                {!isSidebarCollapsed && <span>Call Activity Feed</span>}
               </button>
             )}
 
@@ -527,12 +527,12 @@ export default function Dashboard({
               <DisputesTab callerName={callerName} callerRole={callerRole} />
             )}
 
-            {activeTab === 'audit' && ['Admin', 'Auditor'].includes(callerRole) && (
+            {activeTab === 'audit' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
               <AuditLogsTable />
             )}
 
             {activeTab === 'admin' && isAdminOrSupervisor && (
-              <AdminTab callerName={callerName} />
+              <AdminTab callerName={callerName} callerRole={callerRole} />
             )}
           </div>
         </main>

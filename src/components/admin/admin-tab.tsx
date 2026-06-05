@@ -36,11 +36,12 @@ import { toast, confirm } from '@/lib/toast';
 
 type AdminTabProps = {
   callerName: string;
+  callerRole: string;
 };
 
 type AdminSubTab = 'analytics' | 'allocation' | 'csv' | 'callers' | 'maintenance';
 
-export function AdminTab({ callerName }: AdminTabProps) {
+export function AdminTab({ callerName, callerRole }: AdminTabProps) {
   const [activeTab, setActiveTab] = useState<AdminSubTab>('analytics');
   const [loading, setLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -503,17 +504,19 @@ export function AdminTab({ callerName }: AdminTabProps) {
             Callers & Registrations
           </div>
         </button>
-        <button
-          onClick={() => setActiveTab('maintenance')}
-          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider border-b-2 cursor-pointer transition-all shrink-0 ${
-            activeTab === 'maintenance' ? 'border-indigo-650 text-indigo-700' : 'border-transparent text-slate-455 hover:text-slate-700'
-          }`}
-        >
-          <div className="flex items-center gap-1.5">
-            <Database className="w-3.5 h-3.5" />
-            Audits & Maintenance
-          </div>
-        </button>
+        {callerRole === 'Admin' && (
+          <button
+            onClick={() => setActiveTab('maintenance')}
+            className={`px-5 py-3 text-xs font-bold uppercase tracking-wider border-b-2 cursor-pointer transition-all shrink-0 ${
+              activeTab === 'maintenance' ? 'border-indigo-650 text-indigo-700' : 'border-transparent text-slate-455 hover:text-slate-700'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Database className="w-3.5 h-3.5" />
+              Audits & Maintenance
+            </div>
+          </button>
+        )}
       </div>
 
       {statusMessage && (
@@ -1107,7 +1110,7 @@ export function AdminTab({ callerName }: AdminTabProps) {
         </div>
       )}
 
-      {activeTab === 'maintenance' && (
+      {activeTab === 'maintenance' && callerRole === 'Admin' && (
         <div className="flex flex-col gap-6 max-w-5xl">
           {/* Backup & reset cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1198,7 +1201,11 @@ export function AdminTab({ callerName }: AdminTabProps) {
                     <tr key={log.id} className="border-b border-slate-55 hover:bg-slate-50/50">
                       <td className="px-4 py-2 text-slate-400 text-[10px]">{new Date(log.created_at).toLocaleString()}</td>
                       <td className="px-4 py-2 font-bold uppercase tracking-wider text-[10px] text-indigo-650">{log.caller_name}</td>
-                      <td className="px-4 py-2 font-extrabold uppercase text-[9px] text-slate-50">{log.action_type}</td>
+                      <td className="px-4 py-2">
+                        <span className="px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider text-[9px] bg-indigo-50 text-indigo-750 border border-indigo-150">
+                          {log.action_type}
+                        </span>
+                      </td>
                       <td className="px-4 py-2 font-medium">{log.details}</td>
                     </tr>
                   ))}

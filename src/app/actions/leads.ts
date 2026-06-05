@@ -1381,3 +1381,56 @@ export async function skipLeadAction(leadId: number, callerName: string, callerR
     return { success: false, error: error.message };
   }
 }
+
+export async function getCallActivityLogs() {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+
+    // Query call history logs
+    const { data: callHistory, error: callErr } = await supabase
+      .from('call_history')
+      .select('id, created_at, caller_name, call_status, notes, lead_id')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (callErr) throw new Error(callErr.message);
+
+    // Query skip logs
+    const { data: skipLogs, error: skipErr } = await supabase
+      .from('audit_logs')
+      .select('id, created_at, caller_name, action_type, details, lead_id')
+      .eq('action_type', 'SKIP_LEAD')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (skipErr) throw new Error(skipErr.message);
+
+    // Map to unified schema
+    const formattedCalls = (callHistory || []).map((c: any) => ({
+      id: `call_${c.id}`,
+      created_at: c.created_at,
+      caller_name: c.caller_name,
+      action_type: `CALL: ${c.call_status}`,
+      lead_id: c.lead_id,
+      details: c.notes || 'No call notes recorded.'
+    }));
+
+    const formattedSkips = (skipLogs || []).map((s: any) => ({
+      id: `skip_${s.id}`,
+      created_at: s.created_at,
+      caller_name: s.caller_name,
+      action_type: s.action_type,
+      lead_id: s.lead_id,
+      details: s.details
+    }));
+
+    const combined = [...formattedCalls, ...formattedSkips]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 150);
+
+    return { success: true, logs: combined };
+  } catch (error: any) {
+    console.error('[getCallActivityLogs Error]', error.message);
+    return { success: false, error: error.message, logs: [] };
+  }
+}
+

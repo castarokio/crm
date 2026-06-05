@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, ShieldAlert, Eye } from 'lucide-react';
 import { GlassCard } from '../ui/glass-card';
-import { getAuditLogs } from '@/app/actions/admin';
+import { getCallActivityLogs } from '@/app/actions/leads';
 
 export function AuditLogsTable() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -14,7 +14,7 @@ export function AuditLogsTable() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const res = await getAuditLogs();
+      const res = await getCallActivityLogs();
       if (!res.success) throw new Error(res.error || 'Failed to fetch logs');
       setLogs(res.logs || []);
     } catch (err: any) {
@@ -46,7 +46,7 @@ export function AuditLogsTable() {
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search audit trail..."
+            placeholder="Search activity logs..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-indigo-500 font-medium"
@@ -72,13 +72,13 @@ export function AuditLogsTable() {
               {loading ? (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-slate-400 font-semibold uppercase">
-                    Loading compliance logs...
+                    Loading call activity...
                   </td>
                 </tr>
               ) : filteredLogs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-slate-400 font-semibold uppercase">
-                    No compliance records found.
+                    No call activities found.
                   </td>
                 </tr>
               ) : (
@@ -124,7 +124,7 @@ export function AuditLogsTable() {
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-indigo-650" />
                 <h3 className="font-display font-black text-xs text-slate-800 uppercase tracking-widest">
-                  Compliance Log Details
+                  Call Activity Details
                 </h3>
               </div>
               <button
