@@ -89,6 +89,39 @@ export async function verifyCallerPinAction(name: string, pin: string) {
         await setCallerSession(name, role, trustLevel, agreementVersion);
         return { success: true, role, agreementAcceptedVersion: agreementVersion };
       }
+      
+      // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
+      if (verifyCallerPin(data.pin, '000000')) {
+        let expectedPin = '';
+        let role = 'Caller';
+        if (name === 'Hamid') {
+          expectedPin = (process.env.HAMID_PIN || '').trim();
+          role = 'Admin';
+        } else if (name === 'Oussama') {
+          expectedPin = (process.env.OUSSAMA_PIN || '').trim();
+          role = 'Caller';
+        } else if (name === 'Kamel') {
+          expectedPin = (process.env.KAMEL_PIN || '').trim();
+          role = 'Caller';
+        } else if (name === 'Yacine') {
+          expectedPin = (process.env.YACINE_PIN || '').trim();
+          role = 'Supervisor';
+        } else if (name === 'Sofiane') {
+          expectedPin = (process.env.SOFIANE_PIN || '').trim();
+          role = 'Viewer';
+        }
+
+        if (expectedPin !== '' && safeStringEqual(expectedPin, pin)) {
+          await supabase
+            .from('caller_profiles')
+            .update({ pin: hashCallerPin(pin) })
+            .eq('name', name);
+          const finalRole = (data.role || role) as CallerRole;
+          await setCallerSession(name, finalRole);
+          return { success: true, role: finalRole };
+        }
+      }
+      
       return { success: false };
     }
     
@@ -103,6 +136,12 @@ export async function verifyCallerPinAction(name: string, pin: string) {
     } else if (name === 'Kamel') {
       expectedPin = (process.env.KAMEL_PIN || '').replace(/[^0-9]/g, '');
       role = 'Caller';
+    } else if (name === 'Yacine') {
+      expectedPin = (process.env.YACINE_PIN || '').trim();
+      role = 'Supervisor';
+    } else if (name === 'Sofiane') {
+      expectedPin = (process.env.SOFIANE_PIN || '').trim();
+      role = 'Viewer';
     }
     
     const matched = expectedPin !== '' && safeStringEqual(expectedPin, pin);
@@ -129,6 +168,20 @@ export async function verifyPortalPinAction(pin: string) {
         await setPortalSession();
         return { success: true };
       }
+      
+      // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
+      if (verifyCallerPin(customPinObj.pin, '000000')) {
+        const expectedPortalPin = (process.env.PORTAL_PIN || '').trim();
+        if (expectedPortalPin && safeStringEqual(expectedPortalPin, pin)) {
+          await supabase
+            .from('caller_profiles')
+            .update({ pin: hashCallerPin(pin) })
+            .eq('name', '__portal_settings__');
+          await setPortalSession();
+          return { success: true };
+        }
+      }
+      
       return { success: false };
     } else {
       const expectedPortalPin = (process.env.PORTAL_PIN || '').replace(/[^0-9]/g, '');
