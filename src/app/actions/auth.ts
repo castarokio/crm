@@ -123,7 +123,7 @@ export async function verifyPortalPinAction(pin: string) {
       .eq('name', '__portal_settings__')
       .single();
 
-    if (customPinObj && customPinObj.pin) {
+    if (customPinObj && customPinObj.pin && customPinObj.pin !== '000000') {
       const success = verifyCallerPin(customPinObj.pin, pin);
       if (success) {
         await setPortalSession();
