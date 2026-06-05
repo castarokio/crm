@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { getSupabase } from '@/lib/supabase';
 import { Search, ShieldAlert, Eye } from 'lucide-react';
 import { GlassCard } from '../ui/glass-card';
+import { getAuditLogs } from '@/app/actions/admin';
 
 export function AuditLogsTable() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -14,15 +14,9 @@ export function AuditLogsTable() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const db = getSupabase();
-      const { data, error } = await db
-        .from('audit_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (error) throw error;
-      setLogs(data || []);
+      const res = await getAuditLogs();
+      if (!res.success) throw new Error(res.error || 'Failed to fetch logs');
+      setLogs(res.logs || []);
     } catch (err: any) {
       console.error('[fetchLogs] failed:', err.message);
     } finally {

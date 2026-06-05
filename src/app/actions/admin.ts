@@ -485,7 +485,7 @@ export async function deleteCallerProfile(name: string) {
 
 export async function getAuditLogs() {
   try {
-    await requireAdminSession();
+    await requireRole(['Admin', 'Auditor']);
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('audit_logs')

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Phone, CheckCircle, RefreshCw, AlertCircle, Sparkles, Loader2, Calendar, UserPlus } from 'lucide-react';
+import { Phone, CheckCircle, RefreshCw, AlertCircle, Sparkles, Loader2, Calendar, UserPlus, BarChart3, Award } from 'lucide-react';
 import { DialerQueue } from './dialer-queue';
 import { LeadInfoCard } from './lead-info-card';
 import { GlassCard } from '../ui/glass-card';
@@ -22,6 +22,7 @@ import {
   getNextLeadAction,
   skipLeadAction
 } from '@/app/actions/leads';
+import { getTeamLeaderboardAction } from '@/app/actions/pipeline';
 
 type DialerTabProps = {
   callerName: string;
@@ -46,6 +47,23 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
 
 
   const [mobileView, setMobileView] = useState<'queue' | 'call'>('call');
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(true);
+
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      const res = await getTeamLeaderboardAction();
+      if (res.success && res.leaderboard) {
+        setLeaderboard(res.leaderboard);
+      }
+    } catch (err) {
+      console.error('[Load Leaderboard Error]', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLeaderboard();
+  }, [loadLeaderboard]);
 
   // Add Lead Modal State
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
@@ -436,29 +454,118 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
         )
       ) : (
         <div className="flex flex-col gap-4 h-full">
+          {/* Top Actions Row */}
+          <div className="flex justify-between items-center w-full px-1">
+            <div className="flex items-center gap-2">
+              {leaderboard.length > 0 && (callerRole !== 'Developer' && callerRole !== 'Auditor') && (
+                <button
+                  onClick={() => setShowLeaderboard(!showLeaderboard)}
+                  className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold uppercase text-[9px] py-1.5 px-3 rounded-xl cursor-pointer flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-indigo-650" />
+                  {showLeaderboard ? 'Hide Call List Progress' : 'Show Call List Progress'}
+                </button>
+              )}
+              <span className="text-[10px] text-slate-550 font-bold font-display uppercase bg-slate-100/80 px-2.5 py-1 rounded-lg border border-slate-200/50">
+                LEAD {currentIndex + 1} of {queue.length} IN QUEUE
+              </span>
+            </div>
+            
+            {callerRole !== 'Caller' && (
+              <Button
+                onClick={() => setIsCreateOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[9px] py-1.5 h-auto px-4 rounded-xl cursor-pointer"
+              >
+                + Add Contact
+              </Button>
+            )}
+          </div>
+
+          {/* Animated Team Scorecard Leaderboard */}
+          {showLeaderboard && leaderboard.length > 0 && (callerRole !== 'Developer' && callerRole !== 'Auditor') && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0 animate-in fade-in slide-in-from-top-3 duration-500 mt-1">
+              {leaderboard.slice(0, 3).map((item, idx) => {
+                const formatPercentage = (numerator: number, denominator: number) => {
+                  if (!denominator) return 0;
+                  return Math.min(100, Math.round((numerator / denominator) * 100));
+                };
+                const progress = formatPercentage(item.calls_today, item.daily_target);
+                
+                const borderColors = [
+                  'border-indigo-500/30 shadow-indigo-100/50 bg-indigo-50/5',
+                  'border-blue-500/25 shadow-blue-100/40 bg-blue-50/5',
+                  'border-slate-200 shadow-slate-100/40 bg-slate-50/5'
+                ];
+                
+                const badges = [
+                  '🏆 Rank 1',
+                  '🥈 Rank 2',
+                  '🥉 Rank 3'
+                ];
+
+                return (
+                  <div 
+                    key={item.name} 
+                    className={`p-4 bg-white rounded-2xl border ${borderColors[idx] || 'border-slate-200'} shadow-sm flex flex-col gap-2.5 transition-all hover:scale-[1.01] duration-300 relative overflow-hidden`}
+                  >
+                    {idx === 0 && (
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-800 text-xs border border-slate-200 uppercase">
+                          {item.name[0]}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="font-display font-extrabold text-slate-900 uppercase tracking-wide text-[11px] flex items-center gap-1">
+                            {item.name}
+                            {item.status === 'Disabled' && (
+                              <span className="text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 px-1 rounded uppercase">SUSP</span>
+                            )}
+                          </span>
+                          <span className="text-[8.5px] font-semibold text-slate-400 uppercase tracking-wider">{badges[idx]}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className="text-[9.5px] text-slate-455 uppercase font-black tracking-widest block leading-none">Calls Made</span>
+                        <h4 className="text-sm font-black text-slate-800 font-display mt-1">{item.calls_today} <span className="text-[10px] text-slate-455 font-normal">/ {item.daily_target}</span></h4>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1 mt-1">
+                      <div className="flex justify-between items-center text-[9px] font-bold text-slate-655">
+                        <span>Daily Progress</span>
+                        <span className="text-indigo-650 font-black">{progress}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-1000 ${
+                            idx === 0 ? 'bg-indigo-600' :
+                            idx === 1 ? 'bg-blue-500' :
+                            'bg-slate-500'
+                          }`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] text-slate-455 font-bold uppercase tracking-wider border-t border-slate-100 pt-2 mt-1">
+                      <span>Appts This Week:</span>
+                      <span className="font-extrabold text-slate-800 font-display">{item.appointments_this_week} / {item.weekly_target}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start w-full">
             
             {/* Main Dial Card (Left Column) */}
             <div className="lg:col-span-2 flex flex-col gap-3">
               
-              {/* Position indicator */}
-              <div className="px-4 py-2 bg-white/80 border border-slate-200 rounded-xl flex items-center justify-between shadow-sm">
-                <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Selected Position</span>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-slate-800 font-extrabold font-display uppercase">
-                    LEAD {currentIndex + 1} of {queue.length} in queue
-                  </span>
-                  {callerRole !== 'Caller' && (
-                    <Button
-                      onClick={() => setIsCreateOpen(true)}
-                      className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-750 font-bold uppercase text-[9px] py-1 px-2.5 h-auto rounded-lg cursor-pointer"
-                    >
-                      + Add Contact
-                    </Button>
-                  )}
-                </div>
-              </div>
-
               <GlassCard className="border border-slate-200/80 shadow-md p-6">
                 <LeadInfoCard
                   key={activeLead?.id ?? 'empty'}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X, Scale, FileCheck2, ClipboardList, DollarSign } from 'lucide-react';
+import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X, Scale, FileCheck2, ClipboardList, DollarSign, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DialerTab } from './dialer/dialer-tab';
 import { PipelineTab } from './pipeline/pipeline-tab';
 import { DirectoryTab } from './directory/directory-tab';
@@ -33,6 +33,14 @@ export default function Dashboard({
     callerRole === 'Developer' ? 'projects' : callerRole === 'Auditor' ? 'audit' : 'dialer'
   );
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const val = localStorage.getItem('sidebar_collapsed') === 'true';
+      setIsSidebarCollapsed(val);
+    }
+  }, []);
   const [loadingTargets, setLoadingTargets] = useState<boolean>(true);
   const [targets, setTargets] = useState<{
     daily_call_target: number;
@@ -205,8 +213,9 @@ export default function Dashboard({
 
         {/* Navigation Sidebar */}
         <aside className={`
-          fixed inset-y-0 left-0 z-40 w-64 bg-white p-5 flex flex-col gap-6 shadow-2xl transition-transform duration-300 transform md:relative md:translate-x-0 md:shadow-none md:border-r md:border-slate-200/80 md:bg-white/70 md:backdrop-blur-md shrink-0
+          fixed inset-y-0 left-0 z-40 bg-white p-5 flex flex-col gap-6 shadow-2xl transition-all duration-300 transform md:relative md:translate-x-0 md:shadow-none md:border-r md:border-slate-200/80 md:bg-white/70 md:backdrop-blur-md shrink-0
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${isSidebarCollapsed ? 'md:w-20 md:p-3' : 'md:w-64 md:p-5'}
         `}>
           
           {/* Mobile Close Button */}
@@ -217,21 +226,44 @@ export default function Dashboard({
           </div>
 
           {/* Logo Brand Header */}
-          <div className="flex flex-col gap-1.5 border-b border-slate-100 pb-4">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-indigo-650 flex items-center justify-center text-white font-display font-extrabold text-sm tracking-tighter">
-                OS
+          <div className="flex flex-col gap-1.5 border-b border-slate-100 pb-4 relative">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-650 flex items-center justify-center text-white font-display font-extrabold text-sm tracking-tighter shrink-0">
+                  OS
+                </div>
+                {!isSidebarCollapsed && (
+                  <h2 className="font-display text-xs font-black uppercase tracking-widest text-slate-850">
+                    Call-OS CRM
+                  </h2>
+                )}
               </div>
-              <h2 className="font-display text-xs font-black uppercase tracking-widest text-slate-850">
-                Call-OS CRM
-              </h2>
+              
+              {/* Collapse/Expand Toggle Button for Desktop */}
+              <button
+                onClick={() => {
+                  const newVal = !isSidebarCollapsed;
+                  setIsSidebarCollapsed(newVal);
+                  localStorage.setItem('sidebar_collapsed', String(newVal));
+                }}
+                className="hidden md:block p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+              >
+                {isSidebarCollapsed ? (
+                  <ChevronRight className="w-4.5 h-4.5" />
+                ) : (
+                  <ChevronLeft className="w-4.5 h-4.5" />
+                )}
+              </button>
             </div>
-            <div className="flex items-center gap-1.5 mt-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] text-slate-450 uppercase font-bold tracking-wider">
-                Caller: <strong className="text-slate-800">{callerName}</strong> ({callerRole})
-              </span>
-            </div>
+            {!isSidebarCollapsed && (
+              <div className="flex items-center gap-1.5 mt-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[10px] text-slate-455 uppercase font-bold tracking-wider">
+                  Caller: <strong className="text-slate-800">{callerName}</strong> ({callerRole})
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Sidebar Nav Buttons */}
@@ -239,15 +271,18 @@ export default function Dashboard({
             {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('dialer'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'dialer'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Outbound Dialer" : ""}
               >
                 <Phone className="w-4 h-4 shrink-0" />
-                <span>Outbound Dialer</span>
-                {counts.total > 0 && (
+                {!isSidebarCollapsed && <span>Outbound Dialer</span>}
+                {!isSidebarCollapsed && counts.total > 0 && (
                   <span className="ml-auto text-[9px] bg-slate-100 border border-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">
                     {counts.total}
                   </span>
@@ -258,15 +293,18 @@ export default function Dashboard({
             {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'pipeline'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Deal Pipeline" : ""}
               >
                 <BarChart3 className="w-4 h-4 shrink-0" />
-                <span>Deal Pipeline</span>
-                {counts.converted > 0 && (
+                {!isSidebarCollapsed && <span>Deal Pipeline</span>}
+                {!isSidebarCollapsed && counts.converted > 0 && (
                   <span className="ml-auto text-[9px] bg-emerald-50 border border-emerald-150 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
                     {counts.converted}
                   </span>
@@ -277,143 +315,168 @@ export default function Dashboard({
             {['Admin', 'Manager', 'Supervisor', 'Auditor', 'Viewer'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('directory'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'directory'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Directory Grid" : ""}
               >
                 <Folder className="w-4 h-4 shrink-0" />
-                <span>Directory Grid</span>
+                {!isSidebarCollapsed && <span>Directory Grid</span>}
               </button>
             )}
 
             {['Admin', 'Manager', 'Supervisor', 'Developer'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('projects'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'projects'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Active Projects" : ""}
               >
                 <FileCheck2 className="w-4 h-4 shrink-0" />
-                <span>Active Projects</span>
+                {!isSidebarCollapsed && <span>Active Projects</span>}
               </button>
             )}
 
             {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('commissions'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'commissions'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Commissions Ledger" : ""}
               >
                 <DollarSign className="w-4 h-4 shrink-0" />
-                <span>Commissions Ledger</span>
+                {!isSidebarCollapsed && <span>Commissions Ledger</span>}
               </button>
             )}
 
             {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('disputes'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'disputes'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Dispute Center" : ""}
               >
                 <Scale className="w-4 h-4 shrink-0" />
-                <span>Dispute Center</span>
+                {!isSidebarCollapsed && <span>Dispute Center</span>}
               </button>
             )}
 
             {['Admin', 'Auditor'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('audit'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'audit'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Compliance Audit" : ""}
               >
                 <ClipboardList className="w-4 h-4 shrink-0" />
-                <span>Compliance Audit</span>
+                {!isSidebarCollapsed && <span>Compliance Audit</span>}
               </button>
             )}
 
             {['Admin', 'Supervisor'].includes(callerRole) && (
               <button
                 onClick={() => { setActiveTab('admin'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
                   activeTab === 'admin'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-850 hover:bg-slate-50/50'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
+                title={isSidebarCollapsed ? "Admin Settings" : ""}
               >
                 <Shield className="w-4 h-4 shrink-0" />
-                <span>Admin Settings</span>
+                {!isSidebarCollapsed && <span>Admin Settings</span>}
               </button>
             )}
           </nav>
 
           {/* Caller Performance Targets Tracker */}
           <div className="border-t border-slate-100 pt-4 flex flex-col gap-3.5">
-            <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider font-body">
-              <Award className="w-4 h-4 text-indigo-650 shrink-0" />
-              <span>Goals Dashboard</span>
-            </div>
-            
-            <div className="flex flex-col gap-2.5 font-body text-[10px]">
-              {/* Daily Target Progress */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between font-bold text-slate-655">
-                  <span>Calls Today</span>
-                  <span>
-                    {targets.calls_today} / {targets.daily_call_target}
-                  </span>
+            {!isSidebarCollapsed && (
+              <>
+                <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider font-body">
+                  <Award className="w-4 h-4 text-indigo-650 shrink-0" />
+                  <span>Goals Dashboard</span>
                 </div>
-                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
-                  <div
-                    className="h-full bg-indigo-650 rounded-full transition-all duration-500"
-                    style={{ width: `${formatPercentage(targets.calls_today, targets.daily_call_target)}%` }}
-                  />
-                </div>
-              </div>
+                
+                <div className="flex flex-col gap-2.5 font-body text-[10px]">
+                  {/* Daily Target Progress */}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between font-bold text-slate-655">
+                      <span>Calls Today</span>
+                      <span>
+                        {targets.calls_today} / {targets.daily_call_target}
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                      <div
+                        className="h-full bg-indigo-650 rounded-full transition-all duration-500"
+                        style={{ width: `${formatPercentage(targets.calls_today, targets.daily_call_target)}%` }}
+                      />
+                    </div>
+                  </div>
 
-              {/* Weekly Appointments Target Progress */}
-              <div className="flex flex-col gap-1 mt-1.5">
-                <div className="flex justify-between font-bold text-slate-655">
-                  <span>Weekly Appts</span>
-                  <span>
-                    {targets.appointments_this_week} / {targets.weekly_appointment_target}
-                  </span>
-                </div>
-                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
-                  <div
-                    className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                    style={{ width: `${formatPercentage(targets.appointments_this_week, targets.weekly_appointment_target)}%` }}
-                  />
-                </div>
-              </div>
+                  {/* Weekly Appointments Target Progress */}
+                  <div className="flex flex-col gap-1 mt-1.5">
+                    <div className="flex justify-between font-bold text-slate-655">
+                      <span>Weekly Appts</span>
+                      <span>
+                        {targets.appointments_this_week} / {targets.weekly_appointment_target}
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                        style={{ width: `${formatPercentage(targets.appointments_this_week, targets.weekly_appointment_target)}%` }}
+                      />
+                    </div>
+                  </div>
 
-              {/* Status information */}
-              {targets.calls_today >= targets.daily_call_target && (
-                <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-800 flex items-center gap-1.5 font-bold uppercase text-[9px] tracking-wide mt-1">
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                  Daily Target Achieved!
+                  {/* Status information */}
+                  {targets.calls_today >= targets.daily_call_target && (
+                    <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-800 flex items-center gap-1.5 font-bold uppercase text-[9px] tracking-wide mt-1">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      Daily Target Achieved!
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
 
             <button
               onClick={onLogoutCaller}
-              className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 hover:border-rose-200 text-slate-550 hover:text-rose-700 hover:bg-rose-50/30 transition-all font-bold text-[10px] uppercase tracking-wider cursor-pointer"
+              className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 hover:border-rose-200 text-slate-550 hover:text-rose-700 hover:bg-rose-50/30 transition-all font-bold text-[10px] uppercase tracking-wider cursor-pointer ${
+                isSidebarCollapsed ? 'px-0 border-none' : ''
+              }`}
+              title={isSidebarCollapsed ? "Logout Session" : ""}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              LOGOUT SESSION
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              {!isSidebarCollapsed && <span>LOGOUT SESSION</span>}
             </button>
           </div>
         </aside>
@@ -421,81 +484,7 @@ export default function Dashboard({
         {/* Dynamic View Box */}
         <main className="flex-1 overflow-hidden p-3 md:p-6 flex flex-col gap-4 md:gap-6">
           
-          {/* Animated Team Scorecard Leaderboard */}
-          {leaderboard.length > 0 && (callerRole !== 'Developer' && callerRole !== 'Auditor') && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0 animate-in fade-in slide-in-from-top-3 duration-500">
-              {leaderboard.slice(0, 3).map((item, idx) => {
-                const progress = formatPercentage(item.calls_today, item.daily_target);
-                
-                const borderColors = [
-                  'border-indigo-500/30 shadow-indigo-100/50 bg-indigo-50/5',
-                  'border-blue-500/25 shadow-blue-100/40 bg-blue-50/5',
-                  'border-slate-200 shadow-slate-100/40 bg-slate-50/5'
-                ];
-                
-                const badges = [
-                  '🏆 Rank 1',
-                  '🥈 Rank 2',
-                  '🥉 Rank 3'
-                ];
 
-                return (
-                  <div 
-                    key={item.name} 
-                    className={`p-4 bg-white rounded-2xl border ${borderColors[idx] || 'border-slate-200'} shadow-sm flex flex-col gap-2.5 transition-all hover:scale-[1.02] duration-300 relative overflow-hidden`}
-                  >
-                    {idx === 0 && (
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
-                    )}
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-800 text-xs border border-slate-200 uppercase">
-                          {item.name[0]}
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="font-display font-extrabold text-slate-900 uppercase tracking-wide text-[11px] flex items-center gap-1">
-                            {item.name}
-                            {item.status === 'Disabled' && (
-                              <span className="text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 px-1 rounded uppercase">SUSP</span>
-                            )}
-                          </span>
-                          <span className="text-[8.5px] font-semibold text-slate-400 uppercase tracking-wider">{badges[idx]}</span>
-                        </div>
-                      </div>
-                      
-                      <div className="text-right">
-                        <span className="text-[9.5px] text-slate-455 uppercase font-black tracking-widest block leading-none">Calls Made</span>
-                        <h4 className="text-sm font-black text-slate-800 font-display mt-1">{item.calls_today} <span className="text-[10px] text-slate-455 font-normal">/ {item.daily_target}</span></h4>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-1 mt-1">
-                      <div className="flex justify-between items-center text-[9px] font-bold text-slate-655">
-                        <span>Daily Progress</span>
-                        <span className="text-indigo-650 font-black">{progress}%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
-                        <div 
-                          className={`h-full rounded-full transition-all duration-1000 ${
-                            idx === 0 ? 'bg-indigo-600' :
-                            idx === 1 ? 'bg-blue-500' :
-                            'bg-slate-500'
-                          }`}
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[9px] text-slate-455 font-bold uppercase tracking-wider border-t border-slate-100 pt-2 mt-1">
-                      <span>Appts This Week:</span>
-                      <span className="font-extrabold text-slate-800 font-display">{item.appointments_this_week} / {item.weekly_target}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
           <div className="flex-1 overflow-y-auto pr-1">
             {activeTab === 'dialer' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (

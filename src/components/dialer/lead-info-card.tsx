@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Phone, Mail, Globe, MapPin, Star, ExternalLink, Check, Loader2, 
-  AlertCircle, Clock, Plus, Trash2, CheckSquare, Square, Copy
+  AlertCircle, Clock, Plus, Trash2, CheckSquare, Square, Copy, Edit2
 } from 'lucide-react';
 
 const Facebook = (props: React.SVGProps<SVGSVGElement>) => (
@@ -105,6 +105,21 @@ export function LeadInfoCard({
     messagedSocial: false,
   });
 
+  const [isEditingPrimaryPhone, setIsEditingPrimaryPhone] = useState<boolean>(false);
+  const [isEditingPrimaryEmail, setIsEditingPrimaryEmail] = useState<boolean>(false);
+
+  const [primaryPhoneInput, setPrimaryPhoneInput] = useState<string>('');
+  const [primaryEmailInput, setPrimaryEmailInput] = useState<string>('');
+
+  const [facebookInput, setFacebookInput] = useState<string>('');
+  const [instagramInput, setInstagramInput] = useState<string>('');
+  const [tiktokInput, setTiktokInput] = useState<string>('');
+  const [linkedinInput, setLinkedinInput] = useState<string>('');
+  const [socialLinkInput, setSocialLinkInput] = useState<string>('');
+
+  const primaryPhoneRef = useRef<HTMLInputElement>(null);
+  const primaryEmailRef = useRef<HTMLInputElement>(null);
+
   // Lock lease countdown
   const [lockTimeRemaining, setLockTimeRemaining] = useState<string>('10:00');
   
@@ -206,6 +221,15 @@ export function LeadInfoCard({
         running_ads: lead.running_ads || 'No',
         services: lead.services || '',
       });
+      setPrimaryPhoneInput(lead.phone || '');
+      setPrimaryEmailInput(lead.email || '');
+      setFacebookInput(lead.facebook || '');
+      setInstagramInput(lead.instagram || '');
+      setTiktokInput(lead.tiktok || '');
+      setLinkedinInput(lead.linkedin || '');
+      setSocialLinkInput(lead.social_link || '');
+      setIsEditingPrimaryPhone(false);
+      setIsEditingPrimaryEmail(false);
       setSaveStatus({});
       
       // Parse alternate contacts
@@ -410,7 +434,13 @@ Portfolio : https://castarokio.github.io/`;
 
   // Alternate Phones actions
   const addAltPhone = () => {
-    setAltPhones(prev => [...prev, '']);
+    if (!lead.phone) {
+      setIsEditingPrimaryPhone(true);
+      setTimeout(() => primaryPhoneRef.current?.focus(), 50);
+      toast.info("Please fill in the primary phone number first.");
+    } else {
+      setAltPhones(prev => [...prev, '']);
+    }
   };
 
   const removeAltPhone = (idx: number) => {
@@ -430,7 +460,13 @@ Portfolio : https://castarokio.github.io/`;
 
   // Alternate Emails actions
   const addAltEmail = () => {
-    setAltEmails(prev => [...prev, '']);
+    if (!lead.email) {
+      setIsEditingPrimaryEmail(true);
+      setTimeout(() => primaryEmailRef.current?.focus(), 50);
+      toast.info("Please fill in the primary email first.");
+    } else {
+      setAltEmails(prev => [...prev, '']);
+    }
   };
 
   const removeAltEmail = (idx: number) => {
@@ -650,13 +686,40 @@ Portfolio : https://castarokio.github.io/`;
                   </button>
                 </h4>
 
-                {/* Phone 1 */}
-                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Phone</span>
-                    {lead.phone ? (
+                 {/* Phone 1 */}
+                {!lead.phone || isEditingPrimaryPhone ? (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                    <div className="flex-1 flex flex-col">
+                      <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                        <span>Primary Phone</span>
+                        {renderStatusIndicator('phone')}
+                      </span>
+                      <input
+                        ref={primaryPhoneRef}
+                        type="text"
+                        value={primaryPhoneInput}
+                        onChange={(e) => setPrimaryPhoneInput(e.target.value)}
+                        onBlur={() => {
+                          void handleBlurSave('phone', primaryPhoneInput || null);
+                          setIsEditingPrimaryPhone(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            void handleBlurSave('phone', primaryPhoneInput || null);
+                            setIsEditingPrimaryPhone(false);
+                          }
+                        }}
+                        placeholder="Enter primary phone..."
+                        className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Phone</span>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <a href={`tel:${lead.phone}`} className="text-xs font-semibold text-slate-800 hover:text-indigo-600 underline">
+                        <a href={`tel:${lead.phone}`} className="text-xs font-semibold text-slate-800 hover:text-indigo-650 underline">
                           {lead.phone}
                         </a>
                         <button
@@ -666,12 +729,15 @@ Portfolio : https://castarokio.github.io/`;
                         >
                           <Copy className="w-3 h-3" />
                         </button>
+                        <button
+                          onClick={() => setIsEditingPrimaryPhone(true)}
+                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                          title="Edit Primary Phone"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
                       </div>
-                    ) : (
-                      <span className="text-xs font-semibold text-slate-400 mt-0.5">Missing</span>
-                    )}
-                  </div>
-                  {lead.phone && (
+                    </div>
                     <div className="flex items-center gap-1.5">
                       <a
                         href={getWhatsappUrl(lead.phone, false)}
@@ -699,8 +765,8 @@ Portfolio : https://castarokio.github.io/`;
                         Dial
                       </button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Alternate phone lists */}
                 {altPhones.map((phoneVal, i) => (
@@ -779,10 +845,37 @@ Portfolio : https://castarokio.github.io/`;
                 </h4>
 
                 {/* Email 1 */}
-                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Email</span>
-                    {lead.email ? (
+                {!lead.email || isEditingPrimaryEmail ? (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                    <div className="flex-1 flex flex-col">
+                      <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                        <span>Primary Email</span>
+                        {renderStatusIndicator('email')}
+                      </span>
+                      <input
+                        ref={primaryEmailRef}
+                        type="email"
+                        value={primaryEmailInput}
+                        onChange={(e) => setPrimaryEmailInput(e.target.value)}
+                        onBlur={() => {
+                          void handleBlurSave('email', primaryEmailInput || null);
+                          setIsEditingPrimaryEmail(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            void handleBlurSave('email', primaryEmailInput || null);
+                            setIsEditingPrimaryEmail(false);
+                          }
+                        }}
+                        placeholder="Enter primary email..."
+                        className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[8px] text-slate-400 uppercase font-bold">Primary Email</span>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-xs font-semibold text-slate-800 truncate max-w-[150px]">
                           {lead.email}
@@ -794,12 +887,15 @@ Portfolio : https://castarokio.github.io/`;
                         >
                           <Copy className="w-3 h-3" />
                         </button>
+                        <button
+                          onClick={() => setIsEditingPrimaryEmail(true)}
+                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                          title="Edit Primary Email"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
                       </div>
-                    ) : (
-                      <span className="text-xs font-semibold text-slate-400 mt-0.5">Missing</span>
-                    )}
-                  </div>
-                  {lead.email && (
+                    </div>
                     <a
                       href={getMailtoUrl(lead.email)}
                       className="px-3.5 py-1.5 rounded-lg bg-white border border-slate-250 hover:bg-slate-50 text-slate-700 font-body text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
@@ -807,8 +903,8 @@ Portfolio : https://castarokio.github.io/`;
                       <Mail className="w-3 h-3" />
                       Email
                     </a>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Alternate Email Lists */}
                 {altEmails.map((emailVal, i) => (
@@ -863,52 +959,227 @@ Portfolio : https://castarokio.github.io/`;
               {/* Social profile badges & direct DM redirection buttons */}
               <div className="flex flex-col gap-3">
                 <h3 className="text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b border-slate-100 pb-2">
-                  SOCIAL ENGAGEMENT HUBS
+                  SOCIAL MEDIA CHANNELS
                 </h3>
                 
-                {/* Social media links summary row */}
-                <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/80 rounded-xl p-3">
-                  <span className="text-[9px] text-slate-400 font-bold uppercase">Profiles:</span>
-                  
-                  {isValidSocialLink(lead.facebook) ? (
-                    <a href={normalizeFacebookProfileUrl(lead.facebook)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all" title="Facebook">
-                      <Facebook className="w-4 h-4" />
-                    </a>
-                  ) : <Facebook className="w-4 h-4 text-slate-350" />}
+                {/* Facebook Input Row */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Facebook className="w-3 h-3 text-blue-650" />
+                        <span>Facebook Profile</span>
+                      </span>
+                      {renderStatusIndicator('facebook')}
+                    </span>
+                    <input
+                      type="text"
+                      value={facebookInput}
+                      onChange={(e) => setFacebookInput(e.target.value)}
+                      onBlur={() => handleBlurSave('facebook', facebookInput || null)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBlurSave('facebook', facebookInput || null)}
+                      placeholder="Enter Facebook handle or URL..."
+                      className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                    />
+                  </div>
+                  {isValidSocialLink(lead.facebook) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleCopy('facebook', lead.facebook)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                        title="Copy Facebook Link"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <a
+                        href={normalizeFacebookProfileUrl(lead.facebook)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded bg-slate-100 hover:bg-indigo-50 text-slate-550 hover:text-indigo-750 cursor-pointer transition-colors"
+                        title="Open Facebook Profile"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
 
-                  {isValidSocialLink(lead.instagram) ? (
-                    <a href={normalizeInstagramProfileUrl(lead.instagram)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all" title="Instagram">
-                      <Instagram className="w-4 h-4" />
-                    </a>
-                  ) : <Instagram className="w-4 h-4 text-slate-355" />}
+                {/* Instagram Input Row */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Instagram className="w-3 h-3 text-rose-605" />
+                        <span>Instagram Profile</span>
+                      </span>
+                      {renderStatusIndicator('instagram')}
+                    </span>
+                    <input
+                      type="text"
+                      value={instagramInput}
+                      onChange={(e) => setInstagramInput(e.target.value)}
+                      onBlur={() => handleBlurSave('instagram', instagramInput || null)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBlurSave('instagram', instagramInput || null)}
+                      placeholder="Enter Instagram handle or URL..."
+                      className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                    />
+                  </div>
+                  {isValidSocialLink(lead.instagram) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleCopy('instagram', lead.instagram)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                        title="Copy Instagram Link"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <a
+                        href={normalizeInstagramProfileUrl(lead.instagram)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded bg-slate-100 hover:bg-indigo-50 text-slate-555 hover:text-indigo-750 cursor-pointer transition-colors"
+                        title="Open Instagram Profile"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
 
-                  {isValidSocialLink(lead.tiktok) ? (
-                    <a href={normalizeTikTokProfileUrl(lead.tiktok)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-black text-white hover:bg-slate-800 transition-all font-display text-[9px] px-2 py-0.5 rounded font-extrabold uppercase" title="TikTok">
-                      TT
-                    </a>
-                  ) : <span className="text-slate-350 text-xs font-bold font-display select-none">TT</span>}
+                {/* TikTok Input Row */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <span className="font-display font-extrabold text-[8px]">TT</span>
+                        <span>TikTok Profile</span>
+                      </span>
+                      {renderStatusIndicator('tiktok')}
+                    </span>
+                    <input
+                      type="text"
+                      value={tiktokInput}
+                      onChange={(e) => setTiktokInput(e.target.value)}
+                      onBlur={() => handleBlurSave('tiktok', tiktokInput || null)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBlurSave('tiktok', tiktokInput || null)}
+                      placeholder="Enter TikTok handle or URL..."
+                      className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                    />
+                  </div>
+                  {isValidSocialLink(lead.tiktok) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleCopy('tiktok', lead.tiktok)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-855 cursor-pointer transition-colors"
+                        title="Copy TikTok Link"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <a
+                        href={normalizeTikTokProfileUrl(lead.tiktok)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded bg-slate-100 hover:bg-indigo-50 text-slate-555 hover:text-indigo-750 cursor-pointer transition-colors"
+                        title="Open TikTok Profile"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
 
-                  {isValidSocialLink(lead.linkedin) ? (
-                    <a href={normalizeLinkedInProfileUrl(lead.linkedin)} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg bg-indigo-50 text-indigo-650 hover:bg-indigo-100 transition-all" title="LinkedIn">
-                      <Linkedin className="w-4 h-4" />
-                    </a>
-                  ) : <Linkedin className="w-4 h-4 text-slate-355" />}
-                  
+                {/* LinkedIn Input Row */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Linkedin className="w-3 h-3 text-indigo-650" />
+                        <span>LinkedIn Profile</span>
+                      </span>
+                      {renderStatusIndicator('linkedin')}
+                    </span>
+                    <input
+                      type="text"
+                      value={linkedinInput}
+                      onChange={(e) => setLinkedinInput(e.target.value)}
+                      onBlur={() => handleBlurSave('linkedin', linkedinInput || null)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBlurSave('linkedin', linkedinInput || null)}
+                      placeholder="Enter LinkedIn handle or URL..."
+                      className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                    />
+                  </div>
+                  {isValidSocialLink(lead.linkedin) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleCopy('linkedin', lead.linkedin)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                        title="Copy LinkedIn Link"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <a
+                        href={normalizeLinkedInProfileUrl(lead.linkedin)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded bg-slate-100 hover:bg-indigo-50 text-slate-555 hover:text-indigo-750 cursor-pointer transition-colors"
+                        title="Open LinkedIn Profile"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* Other Social Link Input Row */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-2">
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-[8px] text-slate-400 uppercase font-bold flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Globe className="w-3 h-3 text-indigo-600" />
+                        <span>Other Social Link / Website</span>
+                      </span>
+                      {renderStatusIndicator('social_link')}
+                    </span>
+                    <input
+                      type="text"
+                      value={socialLinkInput}
+                      onChange={(e) => setSocialLinkInput(e.target.value)}
+                      onBlur={() => handleBlurSave('social_link', socialLinkInput || null)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBlurSave('social_link', socialLinkInput || null)}
+                      placeholder="Enter other URL..."
+                      className="text-xs font-semibold text-slate-800 bg-transparent border-none outline-none w-full p-0 h-5 focus:ring-0 placeholder-slate-350"
+                    />
+                  </div>
                   {isValidSocialLink(lead.social_link) && (
-                    <a href={lead.social_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-bold text-[10px] ml-auto hover:text-indigo-850 truncate max-w-[120px]">
-                      Other Link
-                    </a>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleCopy('social_link', lead.social_link)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-850 cursor-pointer transition-colors"
+                        title="Copy Link"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <a
+                        href={lead.social_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded bg-slate-100 hover:bg-indigo-50 text-slate-555 hover:text-indigo-750 cursor-pointer transition-colors"
+                        title="Open Link"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   )}
                 </div>
 
                 {/* Direct DM chat redirects */}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 mt-1">
                   {isValidSocialLink(lead.facebook) && (
                     <button
                       onClick={(e) => handleSocialDmClick(e, 'Facebook Messenger', lead.facebook)}
                       className="px-3 py-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
-                      <Facebook className="w-3.5 h-3.5 shrink-0" />
+                      <Facebook className="w-3.5 h-3.5 shrink-0 text-blue-650" />
                       FB Messenger
                     </button>
                   )}
@@ -917,7 +1188,7 @@ Portfolio : https://castarokio.github.io/`;
                       onClick={(e) => handleSocialDmClick(e, 'Instagram', lead.instagram)}
                       className="px-3 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-800 text-center rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
-                      <Instagram className="w-3.5 h-3.5 shrink-0" />
+                      <Instagram className="w-3.5 h-3.5 shrink-0 text-rose-605" />
                       IG Direct DM
                     </button>
                   )}
