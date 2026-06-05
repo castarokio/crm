@@ -130,54 +130,74 @@ export default function Home() {
   // Verify Primary Portal PIN securely server-side
   const verifyPortalPin = useCallback(async (pin: string) => {
     setVerifying(true);
-    const res = await verifyPortalPinAction(pin);
-    if (res.success) {
-      setPortalUnlocked(true);
-      setEnteredPortalPin('');
-      portalPinRef.current = '';
-      setPortalError(false);
-      loadCallerProfiles();
-    } else {
+    try {
+      const res = await verifyPortalPinAction(pin);
+      if (res.success) {
+        setPortalUnlocked(true);
+        setEnteredPortalPin('');
+        portalPinRef.current = '';
+        setPortalError(false);
+        loadCallerProfiles();
+      } else {
+        setPortalError(true);
+        setEnteredPortalPin('');
+        portalPinRef.current = '';
+        if (navigator.vibrate) navigator.vibrate(200);
+      }
+    } catch (err) {
+      console.error('[verifyPortalPin Error]', err);
       setPortalError(true);
       setEnteredPortalPin('');
       portalPinRef.current = '';
-      if (navigator.vibrate) navigator.vibrate(200);
+    } finally {
+      setVerifying(false);
     }
-    setVerifying(false);
   }, [loadCallerProfiles]);
 
   // Verify Caller Profile PIN securely
   const verifyCallerPin = useCallback(async (name: string, pin: string) => {
     setVerifying(true);
-    const res = await verifyCallerPinAction(name, pin);
-
-    if (res.success) {
-      setCallerName(name);
-      setCallerRole(res.role || 'Caller');
-      setAgreementAcceptedVersion(res.agreementAcceptedVersion || null);
-      setPromptPinFor('');
-      setEnteredCallerPin('');
-      callerPinRef.current = '';
-      setCallerError(false);
-    } else {
+    try {
+      const res = await verifyCallerPinAction(name, pin);
+      if (res.success) {
+        setCallerName(name);
+        setCallerRole(res.role || 'Caller');
+        setAgreementAcceptedVersion(res.agreementAcceptedVersion || null);
+        setPromptPinFor('');
+        setEnteredCallerPin('');
+        callerPinRef.current = '';
+        setCallerError(false);
+      } else {
+        setCallerError(true);
+        setEnteredCallerPin('');
+        callerPinRef.current = '';
+        if (navigator.vibrate) navigator.vibrate(200);
+      }
+    } catch (err) {
+      console.error('[verifyCallerPin Error]', err);
       setCallerError(true);
       setEnteredCallerPin('');
       callerPinRef.current = '';
-      if (navigator.vibrate) navigator.vibrate(200);
+    } finally {
+      setVerifying(false);
     }
-    setVerifying(false);
   }, []);
 
   const handleStartDemoMode = useCallback(async () => {
     setVerifying(true);
-    const res = await startDemoSessionAction();
-    if (res.success) {
-      setCallerName('Demo Caller');
-      setCallerRole('Caller');
-      setAgreementAcceptedVersion('1.0');
-      setPromptPinFor('');
+    try {
+      const res = await startDemoSessionAction();
+      if (res.success) {
+        setCallerName('Demo Caller');
+        setCallerRole('Caller');
+        setAgreementAcceptedVersion('1.0');
+        setPromptPinFor('');
+      }
+    } catch (err) {
+      console.error('[handleStartDemoMode Error]', err);
+    } finally {
+      setVerifying(false);
     }
-    setVerifying(false);
   }, []);
 
   // Sync state functions for Ref updates
@@ -230,7 +250,7 @@ export default function Home() {
   // Core physical keyboard typing listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (callerName) return;
+      if (callerName || verifying) return;
 
       // Handle numbers 0-9
       if (e.key >= '0' && e.key <= '9') {
@@ -253,7 +273,7 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [callerName, promptPinFor, handleDigitPress, handleDeletePress]);
+  }, [callerName, promptPinFor, handleDigitPress, handleDeletePress, verifying]);
 
   const handleSelectCaller = (name: string) => {
     setPromptPinFor(name);
@@ -401,26 +421,30 @@ export default function Home() {
                   <button
                     key={num}
                     onClick={() => handleDigitPress(num)}
-                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                    disabled={verifying}
+                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {num}
                   </button>
                 ))}
                 <button
                   onClick={handleClearPress}
-                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Clear
                 </button>
                 <button
                   onClick={() => handleDigitPress('0')}
-                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   0
                 </button>
                 <button
                   onClick={handleDeletePress}
-                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Del
                 </button>
@@ -477,7 +501,8 @@ export default function Home() {
                   <button
                     key={num}
                     onClick={() => handleDigitPress(num)}
-                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                    disabled={verifying}
+                    className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {num}
                   </button>
@@ -489,19 +514,22 @@ export default function Home() {
                     setEnteredCallerPin('');
                     setCallerError(false);
                   }}
-                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Back
                 </button>
                 <button
                   onClick={() => handleDigitPress('0')}
-                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100 hover:border-slate-300 active:scale-95 transition-all text-slate-800 font-display text-base font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   0
                 </button>
                 <button
                   onClick={handleDeletePress}
-                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer"
+                  disabled={verifying}
+                  className="py-3 rounded-xl bg-transparent font-body text-[10px] font-bold tracking-wider text-slate-400 hover:text-slate-600 active:scale-95 transition-all uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Del
                 </button>
