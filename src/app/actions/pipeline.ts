@@ -20,9 +20,54 @@ function assertAllowedDealStage(stage: string) {
   }
 }
 
+export const MOCK_DEMO_DEALS = [
+  {
+    id: 10001,
+    deal_name: "Starter Landing Page Bundle",
+    company_name: "Sahara Odyssey Travel",
+    caller_name: "Demo Caller",
+    lead_id: 9001,
+    setup_value: 200,
+    recurring_value: 0,
+    expected_close_date: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0],
+    stage: "Qualified",
+    notes: "Client wants a simple landing page to display camel tour tickets and local activities in Biskra.",
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString()
+  },
+  {
+    id: 10002,
+    deal_name: "Professional Agency Booking Platform",
+    company_name: "Algerian Oasis Voyages",
+    caller_name: "Demo Caller",
+    lead_id: 9002,
+    setup_value: 500,
+    recurring_value: 30,
+    expected_close_date: new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0],
+    stage: "Proposal Sent",
+    notes: "Presented the 45,000 DZD Professional package. They requested direct WhatsApp booking integration and French/Arabic translation.",
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString()
+  },
+  {
+    id: 10003,
+    deal_name: "Starter Package Setup",
+    company_name: "Algiers Horizon Luxury Voyages",
+    caller_name: "Demo Caller",
+    lead_id: 9005,
+    setup_value: 250,
+    recurring_value: 0,
+    expected_close_date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+    stage: "Closed Won",
+    notes: "Deposit paid! Work in progress.",
+    created_at: new Date(Date.now() - 86400000 * 5).toISOString()
+  }
+];
+
 export async function getDeals() {
   try {
-    await requireCallerSession();
+    const session = await requireCallerSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true, deals: MOCK_DEMO_DEALS };
+    }
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('deals')
@@ -48,6 +93,9 @@ export async function createDeal(params: {
 }) {
   try {
     const session = await requireWritableSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true };
+    }
     const supabase = requireSupabase();
     const { data, error } = await supabase
       .from('deals')
@@ -75,6 +123,9 @@ export async function createDeal(params: {
 export async function updateDealStage(dealId: number, newStage: string, callerName: string, lostReason?: string) {
   try {
     const session = await requireWritableSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true };
+    }
     assertAllowedDealStage(newStage);
     const supabase = requireSupabase();
     
@@ -104,6 +155,9 @@ export async function updateDeal(dealId: number, callerName: string, fields: {
 }) {
   try {
     const session = await requireWritableSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true };
+    }
     const supabase = requireSupabase();
     const { error } = await supabase
       .from('deals')
@@ -120,6 +174,9 @@ export async function updateDeal(dealId: number, callerName: string, fields: {
 export async function deleteDeal(dealId: number, callerName: string) {
   try {
     const session = await requireWritableSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true };
+    }
     const supabase = requireSupabase();
     const { error } = await supabase.from('deals').delete().eq('id', dealId);
     if (error) throw new Error(error.message);
@@ -134,6 +191,17 @@ export async function getCallerTarget(callerName: string) {
   try {
     const session = await requireCallerSession();
     const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    
+    if (effectiveCallerName === 'Demo Caller') {
+      return {
+        success: true,
+        daily_call_target: 85,
+        weekly_appointment_target: 18,
+        calls_today: 12,
+        appointments_this_week: 3,
+      };
+    }
+
     const supabase = requireSupabase();
     
     const { data, error } = await supabase
@@ -199,10 +267,7 @@ export async function getTeamLeaderboardAction() {
       .neq('name', '__portal_settings__');
 
     if (profErr) throw new Error(profErr.message);
-    if (!profiles || profiles.length === 0) {
-      return { success: true, leaderboard: [] };
-    }
-
+    
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -213,7 +278,8 @@ export async function getTeamLeaderboardAction() {
     startOfWeek.setHours(0, 0, 0, 0);
 
     const leaderboard = [];
-    for (const p of profiles) {
+    const activeProfiles = profiles || [];
+    for (const p of activeProfiles) {
       // Calls today
       const { count: callsToday } = await supabase
         .from('call_history')
@@ -238,6 +304,16 @@ export async function getTeamLeaderboardAction() {
         status: p.status || 'Active'
       });
     }
+
+    // Add Demo Caller to leaderboard to show potential callers
+    leaderboard.push({
+      name: "Demo Caller",
+      daily_target: 85,
+      weekly_target: 18,
+      calls_today: 12,
+      appointments_this_week: 3,
+      status: "Active"
+    });
 
     // Sort by calls today (descending)
     leaderboard.sort((a, b) => b.calls_today - a.calls_today);

@@ -283,3 +283,15 @@ export async function acceptCallerAgreementAction(name: string) {
     return { success: false, error: error.message };
   }
 }
+
+export async function startDemoSessionAction() {
+  try {
+    // Set a caller session for "Demo Caller"
+    // Trusted level "New", accepts latest Guidelines automatically for the demo context
+    await setCallerSession('Demo Caller', 'Caller', 'New', '1.0');
+    return { success: true };
+  } catch (error: any) {
+    console.error('[startDemoSessionAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}

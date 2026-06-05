@@ -95,6 +95,159 @@ function computeLeadPriority(lead: {
   return 3; // P3: Standard
 }
 
+export const MOCK_DEMO_LEADS = [
+  {
+    id: 9001,
+    agency_name: "Sahara Odyssey Travel",
+    phone: "029123456",
+    phone_2: "0550111222",
+    email: "info@sahara-odyssey.dz",
+    email_2: "booking@sahara-odyssey.dz",
+    website: "www.sahara-odyssey.dz",
+    area: "Biskra",
+    address: "12 Blvd des Martyrs, Biskra",
+    priority: 1,
+    call_status: "Not Called",
+    call_notes: "",
+    last_called_at: null,
+    facebook: "facebook.com/sahara.odyssey",
+    instagram: "instagram.com/sahara.odyssey",
+    social_link: "tiktok.com/@sahara.odyssey",
+    review_count: 342,
+    rating: 4.8,
+    details: "Followers: FB: 25.4K | IG: 18.2K | Reviews: 342",
+    contact_person: "Mourad Belkacem",
+    assigned_to: "Demo Caller",
+    website_quality: "Poor",
+    google_rating: 4.8,
+    followers_if_visible: "25k",
+    facebook_followers: 25400,
+    instagram_followers: 18200,
+    running_ads: false,
+    services: "Sahara Trekking, Biskra Tours, Camel Riding"
+  },
+  {
+    id: 9002,
+    agency_name: "Algerian Oasis Voyages",
+    phone: "029876543",
+    phone_2: "0661333444",
+    email: "contact@algerian-oasis.com",
+    email_2: "",
+    website: "",
+    area: "Ghardaia",
+    address: "Palmeraie Road, Ghardaia",
+    priority: 2,
+    call_status: "Interested",
+    call_notes: "Very interested in the professional package to display tour packages. Owner wants callback tomorrow afternoon.",
+    last_called_at: new Date(Date.now() - 3600000).toISOString(),
+    facebook: "facebook.com/algerianoasis",
+    instagram: "instagram.com/algerian_oasis",
+    social_link: "",
+    review_count: 124,
+    rating: 4.5,
+    details: "Followers: FB: 12.1K | IG: 6.5K | Reviews: 124",
+    contact_person: "Samia Brahimi",
+    assigned_to: "Demo Caller",
+    website_quality: "None",
+    google_rating: 4.5,
+    followers_if_visible: "12k",
+    facebook_followers: 12100,
+    instagram_followers: 6500,
+    running_ads: false,
+    services: "Mzab Valley Tours, Ghardaia Hotels"
+  },
+  {
+    id: 9003,
+    agency_name: "Djurdjura Adventure Tours",
+    phone: "026445566",
+    phone_2: "0770555666",
+    email: "djurdjura@travel-dz.com",
+    email_2: "",
+    website: "www.djurdjura-adventure.dz",
+    area: "Tizi Ouzou",
+    address: "Route de la Grande Kabylie, Tizi Ouzou",
+    priority: 1,
+    call_status: "Not Called",
+    call_notes: "",
+    last_called_at: null,
+    facebook: "facebook.com/djurdjura.adventure",
+    instagram: "instagram.com/djurdjura.tours",
+    social_link: "",
+    review_count: 88,
+    rating: 4.2,
+    details: "Followers: FB: 9.8K | IG: 3.1K | Reviews: 88",
+    contact_person: "Lounes Ait",
+    assigned_to: "Demo Caller",
+    website_quality: "Poor",
+    google_rating: 4.2,
+    followers_if_visible: "9k",
+    facebook_followers: 9800,
+    instagram_followers: 3100,
+    running_ads: true,
+    services: "Hiking Kabylie, Tikjda Skiing, Guest Houses"
+  },
+  {
+    id: 9004,
+    agency_name: "Oran Marina Flight & Travel",
+    phone: "041778899",
+    phone_2: "0555888999",
+    email: "oran.marina@gmail.com",
+    email_2: "",
+    website: "",
+    area: "Oran",
+    address: "Front de Mer, Oran",
+    priority: 3,
+    call_status: "Busy",
+    call_notes: "Called twice, line was busy. Will retry later.",
+    last_called_at: new Date(Date.now() - 7200000).toISOString(),
+    facebook: "facebook.com/oran.marina.travel",
+    instagram: "",
+    social_link: "",
+    review_count: 51,
+    rating: 3.9,
+    details: "Followers: FB: 4.5K | Reviews: 51",
+    contact_person: "Fouad Benzine",
+    assigned_to: "Demo Caller",
+    website_quality: "None",
+    google_rating: 3.9,
+    followers_if_visible: "4k",
+    facebook_followers: 4500,
+    instagram_followers: 0,
+    running_ads: false,
+    services: "Andalouses Beach Tours, Oran City Guides"
+  },
+  {
+    id: 9005,
+    agency_name: "Algiers Horizon Luxury Voyages",
+    phone: "021998877",
+    phone_2: "0660777888",
+    email: "booking@algiers-horizon.dz",
+    email_2: "corporate@algiers-horizon.dz",
+    website: "www.algiers-horizon.dz",
+    area: "Algiers",
+    address: "45 Rue Didouche Mourad, Algiers",
+    priority: 1,
+    call_status: "Accepted",
+    call_notes: "Deposit paid! starter package. Setting up design templates.",
+    last_called_at: new Date(Date.now() - 86400000).toISOString(),
+    facebook: "facebook.com/algiers.horizon",
+    instagram: "instagram.com/algiers.horizon",
+    social_link: "",
+    review_count: 521,
+    rating: 4.9,
+    details: "Followers: FB: 42.6K | IG: 35.1K | Reviews: 521",
+    contact_person: "Yacine Merah",
+    assigned_to: "Demo Caller",
+    website_quality: "Good",
+    google_rating: 4.9,
+    followers_if_visible: "42k",
+    facebook_followers: 42600,
+    instagram_followers: 35100,
+    running_ads: true,
+    services: "Turkey Packages, Flight Ticketing, Visa assistance"
+  }
+];
+
 export async function getLeads(options: {
   search?: string;
   status?: string;
@@ -108,7 +261,40 @@ export async function getLeads(options: {
   const offset = (page - 1) * limit;
 
   try {
-    await requireCallerSession();
+    const session = await requireCallerSession();
+    
+    if (session.name === 'Demo Caller') {
+      let filtered = [...MOCK_DEMO_LEADS];
+      if (search) {
+        const s = search.toLowerCase().trim();
+        // Support ID search (e.g. #9001)
+        if (s.startsWith('#')) {
+          const idVal = parseInt(s.substring(1).trim(), 10);
+          filtered = filtered.filter(l => l.id === idVal);
+        } else {
+          filtered = filtered.filter(l => 
+            l.agency_name.toLowerCase().includes(s) ||
+            l.area.toLowerCase().includes(s) ||
+            l.phone.includes(s) ||
+            (l.contact_person && l.contact_person.toLowerCase().includes(s))
+          );
+        }
+      }
+      if (status) {
+        filtered = filtered.filter(l => l.call_status === status);
+      }
+      if (priority) {
+        filtered = filtered.filter(l => l.priority === parseInt(priority, 10));
+      }
+      if (area) {
+        filtered = filtered.filter(l => l.area.toLowerCase().includes(area.toLowerCase()));
+      }
+      if (excludeLost) {
+        filtered = filtered.filter(l => l.call_status !== 'Refused' && l.call_status !== 'Not Interested');
+      }
+      return { success: true, leads: filtered.slice(offset, offset + limit), total: filtered.length };
+    }
+
     const supabase = requireSupabase();
     
     // Auto-expire old locks
@@ -207,6 +393,12 @@ export async function getDialerQueue() {
   try {
     const session = await requireCallerSession();
     const effectiveCallerName = session.name;
+    
+    if (effectiveCallerName === 'Demo Caller') {
+      const queue = MOCK_DEMO_LEADS.filter(l => l.call_status !== 'Accepted');
+      return { success: true, queue, total: queue.length };
+    }
+
     const supabase = requireSupabase();
     
     // Auto-expire old locks
@@ -324,6 +516,9 @@ export async function updateCallStatus(
 ) {
   try {
     const session = await requireWritableSession();
+    if (session.name === 'Demo Caller') {
+      return { success: true };
+    }
     assertAllowedCallStatus(status);
     const supabase = requireSupabase();
 
@@ -805,10 +1000,12 @@ export async function getLeadAreas() {
 }
 
 export async function lockLead(leadId: number, callerName: string) {
+  if (callerName === 'Demo Caller') return { success: true } as any;
   return acquireActiveLock(leadId, callerName);
 }
 
 export async function unlockLead(leadId: number, callerName: string) {
+  if (callerName === 'Demo Caller') return { success: true } as any;
   return releaseActiveLock(leadId, callerName);
 }
 
@@ -1023,6 +1220,25 @@ export async function getUpcomingCallbacksAction(callerName: string) {
   try {
     const session = await requireCallerSession();
     const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    
+    if (effectiveCallerName === 'Demo Caller') {
+      const minutesInMs = 5 * 60 * 1000;
+      const callbackTime = new Date(Date.now() + minutesInMs);
+      const timeStr = `${callbackTime.getFullYear()}-${String(callbackTime.getMonth() + 1).padStart(2, '0')}-${String(callbackTime.getDate()).padStart(2, '0')} ${String(callbackTime.getHours()).padStart(2, '0')}:${String(callbackTime.getMinutes()).padStart(2, '0')}`;
+      
+      return {
+        success: true,
+        callbacks: [
+          {
+            id: 9002,
+            agency_name: "Algerian Oasis Voyages",
+            meeting_date: timeStr,
+            call_notes: "Owner requested callback about website packages."
+          }
+        ]
+      };
+    }
+
     const supabase = requireSupabase();
 
     const { data, error } = await supabase
@@ -1390,6 +1606,7 @@ export async function getNextLeadAction(callerName: string) {
 
 export async function skipLeadAction(leadId: number, callerName: string, callerRole: string, reason?: string) {
   try {
+    if (callerName === 'Demo Caller') return { success: true };
     const supabase = requireSupabase();
     
     if (callerRole !== 'Admin') {

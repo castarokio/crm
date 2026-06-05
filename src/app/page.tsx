@@ -25,6 +25,7 @@ import {
   verifyCallerPinAction,
   submitTeamApplication,
   verifyPortalPinAction,
+  startDemoSessionAction,
 } from '@/app/actions/auth';
 import { gsap } from 'gsap';
 
@@ -163,6 +164,18 @@ export default function Home() {
       setEnteredCallerPin('');
       callerPinRef.current = '';
       if (navigator.vibrate) navigator.vibrate(200);
+    }
+    setVerifying(false);
+  }, []);
+
+  const handleStartDemoMode = useCallback(async () => {
+    setVerifying(true);
+    const res = await startDemoSessionAction();
+    if (res.success) {
+      setCallerName('Demo Caller');
+      setCallerRole('Caller');
+      setAgreementAcceptedVersion('1.0');
+      setPromptPinFor('');
     }
     setVerifying(false);
   }, []);
@@ -535,10 +548,20 @@ export default function Home() {
                 })}
               </div>
 
+              {/* Try Sandbox/Demo Mode Button */}
+              <button
+                type="button"
+                onClick={handleStartDemoMode}
+                className="w-full py-4 rounded-2xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-150/40 text-indigo-700 font-display text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all transform hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer shadow-sm hover:shadow-md mt-2"
+              >
+                <Laptop className="w-4 h-4 text-indigo-650" />
+                Launch Demo Sandbox (No Passcode)
+              </button>
+
               {/* Exit system & lock button */}
               <button
                 onClick={handleLockPortal}
-                className="mt-6 font-body text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1.5 self-center"
+                className="mt-4 font-body text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest cursor-pointer flex items-center gap-1.5 self-center"
               >
                 <ShieldAlert className="w-4 h-4" />
                 Exit & Lock Portal
