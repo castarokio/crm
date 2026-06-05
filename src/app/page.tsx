@@ -712,7 +712,7 @@ export default function Home() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Telegram Username</label>
+                    <label className="text-[9px] text-slate-450 uppercase font-bold tracking-wider">Telegram Username (Optional)</label>
                     <div className="relative">
                       <MessageSquare className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                       <input
