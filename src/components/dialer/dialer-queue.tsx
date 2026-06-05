@@ -49,10 +49,18 @@ export function DialerQueue({
     // 1. Search Query Match
     const query = search.toLowerCase().trim();
     if (query) {
-      const match = (lead.agency_name || '').toLowerCase().includes(query) ||
-                    (lead.area || '').toLowerCase().includes(query) ||
-                    (lead.phone || '').toLowerCase().includes(query);
-      if (!match) return false;
+      if (query.startsWith('#')) {
+        const idStr = query.substring(1).trim();
+        if (idStr && String(lead.id) !== idStr) {
+          return false;
+        }
+      } else {
+        const match = (lead.agency_name || '').toLowerCase().includes(query) ||
+                      (lead.area || '').toLowerCase().includes(query) ||
+                      (lead.phone || '').toLowerCase().includes(query) ||
+                      String(lead.id) === query;
+        if (!match) return false;
+      }
     }
 
     // 2. Open Only Filter Match
