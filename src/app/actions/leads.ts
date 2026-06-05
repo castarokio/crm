@@ -116,24 +116,52 @@ export async function getLeads(options: {
     let q = supabase.from('leads').select(LEAD_LIST_COLUMNS, { count: 'exact' });
 
     if (search) {
-      const safeSearch = escapePostgrestFilterValue(search);
-      q = q.or([
-        `agency_name.ilike.%${safeSearch}%`,
-        `phone.ilike.%${safeSearch}%`,
-        `phone_2.ilike.%${safeSearch}%`,
-        `email.ilike.%${safeSearch}%`,
-        `email_2.ilike.%${safeSearch}%`,
-        `area.ilike.%${safeSearch}%`,
-        `address.ilike.%${safeSearch}%`,
-        `website.ilike.%${safeSearch}%`,
-        `maps_link.ilike.%${safeSearch}%`,
-        `facebook.ilike.%${safeSearch}%`,
-        `instagram.ilike.%${safeSearch}%`,
-        `tiktok.ilike.%${safeSearch}%`,
-        `linkedin.ilike.%${safeSearch}%`,
-        `social_link.ilike.%${safeSearch}%`,
-        `contact_person.ilike.%${safeSearch}%`,
-      ].join(','));
+      const trimmedSearch = search.trim();
+      if (trimmedSearch.startsWith('#')) {
+        const idString = trimmedSearch.substring(1).trim();
+        const leadId = parseInt(idString, 10);
+        if (!isNaN(leadId) && /^\d+$/.test(idString)) {
+          q = q.eq('id', leadId);
+        } else {
+          const safeSearch = escapePostgrestFilterValue(search);
+          q = q.or([
+            `agency_name.ilike.%${safeSearch}%`,
+            `phone.ilike.%${safeSearch}%`,
+            `phone_2.ilike.%${safeSearch}%`,
+            `email.ilike.%${safeSearch}%`,
+            `email_2.ilike.%${safeSearch}%`,
+            `area.ilike.%${safeSearch}%`,
+            `address.ilike.%${safeSearch}%`,
+            `website.ilike.%${safeSearch}%`,
+            `maps_link.ilike.%${safeSearch}%`,
+            `facebook.ilike.%${safeSearch}%`,
+            `instagram.ilike.%${safeSearch}%`,
+            `tiktok.ilike.%${safeSearch}%`,
+            `linkedin.ilike.%${safeSearch}%`,
+            `social_link.ilike.%${safeSearch}%`,
+            `contact_person.ilike.%${safeSearch}%`,
+          ].join(','));
+        }
+      } else {
+        const safeSearch = escapePostgrestFilterValue(search);
+        q = q.or([
+          `agency_name.ilike.%${safeSearch}%`,
+          `phone.ilike.%${safeSearch}%`,
+          `phone_2.ilike.%${safeSearch}%`,
+          `email.ilike.%${safeSearch}%`,
+          `email_2.ilike.%${safeSearch}%`,
+          `area.ilike.%${safeSearch}%`,
+          `address.ilike.%${safeSearch}%`,
+          `website.ilike.%${safeSearch}%`,
+          `maps_link.ilike.%${safeSearch}%`,
+          `facebook.ilike.%${safeSearch}%`,
+          `instagram.ilike.%${safeSearch}%`,
+          `tiktok.ilike.%${safeSearch}%`,
+          `linkedin.ilike.%${safeSearch}%`,
+          `social_link.ilike.%${safeSearch}%`,
+          `contact_person.ilike.%${safeSearch}%`,
+        ].join(','));
+      }
     }
 
     if (status === 'Followups') {
