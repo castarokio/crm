@@ -115,7 +115,7 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
       await supabase
         .from('deals')
         .update({ 
-          stage: 'Deposit Paid', 
+          stage: 'Won', 
           payment_status: 'Deposit Paid',
           updated_at: nowStr
         })
@@ -127,7 +127,7 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
       await supabase
         .from('deals')
         .update({ 
-          stage: 'Closed Won', 
+          stage: 'Won', 
           payment_status: 'Fully Paid',
           updated_at: nowStr
         })
@@ -135,7 +135,7 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
     }
 
     // Broadcast SSE to trigger pipeline state updates
-    broadcastSse('STATUS_CHANGED', { leadId: payment.deal_id, status: payment.payment_type === 'deposit' ? 'Deposit Paid' : 'Closed Won', user: 'system' });
+    broadcastSse('STATUS_CHANGED', { leadId: payment.deal_id, status: 'Won', user: 'system' });
 
     return { success: true, payment };
   } catch (error: any) {

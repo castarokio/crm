@@ -56,7 +56,7 @@ const MOCK_DEMO_DEALS = [
     setup_value: 250,
     recurring_value: 0,
     expected_close_date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-    stage: "Closed Won",
+    stage: "Won",
     notes: "Deposit paid! Work in progress.",
     created_at: new Date(Date.now() - 86400000 * 5).toISOString()
   }
