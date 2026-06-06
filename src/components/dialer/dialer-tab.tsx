@@ -20,18 +20,19 @@ import {
   recallAllUnansweredAction,
   getSingleLeadAction,
   getNextLeadAction,
-  skipLeadAction
+  skipLeadAction,
+  getTeamLeaderboardAction
 } from '@/app/actions/leads';
-import { getTeamLeaderboardAction } from '@/app/actions/pipeline';
 
 type DialerTabProps = {
   callerName: string;
   callerRole: string;
   activeLeadId?: number | null;
   onClearActiveLeadId?: () => void;
+  selectedNiche?: string | null;
 };
 
-export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveLeadId }: DialerTabProps) {
+export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveLeadId, selectedNiche }: DialerTabProps) {
   const [queue, setQueue] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [loading, setLoading] = useState<boolean>(true);
@@ -107,7 +108,7 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
   const loadQueue = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getDialerQueue();
+      const res = await getDialerQueue(selectedNiche);
       if (res.success && res.queue) {
         setQueue(res.queue);
         if (res.queue.length > 0) {
@@ -121,7 +122,7 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedNiche]);
 
   useEffect(() => {
     void loadQueue();
@@ -228,7 +229,7 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
   const handleGetNextLead = async () => {
     setLoading(true);
     try {
-      const res = await getNextLeadAction(callerName);
+      const res = await getNextLeadAction(callerName, selectedNiche);
       if (res.success && res.lead) {
         setQueue([res.lead]);
         setCurrentIndex(0);
@@ -351,6 +352,7 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
       phone: newPhone,
       website: newWebsite,
       email: newEmail,
+      niche: selectedNiche || null,
     });
     setSavingOutcome(false);
 

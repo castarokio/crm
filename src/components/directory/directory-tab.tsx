@@ -63,12 +63,13 @@ type DirectoryTabProps = {
   callerRole: string;
   searchQuery?: string;
   onClearSearchQuery?: () => void;
+  selectedNiche?: string | null;
 };
 
 // 7 sub-tabs: active, warm, callbacks, lost, treated, good_clients, database
 type SubTab = 'leads' | 'warm' | 'callbacks' | 'lost' | 'treated' | 'good_clients' | 'database';
 
-export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearchQuery }: DirectoryTabProps) {
+export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearchQuery, selectedNiche }: DirectoryTabProps) {
   const [leads, setLeads] = useState<any[]>([]);
   const [totalLeads, setTotalLeads] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
@@ -102,6 +103,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
   const [notes, setNotes] = useState<string>('');
   const [callNotes, setCallNotes] = useState<string>('');
   const [leadPriority, setLeadPriority] = useState<number>(3);
+  const [leadNiche, setLeadNiche] = useState<string>('');
   
   // Social profile fields inside Edit/Create modal
   const [facebook, setFacebook] = useState<string>('');
@@ -190,7 +192,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     setPage(1); // Reset page on filter changes
     setSelectedIds(new Set()); // Clear selection
     fetchLeads();
-  }, [activeSubTab, search, priority, area]);
+  }, [activeSubTab, search, priority, area, selectedNiche]);
 
   useEffect(() => {
     fetchLeads();
@@ -243,6 +245,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
       page,
       limit,
       excludeLost,
+      niche: selectedNiche || undefined,
     });
 
     if (res.success) {
@@ -269,6 +272,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     setNotes('');
     setCallNotes('');
     setLeadPriority(3);
+    setLeadNiche(selectedNiche || '');
     setFacebook('');
     setInstagram('');
     setTiktok('');
@@ -292,6 +296,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
     setNotes(lead.notes || '');
     setCallNotes(lead.call_notes || '');
     setLeadPriority(Number(lead.priority) || 3);
+    setLeadNiche(lead.niche || '');
     setFacebook(cleanSocialVal(lead.facebook));
     setInstagram(cleanSocialVal(lead.instagram));
     setTiktok(cleanSocialVal(lead.tiktok));
@@ -326,6 +331,7 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
       tiktok: tiktok || null,
       linkedin: linkedin || null,
       social_link: socialLink || null,
+      niche: leadNiche || null,
     };
 
     let res;
@@ -1099,6 +1105,16 @@ export function DirectoryTab({ callerName, callerRole, searchQuery, onClearSearc
                   <option value={4}>P4: Low Priority</option>
                   <option value={5}>P5: Lowest Priority</option>
                 </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase">Niche / Campaign</label>
+                <Input
+                  type="text"
+                  placeholder="e.g. Real Estate, Travel, Gyms"
+                  value={leadNiche}
+                  onChange={(e) => setLeadNiche(e.target.value)}
+                />
               </div>
             </div>
 

@@ -1,17 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X, Scale, FileCheck2, ClipboardList, DollarSign, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Phone, Folder, Shield, LogOut, Loader2, Award, CheckCircle, BarChart3, ArrowRight, Menu, X, ClipboardList, ChevronLeft, ChevronRight, Trash2, Clock } from 'lucide-react';
 import { DialerTab } from './dialer/dialer-tab';
-import { PipelineTab } from './pipeline/pipeline-tab';
 import { DirectoryTab } from './directory/directory-tab';
 import { AdminTab } from './admin/admin-tab';
 import { AuditLogsTable } from './admin/AuditLogsTable';
-import { CommissionsTab } from './pipeline/CommissionsTab';
-import { ProjectsTab } from './pipeline/ProjectsTab';
-import { DisputesTab } from './pipeline/DisputesTab';
-import { getCallerTarget, getTeamLeaderboardAction } from '@/app/actions/pipeline';
-import { getTargetInventoryCounts, getUpcomingCallbacksAction } from '@/app/actions/leads';
+import { LeadsSectionTab } from './pipeline/LeadsSectionTab';
+import { 
+  getTargetInventoryCounts, 
+  getUpcomingCallbacksAction, 
+  getNichesAction,
+  getCallerTarget, 
+  getTeamLeaderboardAction 
+} from '@/app/actions/leads';
 import { sweepExpiredLocksAction } from '@/app/actions/security';
 import { GlassCard } from './ui/glass-card';
 import { AppDialogs } from './ui/app-dialogs';
@@ -22,7 +24,7 @@ type DashboardProps = {
   onLogoutCaller: () => Promise<void>;
 };
 
-type ActiveTab = 'dialer' | 'pipeline' | 'directory' | 'admin' | 'projects' | 'disputes' | 'commissions' | 'audit';
+type ActiveTab = 'dialer' | 'directory' | 'admin' | 'failures' | 'followups' | 'hot_leads' | 'audit';
 
 export default function Dashboard({
   callerName,
@@ -30,10 +32,13 @@ export default function Dashboard({
   onLogoutCaller,
 }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>(
-    callerRole === 'Developer' ? 'projects' : callerRole === 'Auditor' ? 'audit' : 'dialer'
+    callerRole === 'Auditor' ? 'audit' : 'dialer'
   );
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
+  const [selectedNiche, setSelectedNiche] = useState<string>('All');
+  const [niches, setNiches] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -68,16 +73,25 @@ export default function Dashboard({
   // Source lead query to load in Directory Tab
   const [directorySearchQuery, setDirectorySearchQuery] = useState<string>('');
 
+  const loadNiches = async () => {
+    const res = await getNichesAction();
+    if (res.success && res.niches) {
+      setNiches(res.niches);
+    }
+  };
+
   useEffect(() => {
     void loadCallerMetrics();
+    void loadNiches();
     void sweepExpiredLocksAction();
     // Refresh count values every 30 seconds for live updates
     const interval = setInterval(() => {
       void loadCallerMetrics();
+      void loadNiches();
       void sweepExpiredLocksAction();
     }, 30000);
     return () => clearInterval(interval);
-  }, [callerName]);
+  }, [callerName, selectedNiche]);
 
   // Check Callback reminders periodically (every 60s)
   useEffect(() => {
@@ -149,7 +163,7 @@ export default function Dashboard({
   const loadCallerMetrics = async () => {
     setLoadingTargets(true);
     const targetRes = await getCallerTarget(callerName);
-    const countRes = await getTargetInventoryCounts();
+    const countRes = await getTargetInventoryCounts(selectedNiche);
     const leaderRes = await getTeamLeaderboardAction();
     if (targetRes.success) {
       setTargets({
@@ -266,6 +280,23 @@ export default function Dashboard({
             )}
           </div>
 
+          {/* Niche Selector */}
+          {!isSidebarCollapsed && (
+            <div className="flex flex-col gap-1 mt-1 border-b border-slate-100 pb-4 shrink-0 font-body text-xs">
+              <label className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Niche Campaign</label>
+              <select
+                value={selectedNiche}
+                onChange={(e) => setSelectedNiche(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer shadow-sm transition-all"
+              >
+                <option value="All">All Niches</option>
+                {niches.map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Sidebar Nav Buttons */}
           <nav className="flex-1 flex flex-col gap-2 font-body text-xs font-semibold">
             {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
@@ -290,23 +321,67 @@ export default function Dashboard({
               </button>
             )}
 
-            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer'].includes(callerRole) && (
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
               <button
-                onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }}
+                onClick={() => { setActiveTab('failures'); setIsSidebarOpen(false); }}
                 className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
                 } ${
-                  activeTab === 'pipeline'
+                  activeTab === 'failures'
                     ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
                     : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
                 }`}
-                title={isSidebarCollapsed ? "Deal Pipeline" : ""}
+                title={isSidebarCollapsed ? "Dead Leads / Trash" : ""}
               >
-                <BarChart3 className="w-4 h-4 shrink-0" />
-                {!isSidebarCollapsed && <span>Deal Pipeline</span>}
-                {!isSidebarCollapsed && counts.converted > 0 && (
+                <Trash2 className="w-4 h-4 shrink-0" />
+                {!isSidebarCollapsed && <span>Dead Leads / Trash</span>}
+                {!isSidebarCollapsed && counts.lost > 0 && (
+                  <span className="ml-auto text-[9px] bg-rose-50 border border-rose-150 text-rose-700 px-2 py-0.5 rounded-full font-bold">
+                    {counts.lost}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('followups'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
+                  activeTab === 'followups'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
+                }`}
+                title={isSidebarCollapsed ? "Follow-up Queue" : ""}
+              >
+                <Clock className="w-4 h-4 shrink-0" />
+                {!isSidebarCollapsed && <span>Follow-up Queue</span>}
+                {!isSidebarCollapsed && counts.followups > 0 && (
+                  <span className="ml-auto text-[9px] bg-amber-50 border border-amber-150 text-amber-700 px-2 py-0.5 rounded-full font-bold">
+                    {counts.followups}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <button
+                onClick={() => { setActiveTab('hot_leads'); setIsSidebarOpen(false); }}
+                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+                } ${
+                  activeTab === 'hot_leads'
+                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
+                }`}
+                title={isSidebarCollapsed ? "Hot Leads & Meetings" : ""}
+              >
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                {!isSidebarCollapsed && <span>Hot Leads & Meetings</span>}
+                {!isSidebarCollapsed && (counts.warm + counts.converted) > 0 && (
                   <span className="ml-auto text-[9px] bg-emerald-50 border border-emerald-150 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                    {counts.converted}
+                    {counts.warm + counts.converted}
                   </span>
                 )}
               </button>
@@ -326,57 +401,6 @@ export default function Dashboard({
               >
                 <Folder className="w-4 h-4 shrink-0" />
                 {!isSidebarCollapsed && <span>Directory Grid</span>}
-              </button>
-            )}
-
-            {['Admin', 'Manager', 'Supervisor', 'Developer'].includes(callerRole) && (
-              <button
-                onClick={() => { setActiveTab('projects'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
-                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
-                } ${
-                  activeTab === 'projects'
-                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
-                }`}
-                title={isSidebarCollapsed ? "Active Projects" : ""}
-              >
-                <FileCheck2 className="w-4 h-4 shrink-0" />
-                {!isSidebarCollapsed && <span>Active Projects</span>}
-              </button>
-            )}
-
-            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
-              <button
-                onClick={() => { setActiveTab('commissions'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
-                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
-                } ${
-                  activeTab === 'commissions'
-                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
-                }`}
-                title={isSidebarCollapsed ? "Commissions Ledger" : ""}
-              >
-                <DollarSign className="w-4 h-4 shrink-0" />
-                {!isSidebarCollapsed && <span>Commissions Ledger</span>}
-              </button>
-            )}
-
-            {['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
-              <button
-                onClick={() => { setActiveTab('disputes'); setIsSidebarOpen(false); }}
-                className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
-                  isSidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
-                } ${
-                  activeTab === 'disputes'
-                    ? 'bg-indigo-50 text-indigo-750 font-bold border-l-4 border-indigo-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-855 hover:bg-slate-50/50'
-                }`}
-                title={isSidebarCollapsed ? "Dispute Center" : ""}
-              >
-                <Scale className="w-4 h-4 shrink-0" />
-                {!isSidebarCollapsed && <span>Dispute Center</span>}
               </button>
             )}
 
@@ -493,16 +517,34 @@ export default function Dashboard({
                 callerRole={callerRole}
                 activeLeadId={activeLeadId}
                 onClearActiveLeadId={() => setActiveLeadId(null)}
+                selectedNiche={selectedNiche}
               />
             )}
             
-            {activeTab === 'pipeline' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer'].includes(callerRole) && (
-              <PipelineTab 
+            {activeTab === 'failures' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <LeadsSectionTab 
                 callerName={callerName} 
-                onViewSourceLead={(companyName: string) => {
-                  setDirectorySearchQuery(companyName);
-                  setActiveTab('directory');
-                }}
+                callerRole={callerRole}
+                type="failures"
+                selectedNiche={selectedNiche}
+              />
+            )}
+
+            {activeTab === 'followups' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <LeadsSectionTab 
+                callerName={callerName} 
+                callerRole={callerRole}
+                type="followups"
+                selectedNiche={selectedNiche}
+              />
+            )}
+
+            {activeTab === 'hot_leads' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
+              <LeadsSectionTab 
+                callerName={callerName} 
+                callerRole={callerRole}
+                type="hot_leads"
+                selectedNiche={selectedNiche}
               />
             )}
             
@@ -512,19 +554,8 @@ export default function Dashboard({
                 callerRole={callerRole} 
                 searchQuery={directorySearchQuery}
                 onClearSearchQuery={() => setDirectorySearchQuery('')}
+                selectedNiche={selectedNiche}
               />
-            )}
-
-            {activeTab === 'projects' && ['Admin', 'Manager', 'Supervisor', 'Developer'].includes(callerRole) && (
-              <ProjectsTab callerName={callerName} callerRole={callerRole} />
-            )}
-
-            {activeTab === 'commissions' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (
-              <CommissionsTab callerName={callerName} callerRole={callerRole} />
-            )}
-
-            {activeTab === 'disputes' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller'].includes(callerRole) && (
-              <DisputesTab callerName={callerName} callerRole={callerRole} />
             )}
 
             {activeTab === 'audit' && ['Admin', 'Manager', 'Supervisor', 'Closer', 'Caller', 'Viewer', 'Auditor'].includes(callerRole) && (

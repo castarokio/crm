@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, AlertCircle, CheckCircle, ArrowRight, Loader2, RefreshCcw, FileSpreadsheet } from 'lucide-react';
 import { extractCsvHeaders, previewLeadImportWithMapping, commitLeadImport, undoLastImport } from '@/app/actions/admin';
+import { getNichesAction } from '@/app/actions/leads';
 import { Button } from '../ui/button';
 import { toast, confirm } from '@/lib/toast';
 
@@ -48,6 +49,19 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<boolean>(false);
+  const [existingNiches, setExistingNiches] = useState<string[]>([]);
+  const [selectedNiche, setSelectedNiche] = useState<string>('');
+  const [customNiche, setCustomNiche] = useState<string>('');
+
+  React.useEffect(() => {
+    const fetchNiches = async () => {
+      const res = await getNichesAction();
+      if (res.success && res.niches) {
+        setExistingNiches(res.niches);
+      }
+    };
+    void fetchNiches();
+  }, []);
   
   // Preview and Import state
   const [previewData, setPreviewData] = useState<any | null>(null);
@@ -163,7 +177,8 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
     setLoading(true);
     setStatusMessage(null);
 
-    const res = await commitLeadImport(previewData.rows, file.name, adminName);
+    const finalNiche = customNiche.trim() || selectedNiche;
+    const res = await commitLeadImport(previewData.rows, file.name, adminName, finalNiche || null);
     setLoading(false);
 
     if (res.success) {
@@ -272,6 +287,42 @@ export function CsvImporter({ adminName, onImportComplete }: CsvImporterProps) {
             >
               Clear file
             </button>
+          </div>
+
+          {/* Niche Campaign Selector */}
+          <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-xl flex flex-col gap-3">
+            <h4 className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Assign Leads to Niche Campaign</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Select Existing Niche</label>
+                <select
+                  value={selectedNiche}
+                  onChange={(e) => {
+                    setSelectedNiche(e.target.value);
+                    if (e.target.value) setCustomNiche('');
+                  }}
+                  className="w-full bg-white border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-indigo-500 font-bold text-slate-700 text-xs cursor-pointer"
+                >
+                  <option value="">-- Choose Niche --</option>
+                  {existingNiches.map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-400 uppercase font-bold">Or Enter New Niche Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Real Estate, Gyms, Travel"
+                  value={customNiche}
+                  onChange={(e) => {
+                    setCustomNiche(e.target.value);
+                    if (e.target.value) setSelectedNiche('');
+                  }}
+                  className="w-full bg-white border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-indigo-500 font-bold text-slate-750 text-xs"
+                />
+              </div>
+            </div>
           </div>
 
           <h4 className="text-[10px] text-slate-400 font-bold uppercase tracking-widest border-b border-slate-100 pb-1 mt-1">

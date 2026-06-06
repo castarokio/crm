@@ -32,7 +32,6 @@ import { logLeadViewAction, logClipboardAction } from '@/app/actions/security';
 import { PitchGenerator } from './pitch-generator';
 import { CallLogLedger } from './call-log-ledger';
 import { toast } from '@/lib/toast';
-import { getDealByLeadIdAction, createDealForLeadAction } from '@/app/actions/pipeline';
 import { 
   formatWhatsappPhone, 
   normalizeFacebookProfileUrl, 
@@ -81,23 +80,7 @@ export function LeadInfoCard({
   const [fields, setFields] = useState<any>({});
   const [saveStatus, setSaveStatus] = useState<Record<string, 'saving' | 'saved' | 'failed'>>({});
   
-  const [linkedDeal, setLinkedDeal] = useState<any | null>(null);
-  const [loadingDeal, setLoadingDeal] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (lead?.id) {
-      setLinkedDeal(null);
-      const checkDeal = async () => {
-        setLoadingDeal(true);
-        const res = await getDealByLeadIdAction(lead.id);
-        if (res.success && res.deal) {
-          setLinkedDeal(res.deal);
-        }
-        setLoadingDeal(false);
-      };
-      void checkDeal();
-    }
-  }, [lead?.id]);
   
   // Security view gate state
   const [viewAllowed, setViewAllowed] = useState<boolean | null>(null);
@@ -653,51 +636,7 @@ Portfolio : https://castarokio.github.io/`;
             </div>
           </div>
 
-          {/* ── Linked Deal Banner ─────────────────────────────── */}
-          {loadingDeal ? (
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] text-slate-400 font-semibold">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Checking deal status...
-            </div>
-          ) : linkedDeal ? (
-            <div className="flex items-center gap-3 px-3 py-2.5 bg-indigo-50/70 border border-indigo-100 rounded-xl">
-              <div className="flex-1 min-w-0">
-                <span className="text-[8px] text-indigo-400 font-bold uppercase tracking-widest">Active Deal</span>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[11px] font-extrabold text-indigo-800 truncate">{linkedDeal.deal_name}</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase shrink-0 ${
-                    linkedDeal.stage === 'Won' ? 'bg-emerald-100 text-emerald-700' :
-                    linkedDeal.stage === 'Lost' ? 'bg-rose-100 text-rose-700' :
-                    'bg-indigo-100 text-indigo-700'
-                  }`}>{linkedDeal.stage}</span>
-                </div>
-                <div className="flex items-center gap-3 mt-0.5 text-[9px] text-indigo-600 font-semibold">
-                  {Number(linkedDeal.setup_value) > 0 && (
-                    <span>Setup: {Number(linkedDeal.setup_value).toLocaleString()} DZD</span>
-                  )}
-                  {Number(linkedDeal.recurring_value) > 0 && (
-                    <span>+{Number(linkedDeal.recurring_value).toLocaleString()} DZD/mo</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={async () => {
-                const res = await createDealForLeadAction(lead.id, callerName);
-                if (res.success && res.deal) {
-                  setLinkedDeal(res.deal);
-                  toast.success(`Deal created: ${res.deal.deal_name}`);
-                } else {
-                  toast.error('Could not create deal: ' + res.error);
-                }
-              }}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-[10px] text-slate-400 font-bold hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Create Pipeline Deal for this Lead
-            </button>
-          )}
+
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             

@@ -256,8 +256,9 @@ export async function getLeads(options: {
   page?: number;
   limit?: number;
   excludeLost?: boolean;
+  niche?: string | null;
 }) {
-  const { search = '', status = '', priority = '', area = '', page = 1, limit = 20, excludeLost = false } = options;
+  const { search = '', status = '', priority = '', area = '', page = 1, limit = 20, excludeLost = false, niche = '' } = options;
   const offset = (page - 1) * limit;
 
   try {
@@ -281,7 +282,17 @@ export async function getLeads(options: {
         }
       }
       if (status) {
-        filtered = filtered.filter(l => l.call_status === status);
+        if (status === 'HotLeads') {
+          filtered = filtered.filter(l => ['Interested', 'Accepted', 'Client Configured'].includes(l.call_status));
+        } else if (status === 'Followups') {
+          filtered = filtered.filter(l => ['Callback', 'Busy', 'No Answer'].includes(l.call_status));
+        } else if (status === 'Lost') {
+          filtered = filtered.filter(l => ['Not Interested', 'Wrong Number'].includes(l.call_status));
+        } else if (status === 'GoodClients') {
+          filtered = filtered.filter(l => ['Accepted', 'Client Configured'].includes(l.call_status));
+        } else {
+          filtered = filtered.filter(l => l.call_status === status);
+        }
       }
       if (priority) {
         filtered = filtered.filter(l => l.priority === parseInt(priority, 10));
@@ -291,6 +302,9 @@ export async function getLeads(options: {
       }
       if (excludeLost) {
         filtered = filtered.filter(l => l.call_status !== 'Refused' && l.call_status !== 'Not Interested');
+      }
+      if (niche && niche !== 'All') {
+        filtered = filtered.filter(l => (l as any).niche === niche);
       }
       return { success: true, leads: filtered.slice(offset, offset + limit), total: filtered.length };
     }
@@ -361,6 +375,8 @@ export async function getLeads(options: {
         q = q.in('call_status', WARM_STATUSES);
       } else if (status === 'GoodClients') {
         q = q.in('call_status', CONVERTED_STATUSES);
+      } else if (status === 'HotLeads') {
+        q = q.in('call_status', ['Interested', 'Accepted', 'Client Configured']);
       } else if (status === 'Lost') {
         q = q.in('call_status', ['Not Interested', 'Wrong Number']);
       } else if (status === 'Treated') {
@@ -374,6 +390,7 @@ export async function getLeads(options: {
 
       if (priority) q = q.eq('priority', parseInt(priority, 10));
       if (area) q = q.ilike('area', `%${area}%`);
+      if (niche && niche !== 'All') q = q.eq('niche', niche);
     }
 
     const { data, count, error } = await q
@@ -389,13 +406,16 @@ export async function getLeads(options: {
   }
 }
 
-export async function getDialerQueue() {
+export async function getDialerQueue(niche?: string | null) {
   try {
     const session = await requireCallerSession();
     const effectiveCallerName = session.name;
     
     if (effectiveCallerName === 'Demo Caller') {
-      const queue = MOCK_DEMO_LEADS.filter(l => l.call_status !== 'Accepted');
+      let queue = MOCK_DEMO_LEADS.filter(l => l.call_status !== 'Accepted');
+      if (niche && niche !== 'All') {
+        queue = queue.filter(l => (l as any).niche === niche);
+      }
       return { success: true, queue, total: queue.length };
     }
 
@@ -431,7 +451,11 @@ export async function getDialerQueue() {
     let q = supabase
       .from('leads')
       .select(LEAD_LIST_COLUMNS, { count: 'exact' })
-      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled');
+      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled,call_status.eq.Busy,call_status.eq.No Answer,call_status.eq.Callback');
+
+    if (niche && niche !== 'All') {
+      q = q.eq('niche', niche);
+    }
 
     if (effectiveCallerName) {
       const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
@@ -445,64 +469,29 @@ export async function getDialerQueue() {
       .order('review_count', { ascending: false });
 
     if (error) throw new Error(error.message);
-    return { success: true, queue: data || [], total: count || (data || []).length };
+
+    // Shuffle Busy and No Answer leads randomly in the queue list
+    const leadsList = data || [];
+    const freshOrRecalled = leadsList.filter((l: any) => !['Busy', 'No Answer'].includes(l.call_status));
+    const toShuffle = leadsList.filter((l: any) => ['Busy', 'No Answer'].includes(l.call_status));
+
+    // Fisher-Yates shuffle
+    for (let i = toShuffle.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = toShuffle[i];
+      toShuffle[i] = toShuffle[j];
+      toShuffle[j] = temp;
+    }
+
+    const combinedQueue = [...freshOrRecalled, ...toShuffle];
+
+    return { success: true, queue: combinedQueue, total: count || combinedQueue.length };
   } catch (error: any) {
     console.error('[getDialerQueue]', error.message);
     return { success: false, error: error.message, queue: [] };
   }
 }
 
-async function syncDealFromCallStatus(supabase: any, leadId: number, status: string, agencyName: string, callerName: string) {
-  // Map call_status to deal stage
-  let stage: string | null = null;
-  if (status === 'Interested') stage = 'Interested';
-  else if (status === 'Callback') stage = 'Appointment Booked';
-  else if (['Accepted', 'Client Configured'].includes(status)) stage = 'Won';
-  else if (['Not Interested', 'Wrong Number'].includes(status)) stage = 'Lost';
-  else if (['Busy', 'No Answer', 'Treated'].includes(status)) stage = 'Contacted';
-
-  if (!stage) return; // For un-contacted statuses, do not create pipeline entries
-
-  // Check if deal already exists for this lead_id
-  const { data: existingDeal, error: dealFetchErr } = await supabase
-    .from('deals')
-    .select('id, stage')
-    .eq('lead_id', leadId)
-    .maybeSingle();
-
-  if (dealFetchErr) {
-    console.error('[syncDealFromCallStatus fetch error]', dealFetchErr.message);
-    return;
-  }
-
-  if (existingDeal) {
-    const { error: updateErr } = await supabase
-      .from('deals')
-      .update({ stage, updated_at: new Date().toISOString() })
-      .eq('id', existingDeal.id);
-    if (updateErr) {
-      console.error('[syncDealFromCallStatus update error]', updateErr.message);
-    }
-  } else {
-    // Automatically create deals for any status mapped to a valid pipeline stage
-    const { error: insertErr } = await supabase
-      .from('deals')
-      .insert({
-        deal_name: `${agencyName || 'Leads'} Deal`,
-        company_name: agencyName || '',
-        caller_name: callerName,
-        lead_id: leadId,
-        stage,
-        setup_value: 0.00,
-        recurring_value: 0.00,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-    if (insertErr) {
-      console.error('[syncDealFromCallStatus insert error]', insertErr.message);
-    }
-  }
-}
 
 export async function updateCallStatus(
   id: number,
@@ -583,9 +572,6 @@ export async function updateCallStatus(
     });
     if (historyError) throw new Error(historyError.message);
 
-    // Synchronize deal to pipeline
-    await syncDealFromCallStatus(supabase, id, status, original.agency_name, session.name);
-
     return { success: true };
   } catch (error: any) {
     console.error('[updateCallStatus]', error.message);
@@ -631,17 +617,6 @@ export async function updateLeadDetails(id: number, fields: any) {
     }).eq('id', id);
 
     if (error) throw new Error(error.message);
-
-    // Sync deal to pipeline if call status has changed
-    if (fields.call_status && fields.call_status !== currentLead.call_status) {
-      await syncDealFromCallStatus(
-        supabase, 
-        id, 
-        fields.call_status, 
-        fields.agency_name || currentLead.agency_name, 
-        session.name
-      );
-    }
 
     return { success: true };
   } catch (error: any) {
@@ -701,17 +676,34 @@ export async function getAnalytics() {
   }
 }
 
-export async function getTargetInventoryCounts() {
+export async function getTargetInventoryCounts(niche?: string | null) {
   try {
     await requireCallerSession();
     const supabase = requireSupabase();
+    
+    let totalQ = supabase.from('leads').select('id', { count: 'exact', head: true });
+    let warmQ = supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Interested');
+    let convertedQ = supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Accepted', 'Client Configured']);
+    let followupQ = supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']);
+    let lostQ = supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Not Interested', 'Wrong Number']);
+    let treatedQ = supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Treated');
+
+    if (niche && niche !== 'All') {
+      totalQ = totalQ.eq('niche', niche);
+      warmQ = warmQ.eq('niche', niche);
+      convertedQ = convertedQ.eq('niche', niche);
+      followupQ = followupQ.eq('niche', niche);
+      lostQ = lostQ.eq('niche', niche);
+      treatedQ = treatedQ.eq('niche', niche);
+    }
+
     const [totalRes, warmRes, convertedRes, followupRes, lostRes, treatedRes] = await Promise.all([
-      supabase.from('leads').select('id', { count: 'exact', head: true }),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Interested'),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Accepted', 'Client Configured']),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Callback', 'Busy', 'No Answer']),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).in('call_status', ['Not Interested', 'Wrong Number']),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('call_status', 'Treated'),
+      totalQ,
+      warmQ,
+      convertedQ,
+      followupQ,
+      lostQ,
+      treatedQ,
     ]);
 
     return {
@@ -910,9 +902,6 @@ export async function updateCallStatusWithAI(leadId: number, callerName: string,
       notes: data.summary || rawSummary
     });
 
-    // Synchronize deal to pipeline
-    await syncDealFromCallStatus(supabase, leadId, data.call_status, original.agency_name, session.name);
-
     return { success: true, extracted: data };
   } catch (error: any) {
     console.error('[updateCallStatusWithAI]', error.message);
@@ -1063,6 +1052,7 @@ export async function createLeadAction(leadData: {
   address?: string | null;
   notes?: string | null;
   priority?: number | null;
+  niche?: string | null;
 }) {
   try {
     const session = await requireWritableSession();
@@ -1095,6 +1085,7 @@ export async function createLeadAction(leadData: {
       notes: leadData.notes || '',
       priority: calculatedPriority,
       call_status: 'Not Called',
+      niche: leadData.niche || null,
       last_updated: new Date().toISOString()
     };
 
@@ -1528,7 +1519,7 @@ export async function runAutoExpirations() {
   }
 }
 
-export async function getNextLeadAction(callerName: string) {
+export async function getNextLeadAction(callerName: string, niche?: string | null) {
   try {
     const session = await requireCallerSession();
     // Validate request caller constraints
@@ -1561,12 +1552,18 @@ export async function getNextLeadAction(callerName: string) {
     }
 
     // 2. Fetch leads: assigned to caller or unassigned, filtering out locked/owned/converted ones
-    const { data: candidates, error } = await supabase
+    let candQuery = supabase
       .from('leads')
       .select('id')
       .eq('do_not_contact', false)
       .not('call_status', 'in', '("Interested","Wrong Number","Not Interested","Accepted","Client Configured")')
-      .or(`assigned_to.eq.${escapePostgrestFilterValue(effectiveCallerName)},assigned_to.is.null`)
+      .or(`assigned_to.eq.${escapePostgrestFilterValue(effectiveCallerName)},assigned_to.is.null`);
+
+    if (niche && niche !== 'All') {
+      candQuery = candQuery.eq('niche', niche);
+    }
+
+    const { data: candidates, error } = await candQuery
       .order('priority', { ascending: true })
       .order('review_count', { ascending: false })
       .limit(10);
@@ -1715,6 +1712,166 @@ export async function getCallActivityLogs() {
   } catch (error: any) {
     console.error('[getCallActivityLogs Error]', error.message);
     return { success: false, error: error.message, logs: [] };
+  }
+}
+
+export async function getNichesAction() {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+    
+    // Fetch unique niches
+    const { data, error } = await supabase
+      .from('leads')
+      .select('niche')
+      .not('niche', 'is', null)
+      .neq('niche', '');
+      
+    if (error) throw new Error(error.message);
+    
+    const niches = Array.from(new Set<string>((data || []).map((r: any) => r.niche.trim()))).sort();
+    return { success: true, niches };
+  } catch (error: any) {
+    console.error('[getNichesAction]', error.message);
+    return { success: false, error: error.message, niches: [] };
+  }
+}
+
+export async function getCallerTarget(callerName: string) {
+  try {
+    const session = await requireCallerSession();
+    const effectiveCallerName = session.role === 'Admin' || session.role === 'Supervisor' ? callerName : session.name;
+    
+    if (effectiveCallerName === 'Demo Caller') {
+      return {
+        success: true,
+        daily_call_target: 85,
+        weekly_appointment_target: 18,
+        calls_today: 12,
+        appointments_this_week: 3,
+      };
+    }
+
+    const supabase = requireSupabase();
+    
+    const { data, error } = await supabase
+      .from('caller_profiles')
+      .select('daily_call_target, weekly_appointment_target')
+      .eq('name', effectiveCallerName)
+      .single();
+    if (error) throw new Error(error.message);
+
+    // Count calls made today by this caller from the history ledger
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const { count, error: countErr } = await supabase
+      .from('call_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('caller_name', effectiveCallerName)
+      .gte('created_at', startOfToday.toISOString());
+    if (countErr) throw new Error(countErr.message);
+
+    // Count appointments logged this week (since Monday 00:00:00)
+    const startOfWeek = new Date();
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const { count: apptCount, error: apptErr } = await supabase
+      .from('call_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('caller_name', effectiveCallerName)
+      .gte('created_at', startOfWeek.toISOString())
+      .in('call_status', ['Callback', 'Accepted', 'Client Configured', 'Interested']);
+    if (apptErr) throw new Error(apptErr.message);
+
+    return {
+      success: true,
+      daily_call_target: data?.daily_call_target ?? 80,
+      weekly_appointment_target: data?.weekly_appointment_target ?? 15,
+      calls_today: count ?? 0,
+      appointments_this_week: apptCount ?? 0,
+    };
+  } catch (error: any) {
+    return { 
+      success: false, 
+      error: error.message, 
+      daily_call_target: 80, 
+      weekly_appointment_target: 15, 
+      calls_today: 0,
+      appointments_this_week: 0 
+    };
+  }
+}
+
+export async function getTeamLeaderboardAction() {
+  try {
+    const session = await requireCallerSession();
+    const supabase = requireSupabase();
+    
+    // Fetch all active caller profiles
+    const { data: profiles, error: profErr } = await supabase
+      .from('caller_profiles')
+      .select('name, daily_call_target, weekly_appointment_target, status')
+      .neq('name', '__portal_settings__');
+
+    if (profErr) throw new Error(profErr.message);
+    
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date();
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const leaderboard = [];
+    const activeProfiles = profiles || [];
+    for (const p of activeProfiles) {
+      // Calls today
+      const { count: callsToday } = await supabase
+        .from('call_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('caller_name', p.name)
+        .gte('created_at', startOfToday.toISOString());
+
+      // Appointments this week
+      const { count: apptsWeek } = await supabase
+        .from('call_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('caller_name', p.name)
+        .gte('created_at', startOfWeek.toISOString())
+        .in('call_status', ['Callback', 'Accepted', 'Client Configured', 'Interested']);
+
+      leaderboard.push({
+        name: p.name,
+        daily_target: p.daily_call_target ?? 80,
+        weekly_target: p.weekly_appointment_target ?? 15,
+        calls_today: callsToday ?? 0,
+        appointments_this_week: apptsWeek ?? 0,
+        status: p.status || 'Active'
+      });
+    }
+
+    // Add Demo Caller to leaderboard to show potential callers
+    leaderboard.push({
+      name: "Demo Caller",
+      daily_target: 85,
+      weekly_target: 18,
+      calls_today: 12,
+      appointments_this_week: 3,
+      status: "Active"
+    });
+
+    // Sort by calls today (descending)
+    leaderboard.sort((a, b) => b.calls_today - a.calls_today);
+
+    return { success: true, leaderboard };
+  } catch (error: any) {
+    console.error('[getTeamLeaderboardAction]', error.message);
+    return { success: false, error: error.message, leaderboard: [] };
   }
 }
 

@@ -607,7 +607,7 @@ export async function previewLeadImportWithMapping(csvText: string, columnMappin
   }
 }
 
-export async function commitLeadImport(rows: any[], sourceFileName: string, adminCallerName: string) {
+export async function commitLeadImport(rows: any[], sourceFileName: string, adminCallerName: string, niche?: string | null) {
   try {
     const session = await requireAdminSession();
     const supabase = requireSupabase();
@@ -638,6 +638,7 @@ export async function commitLeadImport(rows: any[], sourceFileName: string, admi
         source_file: sourceFileName,
         call_status: 'Not Called',
         priority: clean.priority ?? 3,
+        niche: niche || null,
       };
     });
 
