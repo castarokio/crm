@@ -17,8 +17,25 @@ const PORTAL_COOKIE = '__callos_portal';
 const CALLER_COOKIE = '__callos_caller';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
+function sanitizeEnvVar(value: string | undefined): string {
+  if (!value) return '';
+  let s = value.trim();
+  if (s.startsWith('"') && s.endsWith('"')) {
+    s = s.slice(1, -1);
+  }
+  if (s.startsWith("'") && s.endsWith("'")) {
+    s = s.slice(1, -1);
+  }
+  return s
+    .replace(/\\r/g, '')
+    .replace(/\\n/g, '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+    .trim();
+}
+
 function getSessionSecret() {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sanitizeEnvVar(process.env.SESSION_SECRET);
   if (!secret) throw new Error('SESSION_SECRET_NOT_CONFIGURED');
   if (secret.length < 32) {
     console.warn('[Security Warning] SESSION_SECRET is too short. It should be at least 32 characters long.');

@@ -4,9 +4,18 @@ import { createClient } from '@supabase/supabase-js';
 
 function sanitizeEnvVar(value: string | undefined): string {
   if (!value) return '';
-  return value
+  let s = value.trim();
+  if (s.startsWith('"') && s.endsWith('"')) {
+    s = s.slice(1, -1);
+  }
+  if (s.startsWith("'") && s.endsWith("'")) {
+    s = s.slice(1, -1);
+  }
+  return s
     .replace(/\\r/g, '')
     .replace(/\\n/g, '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
     .trim();
 }
 
