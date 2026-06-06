@@ -152,7 +152,7 @@ export function AgreementGate({
           <button 
             type="submit" 
             disabled={!hasChecked || acceptString.trim() !== 'I ACCEPT' || submitting} 
-            className="w-full py-3.5 rounded-xl bg-indigo-650 hover:bg-indigo-750 text-white font-bold text-xs uppercase transition-all shadow-sm hover:shadow active:scale-98 disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase transition-all shadow-sm hover:shadow active:scale-98 disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2 cursor-pointer"
           >
             {submitting ? (
               <>

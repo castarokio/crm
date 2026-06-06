@@ -106,13 +106,13 @@ export function DisputesTab({ callerName, callerRole }: DisputesTabProps) {
   return (
     <div className="flex flex-col gap-6 font-body">
       <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-        <h3 className="font-display font-black text-xs text-slate-850 uppercase tracking-widest flex items-center gap-2">
-          <Scale className="w-4 h-4 text-indigo-650" />
+        <h3 className="font-display font-black text-xs text-slate-800 uppercase tracking-widest flex items-center gap-2">
+          <Scale className="w-4 h-4 text-indigo-600" />
           DISPUTE CENTER & CLAIM RECONCILIATIONS
         </h3>
         <button
           onClick={() => setNewDisputeModal(prev => ({ ...prev, open: true }))}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-650 to-indigo-650 hover:from-indigo-700 hover:via-violet-750 hover:to-indigo-750 text-white font-extrabold text-[10px] tracking-wider uppercase cursor-pointer transition-all shadow-md hover:shadow-lg hover:-translate-y-[1px] active:translate-y-0 active:scale-95 duration-200"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 hover:from-indigo-700 hover:via-violet-700 hover:to-indigo-700 text-white font-extrabold text-[10px] tracking-wider uppercase cursor-pointer transition-all shadow-md hover:shadow-lg hover:-translate-y-[1px] active:translate-y-0 active:scale-95 duration-200"
         >
           <Plus className="w-3.5 h-3.5" /> File New Dispute
         </button>
