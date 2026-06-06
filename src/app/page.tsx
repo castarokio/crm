@@ -22,6 +22,7 @@ import {
   getCallerProfiles,
   getCurrentSessionAction,
   logoutAction,
+  lockPortalAction,
   verifyCallerPinAction,
   submitTeamApplication,
   verifyPortalPinAction,
@@ -51,7 +52,9 @@ export default function Home() {
 
   // Verification feedback
   const [portalError, setPortalError] = useState<boolean>(false);
+  const [portalErrorMessage, setPortalErrorMessage] = useState<string>('');
   const [callerError, setCallerError] = useState<boolean>(false);
+  const [callerErrorMessage, setCallerErrorMessage] = useState<string>('');
   const [verifying, setVerifying] = useState<boolean>(false);
   const [dbOffline, setDbOffline] = useState<boolean>(false);
 
@@ -137,16 +140,19 @@ export default function Home() {
         setEnteredPortalPin('');
         portalPinRef.current = '';
         setPortalError(false);
+        setPortalErrorMessage('');
         loadCallerProfiles();
       } else {
         setPortalError(true);
+        setPortalErrorMessage(res.error || 'Passcode incorrect. Retry.');
         setEnteredPortalPin('');
         portalPinRef.current = '';
         if (navigator.vibrate) navigator.vibrate(200);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[verifyPortalPin Error]', err);
       setPortalError(true);
+      setPortalErrorMessage(err?.message || 'Verification failed.');
       setEnteredPortalPin('');
       portalPinRef.current = '';
     } finally {
@@ -167,15 +173,18 @@ export default function Home() {
         setEnteredCallerPin('');
         callerPinRef.current = '';
         setCallerError(false);
+        setCallerErrorMessage('');
       } else {
         setCallerError(true);
+        setCallerErrorMessage(res.error || 'Incorrect Profile PIN.');
         setEnteredCallerPin('');
         callerPinRef.current = '';
         if (navigator.vibrate) navigator.vibrate(200);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[verifyCallerPin Error]', err);
       setCallerError(true);
+      setCallerErrorMessage(err?.message || 'Verification failed.');
       setEnteredCallerPin('');
       callerPinRef.current = '';
     } finally {
@@ -207,6 +216,7 @@ export default function Home() {
         portalPinRef.current += digit;
         setEnteredPortalPin(portalPinRef.current);
         setPortalError(false);
+        setPortalErrorMessage('');
         if (portalPinRef.current.length === 6) {
           verifyPortalPin(portalPinRef.current);
         }
@@ -216,6 +226,7 @@ export default function Home() {
         callerPinRef.current += digit;
         setEnteredCallerPin(callerPinRef.current);
         setCallerError(false);
+        setCallerErrorMessage('');
         if (callerPinRef.current.length === 6) {
           verifyCallerPin(promptPinFor, callerPinRef.current);
         }
@@ -228,10 +239,12 @@ export default function Home() {
       portalPinRef.current = portalPinRef.current.slice(0, -1);
       setEnteredPortalPin(portalPinRef.current);
       setPortalError(false);
+      setPortalErrorMessage('');
     } else if (promptPinFor) {
       callerPinRef.current = callerPinRef.current.slice(0, -1);
       setEnteredCallerPin(callerPinRef.current);
       setCallerError(false);
+      setCallerErrorMessage('');
     }
   }, [portalUnlocked, promptPinFor]);
 
@@ -240,10 +253,12 @@ export default function Home() {
       portalPinRef.current = '';
       setEnteredPortalPin('');
       setPortalError(false);
+      setPortalErrorMessage('');
     } else if (promptPinFor) {
       callerPinRef.current = '';
       setEnteredCallerPin('');
       setCallerError(false);
+      setCallerErrorMessage('');
     }
   }, [portalUnlocked, promptPinFor]);
 
@@ -294,7 +309,7 @@ export default function Home() {
   };
 
   const handleLockPortal = async () => {
-    await logoutAction();
+    await lockPortalAction();
     setCallerName('');
     setCallerRole('Caller');
     setPortalUnlocked(false);
@@ -405,7 +420,7 @@ export default function Home() {
               {portalError && (
                 <p className="font-body text-[10px] text-rose-700 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  Passcode incorrect. Retry.
+                  {portalErrorMessage || 'Passcode incorrect. Retry.'}
                 </p>
               )}
               {verifying && (
@@ -485,7 +500,7 @@ export default function Home() {
               {callerError && (
                 <p className="font-body text-[10px] text-rose-700 font-bold tracking-wider uppercase flex items-center gap-1 animate-bounce">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  Incorrect Profile PIN.
+                  {callerErrorMessage || 'Incorrect Profile PIN.'}
                 </p>
               )}
               {verifying && (

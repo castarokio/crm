@@ -120,6 +120,11 @@ export async function clearAuthSession() {
   store.set(CALLER_COOKIE, '', cookieOptions(0));
 }
 
+export async function clearCallerSession() {
+  const store = await cookies();
+  store.set(CALLER_COOKIE, '', cookieOptions(0));
+}
+
 export async function requireCallerSession() {
   const session = await getCallerSession();
   if (!session) throw new Error('UNAUTHORIZED');

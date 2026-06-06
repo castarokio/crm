@@ -4,6 +4,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import {
   clearAuthSession,
+  clearCallerSession,
   getCallerSession,
   hasPortalSession,
   setCallerSession,
@@ -194,6 +195,11 @@ export async function getCurrentSessionAction() {
 }
 
 export async function logoutAction() {
+  await clearCallerSession();
+  return { success: true };
+}
+
+export async function lockPortalAction() {
   await clearAuthSession();
   return { success: true };
 }
