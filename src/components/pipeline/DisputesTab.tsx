@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { getDisputesAction, fileDisputeAction, resolveDisputeAction } from '@/app/actions/disputes';
-import { getSupabase } from '@/lib/supabase';
+import { getDisputesAction, fileDisputeAction, resolveDisputeAction, getLeadsForDisputeAction } from '@/app/actions/disputes';
 import { ShieldAlert, CheckCircle, Scale, Plus, ExternalLink, Calendar, User, MessageSquare } from 'lucide-react';
 import { GlassCard } from '../ui/glass-card';
 import { toast } from '@/lib/toast';
@@ -51,10 +50,12 @@ export function DisputesTab({ callerName, callerRole }: DisputesTabProps) {
 
   const loadLeads = async () => {
     try {
-      const db = getSupabase();
-      // Fetch some recent leads for the dispute form dropdown
-      const { data } = await db.from('leads').select('id, agency_name').order('created_at', { ascending: false }).limit(50);
-      setLeads(data || []);
+      const res = await getLeadsForDisputeAction();
+      if (res.success && res.leads) {
+        setLeads(res.leads);
+      } else {
+        console.error('[loadLeads] failed:', res.error);
+      }
     } catch (err) {
       console.error('[loadLeads] failed:', err);
     }

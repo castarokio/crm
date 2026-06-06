@@ -155,3 +155,23 @@ export async function resolveDisputeAction(disputeId: number, decision: string, 
     return { success: false, error: error.message };
   }
 }
+
+export async function getLeadsForDisputeAction() {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id, agency_name')
+      .order('agency_name', { ascending: true })
+      .limit(100);
+
+    if (error) throw new Error(error.message);
+    return { success: true, leads: data || [] };
+  } catch (error: any) {
+    console.error('[getLeadsForDisputeAction]', error.message);
+    return { success: false, error: error.message, leads: [] };
+  }
+}
+
