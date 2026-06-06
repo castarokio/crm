@@ -3,9 +3,10 @@
 import React, { useEffect, useState } from 'react';
 import { getProjectsAction, assignDeveloperAction, updateProjectChecklistAction, updateProjectStageAction } from '@/app/actions/projects';
 import { getSupabase } from '@/lib/supabase';
-import { Layers, User, CheckSquare, Calendar, Globe, Award, ListTodo, Edit3, ArrowRight } from 'lucide-react';
+import { Layers, User, CheckSquare, Calendar, Globe, ListTodo, Edit3, DollarSign } from 'lucide-react';
 import { GlassCard } from '../ui/glass-card';
 import { toast } from '@/lib/toast';
+import { PaymentModal } from './PaymentModal';
 
 type ProjectsTabProps = {
   callerName: string;
@@ -37,6 +38,13 @@ export function ProjectsTab({ callerName, callerRole }: ProjectsTabProps) {
     projectId: null,
     previewUrl: ''
   });
+  const [paymentModal, setPaymentModal] = useState<{
+    open: boolean;
+    dealId: number | null;
+    dealName: string;
+    setupValue: number;
+    paymentType: 'deposit' | 'final';
+  }>({ open: false, dealId: null, dealName: '', setupValue: 0, paymentType: 'deposit' });
 
   const isManagement = ['Admin', 'Manager', 'Supervisor'].includes(callerRole);
 
@@ -270,6 +278,45 @@ export function ProjectsTab({ callerName, callerRole }: ProjectsTabProps) {
                   </div>
                 </div>
 
+                {/* Payment Actions — Admin/Manager only */}
+                {isManagement && (
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <span className="text-[8px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <DollarSign className="w-3 h-3 text-slate-400" /> PAYMENTS
+                    </span>
+                    <div className="flex gap-2 ml-auto">
+                      {(p.current_stage === 'Waiting Deposit' || p.current_stage === 'Deposit Paid') && (
+                        <button
+                          onClick={() => setPaymentModal({
+                            open: true,
+                            dealId: p.deal_id,
+                            dealName: p.deals?.deal_name || 'Unnamed Deal',
+                            setupValue: Number(p.deals?.setup_value || 0),
+                            paymentType: 'deposit'
+                          })}
+                          className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[9px] uppercase tracking-wide cursor-pointer flex items-center gap-1 transition-colors"
+                        >
+                          <DollarSign className="w-3 h-3" /> Deposit
+                        </button>
+                      )}
+                      {(p.current_stage === 'Waiting Final Payment' || p.current_stage === 'Final Approval') && (
+                        <button
+                          onClick={() => setPaymentModal({
+                            open: true,
+                            dealId: p.deal_id,
+                            dealName: p.deals?.deal_name || 'Unnamed Deal',
+                            setupValue: Number(p.deals?.setup_value || 0),
+                            paymentType: 'final'
+                          })}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[9px] uppercase tracking-wide cursor-pointer flex items-center gap-1 transition-colors"
+                        >
+                          <DollarSign className="w-3 h-3" /> Final Payment
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Dates display */}
                 <div className="flex items-center gap-2 text-[9px] text-slate-400 font-semibold uppercase mt-1.5 border-t border-slate-100 pt-2.5">
                   <Calendar className="w-3 h-3 text-slate-400" />
@@ -321,6 +368,18 @@ export function ProjectsTab({ callerName, callerRole }: ProjectsTabProps) {
             </form>
           </GlassCard>
         </div>
+      )}
+
+      {/* Payment Modal */}
+      {paymentModal.open && paymentModal.dealId && (
+        <PaymentModal
+          dealId={paymentModal.dealId}
+          dealName={paymentModal.dealName}
+          setupValue={paymentModal.setupValue}
+          paymentType={paymentModal.paymentType}
+          onClose={() => setPaymentModal({ open: false, dealId: null, dealName: '', setupValue: 0, paymentType: 'deposit' })}
+          onSuccess={() => void loadProjects()}
+        />
       )}
     </div>
   );

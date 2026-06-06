@@ -41,10 +41,19 @@ export function DealCard({ deal, onDragStart, onClick, onViewSourceLead }: DealC
           <h4 className="font-display text-xs font-bold text-slate-800 uppercase tracking-wide truncate max-w-[130px]">
             {deal.deal_name || 'Unnamed Deal'}
           </h4>
-          <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-            {formatCurrency(deal.recurring_value)}/m
-          </span>
+          {Number(deal.recurring_value) > 0 && (
+            <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 shrink-0">
+              {formatCurrency(deal.recurring_value)}/m
+            </span>
+          )}
         </div>
+
+        {Number(deal.setup_value) > 0 && (
+          <div className="flex items-center gap-1 mt-1.5">
+            <span className="text-[9px] text-slate-400 font-bold uppercase">Setup:</span>
+            <span className="text-[11px] font-extrabold text-slate-700">{formatCurrency(deal.setup_value)}</span>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5 mt-3 text-[10px] text-slate-500 font-body">
           {deal.company_name && (

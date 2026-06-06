@@ -134,8 +134,8 @@ export async function confirmPaymentStatus(paymentId: number, amountReceived: nu
         .eq('id', payment.deal_id);
     }
 
-    // Broadcast SSE to trigger pipeline state updates
-    broadcastSse('STATUS_CHANGED', { leadId: payment.deal_id, status: 'Won', user: 'system' });
+    // Broadcast SSE so pipeline board auto-refreshes
+    broadcastSse('STATUS_CHANGED', { leadId: payment.deal_id, status: payment.payment_type === 'deposit' ? 'Won' : 'Fully Paid', user: session.name });
 
     return { success: true, payment };
   } catch (error: any) {

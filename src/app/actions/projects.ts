@@ -19,6 +19,7 @@ export async function getProjectsAction() {
       deals (
         deal_name,
         package_type,
+        setup_value,
         owner_caller_id,
         stage
       )

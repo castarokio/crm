@@ -324,3 +324,89 @@ export async function getTeamLeaderboardAction() {
     return { success: false, error: error.message, leaderboard: [] };
   }
 }
+
+export async function searchLeadsForAutocompleteAction(query: string) {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+
+    if (!query || query.trim().length === 0) {
+      return { success: true, leads: [] };
+    }
+
+    // Escape special characters for PostgREST
+    const safeQuery = query.replace(/[(),.%]/g, char => `\\${char}`).trim();
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id, agency_name, phone, area')
+      .ilike('agency_name', `%${safeQuery}%`)
+      .limit(10);
+
+    if (error) throw new Error(error.message);
+    return { success: true, leads: data || [] };
+  } catch (error: any) {
+    console.error('[searchLeadsForAutocompleteAction]', error.message);
+    return { success: false, error: error.message, leads: [] };
+  }
+}
+
+export async function getDealByLeadIdAction(leadId: number) {
+  try {
+    await requireCallerSession();
+    const supabase = requireSupabase();
+    const { data, error } = await supabase
+      .from('deals')
+      .select('*')
+      .eq('lead_id', leadId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return { success: true, deal: data };
+  } catch (error: any) {
+    console.error('[getDealByLeadIdAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function createDealForLeadAction(leadId: number, callerName: string) {
+  try {
+    const session = await requireWritableSession();
+    const supabase = requireSupabase();
+
+    // Fetch lead details
+    const { data: lead, error: fetchErr } = await supabase
+      .from('leads')
+      .select('agency_name, call_status')
+      .eq('id', leadId)
+      .single();
+
+    if (fetchErr || !lead) throw new Error(fetchErr?.message || 'Lead not found');
+
+    // Determine deal stage based on call status
+    let stage = 'New';
+    if (lead.call_status === 'Interested') stage = 'Interested';
+    else if (lead.call_status === 'Callback') stage = 'Appointment Booked';
+    else if (['Accepted', 'Client Configured'].includes(lead.call_status)) stage = 'Won';
+
+    // Insert deal
+    const { data: deal, error: insertErr } = await supabase
+      .from('deals')
+      .insert({
+        deal_name: `${lead.agency_name} Deal`,
+        company_name: lead.agency_name,
+        caller_name: session.name,
+        lead_id: leadId,
+        stage,
+        setup_value: 0.00,
+        recurring_value: 0.00,
+      })
+      .select()
+      .single();
+
+    if (insertErr) throw new Error(insertErr.message);
+
+    return { success: true, deal };
+  } catch (error: any) {
+    console.error('[createDealForLeadAction]', error.message);
+    return { success: false, error: error.message };
+  }
+}

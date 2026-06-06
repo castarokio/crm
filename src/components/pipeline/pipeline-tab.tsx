@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Search, Filter, Loader2, DollarSign, Calendar, FileText, Trash2 } from 'lucide-react';
 import { PipelineColumn } from './pipeline-column';
-import { getDeals, createDeal, updateDealStage, updateDeal, deleteDeal } from '@/app/actions/pipeline';
+import { getDeals, createDeal, updateDealStage, updateDeal, deleteDeal, searchLeadsForAutocompleteAction } from '@/app/actions/pipeline';
 import { Modal } from '../ui/modal';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { ALLOWED_DEAL_STAGES } from '@/lib/constants';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast, confirm } from '@/lib/toast';
+import { useRealtimeSync } from '@/hooks/use-realtime-sync';
 
 type PipelineTabProps = {
   callerName: string;
@@ -103,23 +104,52 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
   const [lostReason, setLostReason] = useState<string>('');
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
 
-  const fetchData = async () => {
+  // Autocomplete search states
+  const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [searching, setSearching] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!companyName || selectedLeadId !== null) {
+      setSuggestions([]);
+      return;
+    }
+
+    const delayDebounce = setTimeout(async () => {
+      setSearching(true);
+      const res = await searchLeadsForAutocompleteAction(companyName);
+      if (res.success && res.leads) {
+        setSuggestions(res.leads);
+      }
+      setSearching(false);
+    }, 300);
+
+    return () => clearTimeout(delayDebounce);
+  }, [companyName, selectedLeadId]);
+
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const res = await getDeals();
     if (res.success) {
       setDeals(res.deals || []);
-      // Extract unique callers for filtering
       const uniqueCallers: string[] = Array.from(
         new Set((res.deals || []).map((d: any) => d.caller_name).filter(Boolean))
       );
       setCallersList(uniqueCallers);
     }
     setLoading(false);
-  };
+  }, []);
+
+  // SSE — auto-refresh board on any STATUS_CHANGED event (e.g. payment confirmation)
+  useRealtimeSync({
+    onStatusChanged: useCallback(() => {
+      void fetchData();
+    }, [fetchData]),
+  });
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    void fetchData();
+  }, [fetchData]);
 
   const handleDragStart = (e: React.DragEvent, id: number) => {
     e.dataTransfer.setData('text/plain', String(id));
@@ -175,6 +205,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
       recurring_value: recurringValue,
       expected_close_date: expectedCloseDate || undefined,
       notes: notes,
+      lead_id: selectedLeadId || undefined,
     });
     setFormSubmitting(false);
     if (res.success) {
@@ -259,6 +290,8 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
   const resetCreateForm = () => {
     setDealName('');
     setCompanyName('');
+    setSelectedLeadId(null);
+    setSuggestions([]);
     setSetupValue(0);
     setRecurringValue(0);
     setExpectedCloseDate('');
@@ -383,15 +416,51 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
             />
           </div>
 
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 relative">
             <label className="text-[9px] text-slate-400 font-bold uppercase">Company/Agency Name *</label>
-            <Input
-              type="text"
-              required
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="e.g. Travel Sahara Tour"
-            />
+            <div className="relative">
+              <Input
+                type="text"
+                required
+                value={companyName}
+                onChange={(e) => {
+                  setCompanyName(e.target.value);
+                  setSelectedLeadId(null);
+                }}
+                placeholder="Type to search agency..."
+                className="w-full"
+                autoComplete="off"
+              />
+              {searching && (
+                <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                </div>
+              )}
+            </div>
+
+            {/* Suggestions list dropdown */}
+            {suggestions.length > 0 && (
+              <div className="absolute top-[100%] left-0 right-0 z-50 mt-1 max-h-40 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl divide-y divide-slate-50">
+                {suggestions.map((lead) => (
+                  <button
+                    key={lead.id}
+                    type="button"
+                    onClick={() => {
+                      setCompanyName(lead.agency_name);
+                      setSelectedLeadId(lead.id);
+                      setSuggestions([]);
+                      if (!dealName) {
+                        setDealName(`${lead.agency_name} Deal`);
+                      }
+                    }}
+                    className="w-full text-left px-3.5 py-2 hover:bg-indigo-50/50 transition-colors flex flex-col gap-0.5 cursor-pointer"
+                  >
+                    <span className="font-bold text-slate-805 text-[11px] uppercase">{lead.agency_name}</span>
+                    <span className="text-[9.5px] text-slate-450 font-medium">{lead.area} • {lead.phone || 'No Phone'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
