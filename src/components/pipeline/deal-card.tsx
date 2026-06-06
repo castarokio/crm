@@ -12,8 +12,8 @@ type DealCardProps = {
 
 export function DealCard({ deal, onDragStart, onClick, onViewSourceLead }: DealCardProps) {
   const formatCurrency = (val?: number) => {
-    if (val === undefined || val === null) return '$0.00';
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+    if (val === undefined || val === null) return '0 DZD';
+    return new Intl.NumberFormat('en-US').format(val) + ' DZD';
   };
 
   const handleDragStart = (e: React.DragEvent) => {

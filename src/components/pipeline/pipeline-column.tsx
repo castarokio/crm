@@ -90,7 +90,7 @@ export function PipelineColumn({
   }, []);
 
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
+    return new Intl.NumberFormat('en-US').format(val) + ' DZD';
   };
 
   const totalRecurring = deals.reduce((sum, d) => sum + (Number(d.recurring_value) || 0), 0);

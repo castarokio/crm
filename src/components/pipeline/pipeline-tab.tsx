@@ -319,7 +319,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
           <div className="flex flex-col text-right font-body">
             <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Est. Contract Value</span>
             <span className="text-sm font-bold text-slate-800 font-display">
-              {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalValue)}
+              {new Intl.NumberFormat('en-US').format(totalValue)} DZD
             </span>
           </div>
 
@@ -396,7 +396,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-slate-400 font-bold uppercase">Setup Fee ($)</label>
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Setup Fee (DZD)</label>
               <Input
                 type="number"
                 value={setupValue || ''}
@@ -405,7 +405,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-slate-400 font-bold uppercase">Recurring Fee ($ / month)</label>
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Recurring Fee (DZD / month)</label>
               <Input
                 type="number"
                 value={recurringValue || ''}
@@ -485,7 +485,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-slate-400 font-bold uppercase">Setup Fee ($)</label>
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Setup Fee (DZD)</label>
               <Input
                 type="number"
                 value={setupValue || ''}
@@ -493,7 +493,7 @@ export function PipelineTab({ callerName, onViewSourceLead }: PipelineTabProps) 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-slate-400 font-bold uppercase">Recurring Fee ($ / month)</label>
+              <label className="text-[9px] text-slate-400 font-bold uppercase">Recurring Fee (DZD / month)</label>
               <Input
                 type="number"
                 value={recurringValue || ''}
