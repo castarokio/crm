@@ -11,8 +11,11 @@ import {
   type CallerRole,
 } from '@/lib/auth-session';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
 const PIN_HASH_PREFIX = 'scrypt';
 const PIN_HASH_BYTES = 32;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function requireSupabase() {
   const supabase = getSupabaseAdmin();
@@ -20,21 +23,26 @@ function requireSupabase() {
   return supabase;
 }
 
-function safeStringEqual(expected: string, supplied: string) {
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  const suppliedBuffer = Buffer.from(supplied, 'utf8');
-  return expectedBuffer.length === suppliedBuffer.length && timingSafeEqual(expectedBuffer, suppliedBuffer);
-}
-
-function hashCallerPin(pin: string) {
+/**
+ * Hash a plain-text PIN with a fresh random salt.
+ * Format: scrypt$<salt>$<hash>
+ */
+function hashCallerPin(pin: string): string {
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(pin, salt, PIN_HASH_BYTES).toString('hex');
   return `${PIN_HASH_PREFIX}$${salt}$${hash}`;
 }
 
-function verifyCallerPin(storedPin: string, suppliedPin: string) {
+/**
+ * Verify a supplied PIN against a stored hash (or legacy plain-text value).
+ * Returns true only on a valid match.
+ */
+function verifyCallerPin(storedPin: string, suppliedPin: string): boolean {
   if (!storedPin.startsWith(`${PIN_HASH_PREFIX}$`)) {
-    return storedPin === suppliedPin;
+    // Legacy plain-text comparison (timing-safe)
+    const a = Buffer.from(storedPin, 'utf8');
+    const b = Buffer.from(suppliedPin, 'utf8');
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   const [, salt, expectedHex] = storedPin.split('$');
@@ -49,6 +57,8 @@ function getCleanPin(pinVar: string | undefined): string {
   if (!pinVar) return '';
   return pinVar.replace(/[^0-9]/g, '');
 }
+
+// ── Exported actions ──────────────────────────────────────────────────────────
 
 export async function getCallerProfiles() {
   try {
@@ -70,90 +80,53 @@ export async function verifyCallerPinAction(name: string, pin: string) {
   try {
     if (!(await hasPortalSession())) throw new Error('UNAUTHORIZED');
     const supabase = requireSupabase();
-    
+
     const { data, error } = await supabase
       .from('caller_profiles')
       .select('pin, role, trust_level, agreement_accepted_version, status, disabled_reason')
       .eq('name', name)
       .single();
-      
-    if (!error && data) {
-      if (data.status === 'Disabled') {
-        return { success: false, error: 'ACCOUNT_SUSPENDED', disabledReason: data.disabled_reason || 'Account disabled by admin compliance.' };
-      }
-      if (verifyCallerPin(data.pin, pin)) {
-        if (!data.pin.startsWith(`${PIN_HASH_PREFIX}$`)) {
-          await supabase
-            .from('caller_profiles')
-            .update({ pin: hashCallerPin(pin) })
-            .eq('name', name);
-        }
-        const role = (data.role || 'Caller') as CallerRole;
-        const trustLevel = data.trust_level || 'New';
-        const agreementVersion = data.agreement_accepted_version || null;
-        await setCallerSession(name, role, trustLevel, agreementVersion);
-        return { success: true, role, agreementAcceptedVersion: agreementVersion };
-      }
-      
-      // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
-      if (verifyCallerPin(data.pin, '000000')) {
-        let expectedPin = '';
-        let role = 'Caller';
-        if (name === 'Hamid') {
-          expectedPin = getCleanPin(process.env.HAMID_PIN || process.env.NEXT_PUBLIC_HAMID_PIN);
-          role = 'Admin';
-        } else if (name === 'Oussama') {
-          expectedPin = getCleanPin(process.env.OUSSAMA_PIN || process.env.NEXT_PUBLIC_OUSSAMA_PIN);
-          role = 'Caller';
-        } else if (name === 'Kamel') {
-          expectedPin = getCleanPin(process.env.KAMEL_PIN || process.env.NEXT_PUBLIC_KAMEL_PIN);
-          role = 'Caller';
-        } else if (name === 'Yacine') {
-          expectedPin = getCleanPin(process.env.YACINE_PIN || process.env.NEXT_PUBLIC_YACINE_PIN);
-          role = 'Supervisor';
-        } else if (name === 'Sofiane') {
-          expectedPin = getCleanPin(process.env.SOFIANE_PIN || process.env.NEXT_PUBLIC_SOFIANE_PIN);
-          role = 'Viewer';
-        }
 
-        if (expectedPin !== '' && safeStringEqual(expectedPin, pin)) {
-          await supabase
-            .from('caller_profiles')
-            .update({ pin: hashCallerPin(pin) })
-            .eq('name', name);
-          const finalRole = (data.role || role) as CallerRole;
-          const trustLevel = data.trust_level || 'New';
-          const agreementVersion = data.agreement_accepted_version || null;
-          await setCallerSession(name, finalRole, trustLevel, agreementVersion);
-          return { success: true, role: finalRole, agreementAcceptedVersion: agreementVersion };
-        }
+    if (error || !data) {
+      // No DB record – fall back to env-var comparison (in case DB is unreachable)
+      const envKey = `${name.toUpperCase()}_PIN`;
+      const expectedPin = getCleanPin(process.env[envKey]);
+      const matched = expectedPin !== '' && (() => {
+        const a = Buffer.from(expectedPin, 'utf8');
+        const b = Buffer.from(pin, 'utf8');
+        return a.length === b.length && timingSafeEqual(a, b);
+      })();
+      if (matched) await setCallerSession(name, 'Caller' as CallerRole, 'New', null);
+      return { success: matched };
+    }
+
+    // Account disabled check
+    if (data.status === 'Disabled') {
+      return {
+        success: false,
+        error: 'ACCOUNT_SUSPENDED',
+        disabledReason: data.disabled_reason || 'Account disabled by admin compliance.',
+      };
+    }
+
+    // Primary: verify against stored (hashed) PIN
+    if (verifyCallerPin(data.pin, pin)) {
+      // Opportunistically upgrade legacy plain-text pins
+      if (!data.pin.startsWith(`${PIN_HASH_PREFIX}$`)) {
+        supabase
+          .from('caller_profiles')
+          .update({ pin: hashCallerPin(pin) })
+          .eq('name', name)
+          .then(() => {/* fire-and-forget */});
       }
-      
-      return { success: false };
+      const role = (data.role || 'Caller') as CallerRole;
+      const trustLevel = data.trust_level || 'New';
+      const agreementVersion = data.agreement_accepted_version || null;
+      await setCallerSession(name, role, trustLevel, agreementVersion);
+      return { success: true, role, agreementAcceptedVersion: agreementVersion };
     }
-    
-    let expectedPin = '';
-    let role = 'Caller';
-    if (name === 'Hamid') {
-      expectedPin = getCleanPin(process.env.HAMID_PIN || process.env.NEXT_PUBLIC_HAMID_PIN);
-      role = 'Admin';
-    } else if (name === 'Oussama') {
-      expectedPin = getCleanPin(process.env.OUSSAMA_PIN || process.env.NEXT_PUBLIC_OUSSAMA_PIN);
-      role = 'Caller';
-    } else if (name === 'Kamel') {
-      expectedPin = getCleanPin(process.env.KAMEL_PIN || process.env.NEXT_PUBLIC_KAMEL_PIN);
-      role = 'Caller';
-    } else if (name === 'Yacine') {
-      expectedPin = getCleanPin(process.env.YACINE_PIN || process.env.NEXT_PUBLIC_YACINE_PIN);
-      role = 'Supervisor';
-    } else if (name === 'Sofiane') {
-      expectedPin = getCleanPin(process.env.SOFIANE_PIN || process.env.NEXT_PUBLIC_SOFIANE_PIN);
-      role = 'Viewer';
-    }
-    
-    const matched = expectedPin !== '' && safeStringEqual(expectedPin, pin);
-    if (matched) await setCallerSession(name, role as CallerRole, 'New', null);
-    return { success: matched, role: matched ? role : undefined, agreementAcceptedVersion: matched ? null : undefined };
+
+    return { success: false };
   } catch (error: any) {
     console.error('[verifyCallerPinAction]', error.message);
     return { success: false, error: error.message };
@@ -162,59 +135,33 @@ export async function verifyCallerPinAction(name: string, pin: string) {
 
 export async function verifyPortalPinAction(pin: string) {
   try {
-    console.log('[DEBUG verifyPortalPinAction] Verifying PIN:', pin);
     const supabase = requireSupabase();
-    const { data: customPinObj, error: queryError } = await supabase
+
+    const { data, error } = await supabase
       .from('caller_profiles')
       .select('pin')
       .eq('name', '__portal_settings__')
       .single();
 
-    if (queryError) {
-      console.log('[DEBUG verifyPortalPinAction] Supabase query error:', queryError);
-    }
-    console.log('[DEBUG verifyPortalPinAction] Retrieved customPinObj:', customPinObj);
-
-    if (customPinObj && customPinObj.pin && customPinObj.pin !== '000000') {
-      const success = verifyCallerPin(customPinObj.pin, pin);
-      console.log('[DEBUG verifyPortalPinAction] verifyCallerPin result:', success);
+    if (!error && data?.pin) {
+      const success = verifyCallerPin(data.pin, pin);
       if (success) {
         await setPortalSession();
-        console.log('[DEBUG verifyPortalPinAction] Success: Portal session set.');
         return { success: true };
       }
-      
-      // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
-      if (verifyCallerPin(customPinObj.pin, '000000')) {
-        const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
-        console.log('[DEBUG verifyPortalPinAction] Fallback path: expectedPortalPin =', expectedPortalPin);
-        if (expectedPortalPin && safeStringEqual(expectedPortalPin, pin)) {
-          await supabase
-            .from('caller_profiles')
-            .update({ pin: hashCallerPin(pin) })
-            .eq('name', '__portal_settings__');
-          await setPortalSession();
-          console.log('[DEBUG verifyPortalPinAction] Success: Portal session set via fallback and DB updated.');
-          return { success: true };
-        }
-      }
-      
-      console.log('[DEBUG verifyPortalPinAction] Verification failed.');
       return { success: false };
-    } else {
-      const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
-      console.log('[DEBUG verifyPortalPinAction] Else path: expectedPortalPin =', expectedPortalPin);
-      if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
-      const success = safeStringEqual(expectedPortalPin, pin);
-      console.log('[DEBUG verifyPortalPinAction] Direct match success:', success);
-      if (success) {
-        await setPortalSession();
-        console.log('[DEBUG verifyPortalPinAction] Success: Portal session set directly.');
-      }
-      return { success };
     }
+
+    // DB row missing – fall back to env var
+    const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN);
+    if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
+    const a = Buffer.from(expectedPortalPin, 'utf8');
+    const b = Buffer.from(pin, 'utf8');
+    const matched = a.length === b.length && timingSafeEqual(a, b);
+    if (matched) await setPortalSession();
+    return { success: matched };
   } catch (error: any) {
-    console.error('[verifyPortalPinAction] ERROR:', error.message);
+    console.error('[verifyPortalPinAction]', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -280,7 +227,7 @@ export async function submitTeamApplication(
       cleanPhone,
       cleanTelegram ? `TG:${cleanTelegram}` : '',
       cleanExperience ? `E:${cleanExperience}` : '',
-      cleanHours ? `H:${cleanHours}` : ''
+      cleanHours ? `H:${cleanHours}` : '',
     ].filter(Boolean);
 
     const packedPhone = packedParts.join('|');
@@ -303,7 +250,7 @@ export async function submitTeamApplication(
       email: normalizedEmail,
       phone: packedPhone,
       gender: normalizedGender,
-      status: 'Pending'
+      status: 'Pending',
     });
     if (error) throw new Error(error.message);
     return { success: true };
@@ -325,13 +272,13 @@ export async function acceptCallerAgreementAction(name: string) {
       .maybeSingle();
 
     const latestVersion = settings?.guidelines_version || '1.0';
-    
+
     // Update caller profile with the latest version
     const { error: profileError } = await supabase
       .from('caller_profiles')
       .update({ agreement_accepted_version: latestVersion })
       .eq('name', name);
-      
+
     if (profileError) throw new Error(profileError.message);
 
     // Get updated profile details to refresh session token
@@ -350,7 +297,7 @@ export async function acceptCallerAgreementAction(name: string) {
       caller_name: name,
       action_type: `ACCEPT_AGREEMENT_V${latestVersion}`,
       details: `Guidelines and Commission Agreement version ${latestVersion} accepted.`,
-      lead_id: null
+      lead_id: null,
     });
 
     return { success: true, acceptedVersion: latestVersion };
