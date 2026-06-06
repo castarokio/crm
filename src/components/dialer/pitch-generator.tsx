@@ -34,34 +34,7 @@ export function PitchGenerator({ lead, callerName, onDial }: PitchGeneratorProps
     const followers = lead.followers_if_visible || lead.instagram_followers || lead.facebook_followers || '';
 
     if (fmt === 'whatsapp') {
-      if (currentAngle === 'rating') {
-        if (rating > 0) {
-          if (isNoWeb) {
-            return `Bonjour l'équipe de ${agencyName}. C'est hamid de Web-OS. J'ai vu votre note Google de ${Number(rating).toFixed(1)}/5 sur ${reviews} avis : félicitations pour cette réputation ! C'est dommage de ne pas capitaliser dessus avec un site web moderne pour capter les réservations en direct. Notre portfolio : https://castarokio.github.io/. Dispo 5 min pour en parler ?`;
-          } else {
-            return `Bonjour l'équipe de ${agencyName}. C'est hamid de Web-OS. J'ai vu votre note Google de ${Number(rating).toFixed(1)}/5 sur ${reviews} avis, bravo ! J'ai regardé votre site ${lead.website}, on pourrait y intégrer vos avis Google de façon dynamique pour rassurer vos clients et doubler vos réservations. Notre portfolio : https://castarokio.github.io/. Dispo pour un court échange ?`;
-          }
-        } else {
-          if (isNoWeb) {
-            return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. Nous accompagnons les agences de voyages en Algérie à booster leurs réservations en créant des sites web professionnels. Jetez un œil à nos réalisations : https://castarokio.github.io/. Seriez-vous disponibles pour un court appel de 5 minutes ?`;
-          } else {
-            return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. J'ai visité votre site ${lead.website} et relevé quelques pistes simples pour améliorer vos conversions et votre visibilité sur Google. Notre portfolio : https://castarokio.github.io/. Dispo pour en parler rapidement ?`;
-          }
-        }
-      } else if (currentAngle === 'social') {
-        const followerText = followers ? ` (notamment avec vos ${followers} abonnés)` : '';
-        if (isNoWeb) {
-          return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. Votre page est super active${followerText}, mais l'absence de site internet pour réserver en direct nuit à votre taux de conversion. Jetez un œil à nos réalisations pour agences : https://castarokio.github.io/. Dispo pour un court appel ?`;
-        } else {
-          return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. Votre présence sur les réseaux sociaux est excellente. J'ai visité votre site ${lead.website} et j'ai relevé quelques lenteurs sur mobile qui réduisent l'impact de vos posts. Nos réalisations : https://castarokio.github.io/. Dispo 5 minutes pour en parler ?`;
-        }
-      } else { // technical
-        if (isNoWeb) {
-          return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. Nous créons des sites web ultra-fluides et optimisés pour le mobile, spécifiquement pour les agences de voyages en Algérie. Vous pouvez voir notre portfolio ici : https://castarokio.github.io/. Seriez-vous ouverts à un court échange cette semaine ?`;
-        } else {
-          return `Bonjour l'équipe de ${agencyName}, c'est hamid de Web-OS. J'ai visité votre site ${lead.website} et j'ai relevé des lenteurs de chargement sur mobile qui vous font perdre des clients. On a conçu des sites ultra-fluides pour des agences en Algérie. Portfolio : https://castarokio.github.io/. Dispo 5 minutes pour en parler ?`;
-        }
-      }
+      return `Bonjour, je suis Hamid de Web-OS. Nous aimerions collaborer avec vous pour optimiser la présence en ligne de ${agencyName}.`;
     } else { // email
       const emailIntro = `Bonjour l'équipe de ${agencyName},
 

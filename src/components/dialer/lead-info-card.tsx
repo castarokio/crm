@@ -346,7 +346,7 @@ export function LeadInfoCard({
     // Retrieve cached pitch
     const pitch = localStorage.getItem(`pitch_draft_wa_${lead.id}`) || 
       localStorage.getItem(`pitch_draft_${lead.id}`) || 
-      `Bonjour, je suis ${callerName} de Web-OS. Nous aimerions collaborer avec vous pour optimiser la présence en ligne de ${lead.agency_name}.`;
+      `Bonjour, je suis Hamid de Web-OS. Nous aimerions collaborer avec vous pour optimiser la présence en ligne de ${lead.agency_name}.`;
     
     return `https://wa.me/${formatted}?text=${encodeURIComponent(pitch)}`;
   };

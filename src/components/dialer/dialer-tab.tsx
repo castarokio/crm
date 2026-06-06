@@ -408,52 +408,47 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
       )}
 
       {/* Main Grid View */}      {queue.length === 0 ? (
-        callerRole === 'Caller' ? (
-          /* Caller Empty State - Get Next Lead Cursor Button */
-          <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10 font-body text-xs">
-            <Phone className="w-8 h-8 text-indigo-650 shrink-0 animate-pulse" />
-            <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Cursor Offline</h3>
-            <p className="text-slate-455 text-center font-medium leading-relaxed max-w-sm">
-              Press the button below to retrieve your next locked calling lead from the campaign queue. Your lock lease is active for 10 minutes.
-            </p>
+        <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10 font-body text-xs text-center">
+          <Phone className="w-8 h-8 text-indigo-650 shrink-0 animate-pulse" />
+          <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Cursor Offline</h3>
+          <p className="text-slate-455 font-medium leading-relaxed max-w-sm">
+            Press "Get Next Lead Card" to retrieve your next locked lead from the campaign queue. Your lock lease is active for 10 minutes.
+          </p>
+          <div className="flex flex-wrap gap-3 justify-center mt-2">
             <Button 
               onClick={handleGetNextLead} 
               className="bg-indigo-650 hover:bg-indigo-750 text-white font-bold uppercase text-[10px] px-6 py-3 rounded-xl shadow cursor-pointer"
             >
               Get Next Lead Card
             </Button>
+            {callerRole !== 'Caller' && (
+              <>
+                <Button 
+                  onClick={async () => {
+                    setLoading(true);
+                    const res = await recallAllUnansweredAction(callerName);
+                    if (res.success && res.count) {
+                      toast.success(`Recalled ${res.count} unanswered leads back into queue!`);
+                      await loadQueue();
+                    } else {
+                      toast.warning('No unanswered leads to recall right now.');
+                    }
+                    setLoading(false);
+                  }}
+                  className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold uppercase text-[10px] px-6 py-3 rounded-xl cursor-pointer"
+                >
+                  Recall Unanswered
+                </Button>
+                <Button 
+                  onClick={() => setIsCreateOpen(true)} 
+                  className="bg-indigo-600 hover:bg-indigo-750 text-white font-bold uppercase text-[10px] px-6 py-3 rounded-xl cursor-pointer"
+                >
+                  + Add Contact
+                </Button>
+              </>
+            )}
           </div>
-        ) : (
-          /* Empty State */
-          <div className="flex flex-col items-center justify-center p-12 bg-white border border-slate-200 rounded-2xl max-w-lg mx-auto shadow-sm gap-4 mt-10">
-            <AlertCircle className="w-8 h-8 text-amber-500 animate-bounce" />
-            <h3 className="font-display font-bold text-slate-800 text-sm uppercase tracking-wide">Dialer Queue Depleted</h3>
-            <p className="text-xs text-slate-455 text-center font-medium leading-relaxed max-w-sm">
-              There are no active or uncalled leads left in your dialer queue. Please contact the administrator to assign more lead ranges, or click below to recall unanswered attempts.
-            </p>
-            <div className="flex gap-3">
-              <Button
-                onClick={async () => {
-                  setLoading(true);
-                  const res = await recallAllUnansweredAction(callerName);
-                  if (res.success && res.count) {
-                    toast.success(`Recalled ${res.count} unanswered leads back into queue!`);
-                    await loadQueue();
-                  } else {
-                    toast.warning('No unanswered leads to recall right now.');
-                  }
-                  setLoading(false);
-                }}
-                className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold uppercase text-[10px]"
-              >
-                Recall Unanswered Leads
-              </Button>
-              <Button onClick={() => setIsCreateOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase text-[10px]">
-                + ADD NEW CONTACT
-              </Button>
-            </div>
-          </div>
-        )
+        </div>
       ) : (
         <div className="flex flex-col gap-4 h-full">
           {/* Top Actions Row */}
@@ -469,7 +464,7 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
                 </button>
               )}
               <span className="text-[10px] text-slate-550 font-bold font-display uppercase bg-slate-100/80 px-2.5 py-1 rounded-lg border border-slate-200/50">
-                LEAD {currentIndex + 1} of {queue.length} IN QUEUE
+                Active Call Lead
               </span>
             </div>
             
@@ -712,16 +707,6 @@ export function DialerTab({ callerName, callerRole, activeLeadId, onClearActiveL
                       className="w-full mt-1 bg-indigo-600 hover:bg-indigo-700 font-bold uppercase"
                     >
                       Save Call Log
-                    </Button>
-                    
-                    {/* Skip Lead button */}
-                    <Button
-                      onClick={handleSkipLead}
-                      loading={skipping}
-                      variant="secondary"
-                      className="w-full mt-2 bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-amber-800 font-bold uppercase cursor-pointer"
-                    >
-                      Skip Lead
                     </Button>
                     
                     {/* Delete if not related button */}

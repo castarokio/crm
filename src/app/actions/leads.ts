@@ -424,68 +424,26 @@ export async function getDialerQueue(niche?: string | null) {
     // Auto-expire old locks
     await runAutoExpirations();
 
-    // Secure database exports: simple callers can ONLY query their active lock lead
-    if (session.role === 'Caller') {
-      const nowStr = new Date().toISOString();
-      const { data: activeLock } = await supabase
-        .from('lead_locks')
-        .select('lead_id')
-        .eq('locked_by', effectiveCallerName)
-        .eq('lock_type', 'active_call')
-        .eq('status', 'Active')
-        .gt('lock_expiry', nowStr)
-        .maybeSingle();
+    const nowStr = new Date().toISOString();
+    const { data: activeLock } = await supabase
+      .from('lead_locks')
+      .select('lead_id')
+      .eq('locked_by', effectiveCallerName)
+      .eq('lock_type', 'active_call')
+      .eq('status', 'Active')
+      .gt('lock_expiry', nowStr)
+      .maybeSingle();
 
-      if (activeLock) {
-        const { data: lead } = await supabase
-          .from('leads')
-          .select(LEAD_LIST_COLUMNS)
-          .eq('id', activeLock.lead_id)
-          .single();
-        return { success: true, queue: lead ? [lead] : [], total: lead ? 1 : 0 };
-      }
-      return { success: true, queue: [], total: 0 };
+    if (activeLock) {
+      const { data: lead } = await supabase
+        .from('leads')
+        .select(LEAD_LIST_COLUMNS)
+        .eq('id', activeLock.lead_id)
+        .single();
+      return { success: true, queue: lead ? [lead] : [], total: lead ? 1 : 0 };
     }
     
-    // Select leads that are fresh or explicitly recalled (Admins / Supervisors)
-    let q = supabase
-      .from('leads')
-      .select(LEAD_LIST_COLUMNS, { count: 'exact' })
-      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled,call_status.eq.Busy,call_status.eq.No Answer,call_status.eq.Callback');
-
-    if (niche && niche !== 'All') {
-      q = q.eq('niche', niche);
-    }
-
-    if (effectiveCallerName) {
-      const safeCaller = escapePostgrestFilterValue(effectiveCallerName);
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      q = q.or(`assigned_to.eq.${safeCaller},assigned_to.is.null,last_updated.lt.${tenMinutesAgo}`);
-    }
-
-    const { data, count, error } = await q
-      .order('priority', { ascending: true })
-      .order('last_called_at', { ascending: true, nullsFirst: true })
-      .order('review_count', { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    // Shuffle Busy and No Answer leads randomly in the queue list
-    const leadsList = data || [];
-    const freshOrRecalled = leadsList.filter((l: any) => !['Busy', 'No Answer'].includes(l.call_status));
-    const toShuffle = leadsList.filter((l: any) => ['Busy', 'No Answer'].includes(l.call_status));
-
-    // Fisher-Yates shuffle
-    for (let i = toShuffle.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const temp = toShuffle[i];
-      toShuffle[i] = toShuffle[j];
-      toShuffle[j] = temp;
-    }
-
-    const combinedQueue = [...freshOrRecalled, ...toShuffle];
-
-    return { success: true, queue: combinedQueue, total: count || combinedQueue.length };
+    return { success: true, queue: [], total: 0 };
   } catch (error: any) {
     console.error('[getDialerQueue]', error.message);
     return { success: false, error: error.message, queue: [] };
@@ -1551,12 +1509,12 @@ export async function getNextLeadAction(callerName: string, niche?: string | nul
       return { success: true, lead };
     }
 
-    // 2. Fetch leads: assigned to caller or unassigned, filtering out locked/owned/converted ones
+    // 2. Fetch leads: assigned to caller or unassigned, selecting only waiting/callback/unanswered ones
     let candQuery = supabase
       .from('leads')
       .select('id')
       .eq('do_not_contact', false)
-      .not('call_status', 'in', '("Interested","Wrong Number","Not Interested","Accepted","Client Configured")')
+      .or('call_status.eq.Not Called,call_status.is.null,call_status.eq.Recalled,call_status.eq.Busy,call_status.eq.No Answer,call_status.eq.Callback')
       .or(`assigned_to.eq.${escapePostgrestFilterValue(effectiveCallerName)},assigned_to.is.null`);
 
     if (niche && niche !== 'All') {
