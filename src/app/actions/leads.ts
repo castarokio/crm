@@ -95,7 +95,7 @@ function computeLeadPriority(lead: {
   return 3; // P3: Standard
 }
 
-export const MOCK_DEMO_LEADS = [
+const MOCK_DEMO_LEADS = [
   {
     id: 9001,
     agency_name: "Sahara Odyssey Travel",

@@ -20,7 +20,7 @@ function assertAllowedDealStage(stage: string) {
   }
 }
 
-export const MOCK_DEMO_DEALS = [
+const MOCK_DEMO_DEALS = [
   {
     id: 10001,
     deal_name: "Starter Landing Page Bundle",
