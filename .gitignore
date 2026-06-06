@@ -55,3 +55,9 @@ scripts/generate_favicons.py
 # gemini/vercel
 .gemini/
 .vercel_backup/
+
+# large files & local docs
+/NetGuard.msix
+*.pdf
+*.txt
+
