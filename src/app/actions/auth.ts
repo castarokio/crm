@@ -162,43 +162,59 @@ export async function verifyCallerPinAction(name: string, pin: string) {
 
 export async function verifyPortalPinAction(pin: string) {
   try {
+    console.log('[DEBUG verifyPortalPinAction] Verifying PIN:', pin);
     const supabase = requireSupabase();
-    const { data: customPinObj } = await supabase
+    const { data: customPinObj, error: queryError } = await supabase
       .from('caller_profiles')
       .select('pin')
       .eq('name', '__portal_settings__')
       .single();
 
+    if (queryError) {
+      console.log('[DEBUG verifyPortalPinAction] Supabase query error:', queryError);
+    }
+    console.log('[DEBUG verifyPortalPinAction] Retrieved customPinObj:', customPinObj);
+
     if (customPinObj && customPinObj.pin && customPinObj.pin !== '000000') {
       const success = verifyCallerPin(customPinObj.pin, pin);
+      console.log('[DEBUG verifyPortalPinAction] verifyCallerPin result:', success);
       if (success) {
         await setPortalSession();
+        console.log('[DEBUG verifyPortalPinAction] Success: Portal session set.');
         return { success: true };
       }
       
       // Fallback: if stored pin is the dummy "000000" but user supplies correct env-configured PIN
       if (verifyCallerPin(customPinObj.pin, '000000')) {
         const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
+        console.log('[DEBUG verifyPortalPinAction] Fallback path: expectedPortalPin =', expectedPortalPin);
         if (expectedPortalPin && safeStringEqual(expectedPortalPin, pin)) {
           await supabase
             .from('caller_profiles')
             .update({ pin: hashCallerPin(pin) })
             .eq('name', '__portal_settings__');
           await setPortalSession();
+          console.log('[DEBUG verifyPortalPinAction] Success: Portal session set via fallback and DB updated.');
           return { success: true };
         }
       }
       
+      console.log('[DEBUG verifyPortalPinAction] Verification failed.');
       return { success: false };
     } else {
       const expectedPortalPin = getCleanPin(process.env.PORTAL_PIN || process.env.NEXT_PUBLIC_PORTAL_PIN);
+      console.log('[DEBUG verifyPortalPinAction] Else path: expectedPortalPin =', expectedPortalPin);
       if (!expectedPortalPin) throw new Error('PORTAL_PIN_NOT_CONFIGURED');
       const success = safeStringEqual(expectedPortalPin, pin);
-      if (success) await setPortalSession();
+      console.log('[DEBUG verifyPortalPinAction] Direct match success:', success);
+      if (success) {
+        await setPortalSession();
+        console.log('[DEBUG verifyPortalPinAction] Success: Portal session set directly.');
+      }
       return { success };
     }
   } catch (error: any) {
-    console.error('[verifyPortalPinAction]', error.message);
+    console.error('[verifyPortalPinAction] ERROR:', error.message);
     return { success: false, error: error.message };
   }
 }
