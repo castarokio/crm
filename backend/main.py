@@ -3,7 +3,7 @@ LeadStream CRM — FastAPI Backend
 Serves both the REST API and the static frontend.
 """
 import os
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import sys
 import os
+import io
+import csv
 
 # Ensure backend directory is in path for Vercel serverless environment
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +62,133 @@ def serve_index():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "LeadStream CRM"}
+
+
+@app.post("/api/leads/import")
+async def import_leads_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Import leads from CSV, scanning for duplicates against leads & processed_leads."""
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported.")
+        
+    try:
+        contents = await file.read()
+        try:
+            decoded = contents.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            decoded = contents.decode("latin-1")
+            
+        f = io.StringIO(decoded)
+        reader = csv.DictReader(f)
+        
+        # Check mandatory column
+        if not reader.fieldnames or "Name" not in reader.fieldnames:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain a 'Name' column (for business name)."
+            )
+            
+        rows = list(reader)
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CSV file: {str(e)}")
+
+    # Helper functions for normalization
+    def normalize_name(name: str) -> str:
+        return name.strip().lower() if name else ""
+
+    def normalize_phone(phone: str) -> str:
+        if not phone:
+            return ""
+        return "".join(c for c in phone if c.isdigit())
+
+    # Fetch existing active leads (name, phone)
+    existing_keys = set()
+    leads_db = db.query(models.Lead.business_name, models.Lead.phones).all()
+    for row in leads_db:
+        n_name = normalize_name(row.business_name)
+        n_phone = normalize_phone(row.phones)
+        existing_keys.add((n_name, n_phone))
+
+    # Fetch existing processed leads (name, phone)
+    processed_db = db.query(models.ProcessedLead.business_name, models.ProcessedLead.phones).all()
+    for row in processed_db:
+        n_name = normalize_name(row.business_name)
+        n_phone = normalize_phone(row.phones)
+        existing_keys.add((n_name, n_phone))
+
+    def clean_str(val: str) -> str | None:
+        if val is None:
+            return None
+        s = val.strip()
+        return s if s else None
+
+    def to_float(val: str) -> float | None:
+        try:
+            return float(val.strip()) if val and val.strip() else None
+        except ValueError:
+            return None
+
+    def to_int(val: str) -> int | None:
+        try:
+            return int(val.strip()) if val and val.strip() else None
+        except ValueError:
+            return None
+
+    imported_count = 0
+    skipped_count = 0
+    new_objects = []
+
+    for row in rows:
+        name = clean_str(row.get("Name", ""))
+        phones = clean_str(row.get("Phones", ""))
+        if not name:
+            skipped_count += 1
+            continue
+
+        n_name = normalize_name(name)
+        n_phone = normalize_phone(phones)
+
+        # Check for duplicates in DB + current batch
+        if (n_name, n_phone) in existing_keys:
+            skipped_count += 1
+            continue
+
+        # Add to existing keys to avoid duplicates within the CSV itself
+        existing_keys.add((n_name, n_phone))
+
+        lead = models.Lead(
+            business_name=name,
+            category=clean_str(row.get("Category")),
+            phones=phones,
+            website=clean_str(row.get("Website")),
+            email=clean_str(row.get("Email")),
+            facebook=clean_str(row.get("Facebook")),
+            instagram=clean_str(row.get("Instagram")),
+            tiktok=clean_str(row.get("TikTok")),
+            city=clean_str(row.get("City")),
+            address=clean_str(row.get("Address")),
+            maps_url=clean_str(row.get("Google Maps URL")),
+            rating=to_float(row.get("Rating", "")),
+            reviews_count=to_int(row.get("Reviews Count", "")),
+        )
+        new_objects.append(lead)
+        imported_count += 1
+
+    if new_objects:
+        # Bulk save
+        db.add_all(new_objects)
+        db.commit()
+
+    return {
+        "success": True,
+        "total_found": len(rows),
+        "imported": imported_count,
+        "duplicates_skipped": skipped_count
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

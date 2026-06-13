@@ -415,7 +415,10 @@ async function executeDelete() {
 document.getElementById('delete-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.getElementById('import-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeImportModal();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeImportModal(); } });
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 let searchTimeout = null;
@@ -640,3 +643,110 @@ document.addEventListener('keydown', e => {
   if (e.key === '1' && e.ctrlKey) { e.preventDefault(); switchTab('to-call'); }
   if (e.key === '2' && e.ctrlKey) { e.preventDefault(); switchTab('processed'); }
 });
+
+// ─── Import CSV Modal Helpers ────────────────────────────────────────────────
+let selectedCSVFile = null;
+
+function openImportModal() {
+  const modal = document.getElementById('import-modal');
+  modal.classList.add('open');
+  clearSelectedFile();
+  setupDragAndDrop();
+}
+
+function closeImportModal() {
+  const modal = document.getElementById('import-modal');
+  modal.classList.remove('open');
+}
+
+function clearSelectedFile() {
+  selectedCSVFile = null;
+  document.getElementById('csv-file-input').value = '';
+  document.getElementById('file-info-container').classList.add('hidden');
+  document.getElementById('import-result-card').classList.add('hidden');
+  document.getElementById('btn-execute-import').disabled = true;
+  document.getElementById('drag-text').innerHTML = 'Drag & drop your CSV file here or <strong>browse</strong>';
+}
+
+function setupDragAndDrop() {
+  const zone = document.getElementById('drag-drop-zone');
+  const input = document.getElementById('csv-file-input');
+
+  // Trigger file browse when clicking the drag zone
+  zone.onclick = () => input.click();
+
+  input.onchange = (e) => {
+    if (e.target.files.length > 0) {
+      handleFileSelected(e.target.files[0]);
+    }
+  };
+
+  zone.ondragover = (e) => {
+    e.preventDefault();
+    zone.classList.add('dragover');
+  };
+
+  zone.ondragleave = () => {
+    zone.classList.remove('dragover');
+  };
+
+  zone.ondrop = (e) => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  };
+}
+
+function handleFileSelected(file) {
+  if (!file.name.endsWith('.csv')) {
+    showToast('Please select a valid CSV file.', 'error');
+    return;
+  }
+  selectedCSVFile = file;
+  document.getElementById('selected-file-name').textContent = file.name;
+  document.getElementById('file-info-container').classList.remove('hidden');
+  document.getElementById('btn-execute-import').disabled = false;
+  document.getElementById('drag-text').innerHTML = `File selected: <strong>${esc(file.name)}</strong>`;
+}
+
+async function uploadCSV() {
+  if (!selectedCSVFile) return;
+
+  const btn = document.getElementById('btn-execute-import');
+  btn.disabled = true;
+  btn.textContent = 'Processing…';
+
+  const formData = new FormData();
+  formData.append('file', selectedCSVFile);
+
+  try {
+    const res = await fetch(`${API}/leads/import`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Upload failed');
+    }
+
+    // Render stats
+    document.getElementById('stat-total-rows').textContent = data.total_found;
+    document.getElementById('stat-imported').textContent = data.imported;
+    document.getElementById('stat-skipped').textContent = data.duplicates_skipped;
+    document.getElementById('import-result-card').classList.remove('hidden');
+
+    showToast(`✅ Import completed! Loaded ${data.imported} new leads.`, 'success');
+
+    // Reload the main queue
+    await loadLeadIds();
+    await loadCurrentLead();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.textContent = 'Upload & Process';
+    btn.disabled = false;
+  }
+}
