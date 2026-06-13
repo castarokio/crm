@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>LeadConnect CRM - Processed Leads</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9ff;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #d3e4fe;
+            border-radius: 10px;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                "secondary-fixed-dim": "#adc6ff",
+                "on-tertiary-container": "#98805d",
+                "surface-container-lowest": "#ffffff",
+                "background": "#f8f9ff",
+                "on-primary-container": "#7c839b",
+                "surface-variant": "#d3e4fe",
+                "on-primary-fixed-variant": "#3f465c",
+                "on-secondary-container": "#fefcff",
+                "primary": "#000000",
+                "on-error-container": "#93000a",
+                "surface-container-highest": "#d3e4fe",
+                "on-primary-fixed": "#131b2e",
+                "tertiary-fixed": "#fcdeb5",
+                "on-tertiary-fixed": "#271901",
+                "primary-fixed": "#dae2fd",
+                "surface-container-low": "#eff4ff",
+                "primary-fixed-dim": "#bec6e0",
+                "surface-bright": "#f8f9ff",
+                "on-surface": "#0b1c30",
+                "outline": "#76777d",
+                "secondary": "#0058be",
+                "surface-tint": "#565e74",
+                "on-primary": "#ffffff",
+                "outline-variant": "#c6c6cd",
+                "secondary-fixed": "#d8e2ff",
+                "on-error": "#ffffff",
+                "on-background": "#0b1c30",
+                "error": "#ba1a1a",
+                "error-container": "#ffdad6",
+                "on-secondary-fixed-variant": "#004395",
+                "on-tertiary-fixed-variant": "#574425",
+                "on-surface-variant": "#45464d",
+                "tertiary-container": "#271901",
+                "on-secondary-fixed": "#001a42",
+                "primary-container": "#131b2e",
+                "on-secondary": "#ffffff",
+                "inverse-on-surface": "#eaf1ff",
+                "tertiary": "#000000",
+                "surface-container-high": "#dce9ff",
+                "surface": "#f8f9ff",
+                "inverse-surface": "#213145",
+                "surface-dim": "#cbdbf5",
+                "tertiary-fixed-dim": "#dec29a",
+                "secondary-container": "#2170e4",
+                "surface-container": "#e5eeff",
+                "on-tertiary": "#ffffff",
+                "inverse-primary": "#bec6e0"
+              },
+              "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+              },
+              "spacing": {
+                "gutter": "16px",
+                "touch-target-min": "44px",
+                "margin-mobile": "16px",
+                "margin-desktop": "32px",
+                "unit": "4px"
+              },
+              "fontFamily": {
+                "headline-lg-mobile": ["Inter"],
+                "body-md": ["Inter"],
+                "headline-lg": ["Inter"],
+                "label-md": ["Inter"],
+                "headline-md": ["Inter"],
+                "label-sm": ["Inter"],
+                "body-lg": ["Inter"]
+              },
+              "fontSize": {
+                "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}],
+                "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                "headline-lg": ["30px", {"lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                "label-md": ["13px", {"lineHeight": "18px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                "headline-md": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
+                "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+              }
+            }
+          }
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-background min-h-screen md:pb-0 pb-32">
+<!-- TopAppBar Shell Mapping -->
+<header class="sticky top-0 z-50 flex flex-col w-full bg-surface border-b border-outline-variant px-margin-mobile md:px-margin-desktop">
+<div class="flex items-center justify-between h-16">
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined p-2 hover:bg-surface-container-low transition-colors rounded-full" data-icon="menu">menu</button>
+<h1 class="text-headline-md font-headline-md font-bold text-primary">LeadConnect CRM</h1>
+</div>
+<div class="flex items-center gap-2">
+<button class="material-symbols-outlined p-2 hover:bg-surface-container-low transition-colors rounded-full" data-icon="search">search</button>
+<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-xs">JD</div>
+</div>
+</div>
+<!-- Tab Navigation -->
+<nav class="flex w-full overflow-x-auto no-scrollbar">
+<button class="px-6 py-3 text-label-md font-label-md text-on-surface-variant hover:bg-surface-container-low transition-colors border-b-2 border-transparent">
+                To Call
+            </button>
+<button class="px-6 py-3 text-label-md font-label-md text-secondary border-b-2 border-secondary font-bold">
+                Reached
+            </button>
+</nav>
+</header>
+<main class="max-w-6xl mx-auto p-gutter md:mt-8">
+<!-- Dashboard Toolbar -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+<div>
+<h2 class="text-headline-lg font-headline-lg text-on-surface">Processed Leads</h2>
+<p class="text-body-md text-on-surface-variant">View historical logs and follow-up notes.</p>
+</div>
+<div class="relative group w-full md:w-80">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline-variant pointer-events-none" data-icon="search">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-surface-container-low border border-outline-variant rounded-xl focus:ring-2 focus:ring-secondary focus:border-transparent transition-all outline-none text-body-md" placeholder="Search by name, phone or notes..." type="text"/>
+</div>
+</div>
+<!-- Filter Chips -->
+<div class="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
+<button class="px-4 py-1.5 rounded-full bg-primary text-on-primary text-label-sm font-label-sm">All History</button>
+<button class="px-4 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant text-label-sm font-label-sm hover:bg-surface-variant transition-colors">Interested</button>
+<button class="px-4 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant text-label-sm font-label-sm hover:bg-surface-variant transition-colors">Follow Up</button>
+<button class="px-4 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant text-label-sm font-label-sm hover:bg-surface-variant transition-colors">No Answer</button>
+</div>
+<!-- Content Grid (Simulated Table/Card hybrid) -->
+<div class="space-y-3" id="lead-list-container">
+<!-- Lead Item 1: Interested -->
+<div class="group bg-surface-container-lowest border border-outline-variant hover:border-secondary hover:shadow-lg transition-all rounded-xl p-4 cursor-pointer" onclick="toggleDetails('lead-1')">
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-secondary-container flex items-center justify-center text-on-secondary-container">
+<span class="material-symbols-outlined" data-icon="corporate_fare">corporate_fare</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Blue Sky Logistics</h3>
+<p class="text-body-md text-on-surface-variant">+1 (555) 012-3456</p>
+</div>
+</div>
+<div class="flex flex-wrap items-center gap-3">
+<div class="px-3 py-1 rounded-full bg-green-100 text-green-800 text-label-sm font-bold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-green-600"></span>
+                            Interested
+                        </div>
+<div class="text-label-sm text-outline">Today, 2:30 PM</div>
+<span class="material-symbols-outlined text-outline group-hover:text-secondary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+</div>
+<div class="mt-4 pt-4 border-t border-outline-variant/30 flex items-start gap-2">
+<span class="material-symbols-outlined text-outline text-sm" data-icon="notes">notes</span>
+<p class="text-body-md text-on-surface-variant line-clamp-1 italic">"Spoke with Mark. They are looking to upgrade their fleet management software by Q3. Need to send PDF brochure by Friday."</p>
+</div>
+<!-- Hidden Detail Panel -->
+<div class="hidden mt-4 p-4 rounded-lg bg-surface-container" id="lead-1">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div>
+<p class="text-label-sm text-outline uppercase tracking-wider mb-1">Full Summary</p>
+<p class="text-body-md text-on-surface">Client expressed strong interest in our API integration capabilities. Requested a demo next Tuesday at 10 AM.</p>
+</div>
+<div class="flex flex-col justify-end items-end gap-2">
+<button class="flex items-center gap-2 px-4 py-2 bg-secondary text-on-secondary rounded-lg text-label-md font-bold hover:scale-105 transition-transform">
+<span class="material-symbols-outlined text-base" data-icon="edit">edit</span>
+                                Edit Log
+                            </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Lead Item 2: No Answer -->
+<div class="group bg-surface-container-lowest border border-outline-variant hover:border-secondary hover:shadow-lg transition-all rounded-xl p-4 cursor-pointer" onclick="toggleDetails('lead-2')">
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-outline">
+<span class="material-symbols-outlined" data-icon="store">store</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Main Street Bakery</h3>
+<p class="text-body-md text-on-surface-variant">+1 (555) 098-7654</p>
+</div>
+</div>
+<div class="flex flex-wrap items-center gap-3">
+<div class="px-3 py-1 rounded-full bg-error-container text-on-error-container text-label-sm font-bold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-error"></span>
+                            No Answer
+                        </div>
+<div class="text-label-sm text-outline">Today, 11:15 AM</div>
+<span class="material-symbols-outlined text-outline group-hover:text-secondary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+</div>
+<div class="mt-4 pt-4 border-t border-outline-variant/30 flex items-start gap-2">
+<span class="material-symbols-outlined text-outline text-sm" data-icon="notes">notes</span>
+<p class="text-body-md text-on-surface-variant line-clamp-1 italic">"Second attempt. Left voicemail. Will retry in 48 hours."</p>
+</div>
+<div class="hidden mt-4 p-4 rounded-lg bg-surface-container" id="lead-2">
+<p class="text-body-md text-on-surface">No connection established. Phone rang until voicemail. Logged as cold lead for now.</p>
+</div>
+</div>
+<!-- Lead Item 3: Follow Up -->
+<div class="group bg-surface-container-lowest border border-outline-variant hover:border-secondary hover:shadow-lg transition-all rounded-xl p-4 cursor-pointer" onclick="toggleDetails('lead-3')">
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed">
+<span class="material-symbols-outlined" data-icon="build">build</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Peak Manufacturing</h3>
+<p class="text-body-md text-on-surface-variant">+1 (555) 443-2211</p>
+</div>
+</div>
+<div class="flex flex-wrap items-center gap-3">
+<div class="px-3 py-1 rounded-full bg-secondary-fixed text-on-secondary-fixed-variant text-label-sm font-bold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                            Follow Up
+                        </div>
+<div class="text-label-sm text-outline">Yesterday, 4:50 PM</div>
+<span class="material-symbols-outlined text-outline group-hover:text-secondary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+</div>
+<div class="mt-4 pt-4 border-t border-outline-variant/30 flex items-start gap-2">
+<span class="material-symbols-outlined text-outline text-sm" data-icon="notes">notes</span>
+<p class="text-body-md text-on-surface-variant line-clamp-1 italic">"Gatekeeper was helpful. Decision maker 'Sarah' is back from vacation on Monday."</p>
+</div>
+<div class="hidden mt-4 p-4 rounded-lg bg-surface-container" id="lead-3">
+<p class="text-body-md text-on-surface">Sarah leads the procurement team. Essential to call Monday morning to catch her before meetings.</p>
+</div>
+</div>
+</div>
+<!-- Empty State (Hidden by default) -->
+<div class="hidden flex flex-col items-center justify-center py-20 text-center" id="empty-state">
+<div class="relative mb-6">
+<div class="w-32 h-32 bg-surface-container-high rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-6xl text-outline-variant" data-icon="history">history</span>
+</div>
+<div class="absolute -bottom-2 -right-2 w-12 h-12 bg-surface-container-highest border-4 border-background rounded-full flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="search_off">search_off</span>
+</div>
+</div>
+<h3 class="text-headline-md font-headline-md text-on-surface mb-2">No leads processed yet</h3>
+<p class="text-body-lg text-on-surface-variant max-w-xs mx-auto">Start reaching out to leads from the 'To Call' tab to see your history appear here.</p>
+<button class="mt-8 px-8 py-3 bg-primary text-on-primary rounded-xl font-bold flex items-center gap-2 hover:opacity-90 transition-opacity" onclick="window.location.reload()">
+<span class="material-symbols-outlined" data-icon="phone_forwarded">phone_forwarded</span>
+                Start Calling
+            </button>
+</div>
+</main>
+<!-- BottomNavBar Shell Mapping -->
+<div class="fixed bottom-16 left-0 w-full px-margin-mobile md:hidden z-40"><div class="flex justify-between items-center bg-surface-container-high rounded-xl p-2 shadow-md border border-outline-variant/30"><button class="flex items-center gap-2 px-4 py-2 text-secondary font-bold hover:bg-secondary/10 rounded-lg transition-colors"><span class="material-symbols-outlined">arrow_back_ios</span><span>Previous</span></button><button class="flex items-center gap-2 px-4 py-2 text-secondary font-bold hover:bg-secondary/10 rounded-lg transition-colors"><span>Next</span><span class="material-symbols-outlined">arrow_forward_ios</span></button></div></div><nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-touch-target-min py-2 bg-surface-container-highest md:hidden shadow-lg rounded-t-xl">
+<div class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" data-icon="delete">delete</span>
+<span class="text-label-sm font-label-sm">Delete</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" data-icon="arrow_forward_ios">arrow_forward_ios</span>
+<span class="text-label-sm font-label-sm">Next</span>
+</div>
+</nav>
+<!-- Floating Action Button for Adding New Lead (Contextual) -->
+<button class="fixed bottom-24 right-6 md:bottom-8 md:right-8 w-14 h-14 bg-secondary text-on-secondary rounded-full shadow-xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-40">
+<span class="material-symbols-outlined text-3xl" data-icon="add">add</span>
+</button>
+<script>
+        function toggleDetails(id) {
+            const el = document.getElementById(id);
+            const isHidden = el.classList.contains('hidden');
+            
+            // Close all others
+            document.querySelectorAll('[id^="lead-"]').forEach(panel => panel.classList.add('hidden'));
+            
+            if (isHidden) {
+                el.classList.remove('hidden');
+                el.classList.add('animate-in', 'fade-in', 'slide-in-from-top-2', 'duration-300');
+            }
+        }
+
+        // Search logic simulation
+        const searchInput = document.querySelector('input[type="text"]');
+        const leadCards = document.querySelectorAll('#lead-list-container > div');
+        const emptyState = document.getElementById('empty-state');
+        const listContainer = document.getElementById('lead-list-container');
+
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            let visibleCount = 0;
+
+            leadCards.forEach(card => {
+                const text = card.innerText.toLowerCase();
+                if (text.includes(query)) {
+                    card.style.display = 'block';
+                    visibleCount++;
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+
+            if (visibleCount === 0) {
+                listContainer.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+            } else {
+                listContainer.classList.remove('hidden');
+                emptyState.classList.add('hidden');
+            }
+        });
+
+        // Initialize state
+        document.addEventListener('DOMContentLoaded', () => {
+            // If we wanted to test the empty state, we could toggle it here
+            // listContainer.classList.add('hidden');
+            // emptyState.classList.remove('hidden');
+        });
+    </script>
+</body></html>

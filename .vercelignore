@@ -1,8 +1,0 @@
-node_modules/
-.next/
-*.msix
-*.pdf
-*.txt
-.git/
-.gemini/
-.vercel/

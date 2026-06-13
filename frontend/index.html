@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LeadStream CRM — Cold Calling Dashboard</title>
+  <meta name="description" content="Professional cold-calling CRM dashboard for managing leads, tracking call outcomes, and processing contacts efficiently."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+<div id="app">
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="header-top">
+      <a class="app-logo" href="/">
+        <div class="app-logo-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+        </div>
+        <span class="app-logo-name">LeadStream</span>
+      </a>
+
+      <div class="header-search">
+        <span class="search-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        </span>
+        <input type="text" id="global-search" placeholder="Search by name, phone, city, ID…" autocomplete="off"/>
+      </div>
+
+      <div class="lead-counter" id="lead-counter">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+        <span id="counter-label">—</span>
+        <span class="badge" id="counter-badge">…</span>
+      </div>
+    </div>
+
+    <nav class="tab-nav">
+      <button class="tab-btn active" id="tab-to-call" onclick="switchTab('to-call')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79c1.44 2.83 3.76 5.15 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+        To Call
+        <span class="tab-badge" id="tab-badge-to-call">…</span>
+      </button>
+      <button class="tab-btn" id="tab-processed" onclick="switchTab('processed')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12z"/></svg>
+        Reached
+        <span class="tab-badge" id="tab-badge-processed">0</span>
+      </button>
+    </nav>
+  </header>
+
+  <!-- ─── Body ────────────────────────────────────────────────────────────────── -->
+  <div class="app-body">
+
+    <!-- ═══ TAB 1: To Call ═══════════════════════════════════════════════════════ -->
+    <div id="panel-to-call" class="tab-panel active">
+
+      <!-- Lead Workspace -->
+      <div class="lead-workspace">
+
+        <!-- Lead Card -->
+        <div id="lead-card-container" class="fade-in">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Navigation Bar -->
+        <div class="lead-nav-bar" id="lead-nav-bar">
+          <button class="nav-btn" id="btn-prev" onclick="navigateLead(-1)" title="Previous lead">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            Prev
+          </button>
+          <div class="nav-info" id="nav-info">Loading…</div>
+          <button class="nav-btn" id="btn-next" onclick="navigateLead(1)" title="Next lead">
+            Next
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+          </button>
+          <div style="width:1px;background:var(--color-outline-var);height:24px;margin:0 4px;"></div>
+          <button class="nav-btn btn-delete" id="btn-delete" onclick="confirmDelete()">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            Delete
+          </button>
+          <button class="nav-btn btn-save" id="btn-save" onclick="saveLead()">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+            Save & Process
+          </button>
+        </div>
+      </div>
+
+      <!-- Right Panel -->
+      <aside class="right-panel">
+        <!-- Call Status -->
+        <div class="panel-section">
+          <div class="panel-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+            Call Result
+          </div>
+          <div class="status-grid" id="status-grid">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="panel-section">
+          <div class="panel-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            Notes
+          </div>
+          <textarea id="notes-input" class="notes-textarea"
+            placeholder="Write what happened during the call…&#10;&#10;e.g. 'Interested, wants a demo on Friday at 2pm'"
+          ></textarea>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ═══ TAB 2: Processed Leads ══════════════════════════════════════════════ -->
+    <div id="panel-processed" class="tab-panel">
+
+      <div class="processed-toolbar">
+        <div class="processed-search">
+          <span class="search-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </span>
+          <input type="text" id="processed-search" placeholder="Search processed leads…" autocomplete="off"/>
+        </div>
+        <div class="filter-chips" id="filter-chips">
+          <button class="filter-chip active" data-status="all" onclick="filterProcessed('all', this)">All</button>
+          <button class="filter-chip" data-status="Interested" onclick="filterProcessed('Interested', this)">Interested</button>
+          <button class="filter-chip" data-status="Potential client" onclick="filterProcessed('Potential client', this)">Potential</button>
+          <button class="filter-chip" data-status="Needs follow-up" onclick="filterProcessed('Needs follow-up', this)">Follow-up</button>
+          <button class="filter-chip" data-status="Did not pick up" onclick="filterProcessed('Did not pick up', this)">No Answer</button>
+          <button class="filter-chip" data-status="Not interested" onclick="filterProcessed('Not interested', this)">Not Interested</button>
+          <button class="filter-chip" data-status="Closed deal" onclick="filterProcessed('Closed deal', this)">Closed</button>
+        </div>
+      </div>
+
+      <div class="processed-list" id="processed-list">
+        <!-- Populated by JS -->
+      </div>
+
+      <button class="load-more-btn hidden" id="load-more-btn" onclick="loadMoreProcessed()">
+        Load more…
+      </button>
+    </div>
+
+  </div><!-- /app-body -->
+</div><!-- /app -->
+
+<!-- ─── Delete Confirm Modal ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal">
+    <div class="modal-icon">🗑️</div>
+    <div class="modal-title">Delete this lead?</div>
+    <div class="modal-body">
+      <strong id="delete-modal-name"></strong> will be permanently removed from the database.
+      <br/>This action cannot be undone.
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="modal-btn modal-btn-danger" onclick="executeDelete()">Delete Permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Toast Container ──────────────────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ─── Loading Overlay ──────────────────────────────────────────────────────── -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <span style="font-size:13px;color:var(--color-on-surface-var);font-weight:600;">Loading…</span>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
