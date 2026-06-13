@@ -713,18 +713,170 @@ html, body {
   #panel-processed { padding: var(--space-4); }
 }
 
-@media (max-width: 700px) {
-  #panel-to-call { flex-direction: column; }
-  .right-panel {
-    width: 100%; border-left: none;
-    border-top: 1px solid var(--color-outline-var);
-    overflow-y: visible;
+@media (max-width: 767px) {
+  /* Tab Button Split */
+  .tab-nav {
+    display: flex;
+    width: 100%;
   }
-  .lead-info-grid { grid-template-columns: 1fr; }
-  .header-search { max-width: none; }
-  .app-header { padding: 0 var(--space-3); }
-  .lead-workspace { padding: var(--space-3); }
-  .tab-btn { padding: var(--space-2) var(--space-4); font-size: 12px; }
+  .tab-btn {
+    flex: 1;
+    justify-content: center;
+    padding: var(--space-3) 0;
+    font-size: var(--text-xs);
+  }
+
+  /* 2-Column Status Grid */
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2);
+  }
+}
+
+@media (max-width: 600px) {
+  /* Header Stacking */
+  .header-top {
+    flex-direction: column;
+    height: auto;
+    padding: var(--space-3) 0;
+    gap: var(--space-2);
+    align-items: stretch;
+  }
+  .app-logo {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .header-search {
+    width: 100%;
+    max-width: none;
+    order: 3;
+  }
+  .lead-counter {
+    order: 2;
+    align-self: center;
+  }
+
+  /* Main Workspace Scroll View */
+  #panel-to-call {
+    flex-direction: column;
+    overflow-y: auto;
+    height: 100%;
+  }
+  .lead-workspace {
+    overflow-y: visible;
+    flex: none;
+    padding: var(--space-3) var(--space-3) var(--space-4) var(--space-3);
+  }
+  .right-panel {
+    overflow-y: visible;
+    flex: none;
+    width: 100%;
+    border-left: none;
+    border-top: 1.5px solid var(--color-outline-var);
+    padding-bottom: 110px; /* Space for fixed bottom navigation */
+  }
+
+  /* 2-Column Social & Call Action Buttons */
+  .action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2);
+  }
+  .action-btn {
+    justify-content: center;
+    width: 100%;
+  }
+
+  /* Sticky/Fixed Bottom Navigation Bar */
+  .lead-nav-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    border-top: 1.5px solid var(--color-outline-var);
+    box-shadow: 0 -4px 16px rgba(11,28,48,0.12);
+    background: white;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+  .nav-info {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+  }
+  #btn-prev {
+    grid-column: 1;
+    width: 100%;
+    justify-content: center;
+  }
+  #btn-next {
+    grid-column: 3;
+    width: 100%;
+    justify-content: center;
+  }
+  /* Hide vertical divider line */
+  .lead-nav-bar div[style*="width:1px"] {
+    display: none !important;
+  }
+  .btn-delete {
+    grid-column: 1 / span 1;
+    width: 100%;
+    justify-content: center;
+    padding: var(--space-2);
+    font-size: 12px;
+  }
+  .btn-save {
+    grid-column: 2 / span 2;
+    width: 100%;
+    justify-content: center;
+    padding: var(--space-2);
+    font-size: 12px;
+  }
+
+  /* Lead Info Grid (Phone, Email, Web, etc.) */
+  .lead-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Tab 2 Toolbar & Chips Scroll */
+  #panel-processed {
+    padding: var(--space-4) var(--space-3);
+  }
+  .processed-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+  .processed-search {
+    max-width: none;
+    width: 100%;
+  }
+  .filter-chips {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: var(--space-2);
+    -webkit-overflow-scrolling: touch;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .filter-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .filter-chip {
+    flex-shrink: 0;
+  }
 }
 
 /* ─── Utility ────────────────────────────────────────────────────────────────── */
@@ -733,3 +885,4 @@ html, body {
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .slide-out { animation: slideOut 0.2s ease forwards; }
 @keyframes slideOut { to { opacity: 0; transform: translateX(-20px); } }
+
