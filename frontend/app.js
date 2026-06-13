@@ -3,7 +3,7 @@
  * Communicates with FastAPI backend at http://localhost:8000
  */
 
-const API = 'http://localhost:8000/api';
+const API = window.location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const state = {
