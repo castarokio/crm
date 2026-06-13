@@ -57,17 +57,26 @@ def import_csv():
     db = SessionLocal()
     existing_count = db.query(models.Lead).count()
 
+    should_clear = False
     if existing_count > 0:
         print(f"[INFO] Database already has {existing_count} leads.")
-        answer = input("   Do you want to clear and re-import? [y/N]: ").strip().lower()
-        if answer == "y":
-            db.query(models.Lead).delete()
-            db.commit()
-            print("   Cleared existing leads.")
+        print("   [1] Clear all existing leads and import fresh")
+        print("   [2] Append new leads (skips duplicates)")
+        print("   [3] Cancel import")
+        answer = input("   Select option [1/2/3]: ").strip()
+        if answer == "1":
+            should_clear = True
+        elif answer == "2":
+            should_clear = False
         else:
-            print("   Skipping import. Existing data kept.")
+            print("   Import cancelled.")
             db.close()
             return
+
+    if should_clear:
+        db.query(models.Lead).delete()
+        db.commit()
+        print("   Cleared existing leads.")
 
     # Try UTF-8 first, fall back to latin-1 for the Algerian address encoding
     encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]
@@ -89,19 +98,39 @@ def import_csv():
 
     print(f"[INFO] Found {len(rows)} rows in CSV.")
 
+    # Load existing lead keys to prevent duplicates when appending
+    existing_keys = set()
+    if not should_clear:
+        print("   Loading existing leads keys to check for duplicates...")
+        existing_rows = db.query(models.Lead.business_name, models.Lead.phones).all()
+        for r in existing_rows:
+            name_norm = (r.business_name or "").strip().lower()
+            phone_norm = (r.phones or "").strip().lower()
+            existing_keys.add((name_norm, phone_norm))
+        print(f"   Loaded {len(existing_keys)} existing keys.")
+
     inserted = 0
     skipped = 0
 
     for row in rows:
         name = clean(row.get("Name", ""))
+        phones = clean(row.get("Phones", ""))
         if not name:
             skipped += 1
             continue
 
+        # Skip duplicates if appending
+        if not should_clear:
+            name_norm = name.strip().lower()
+            phone_norm = (phones or "").strip().lower()
+            if (name_norm, phone_norm) in existing_keys:
+                skipped += 1
+                continue
+
         lead = models.Lead(
             business_name=name,
             category=clean(row.get("Category")),
-            phones=clean(row.get("Phones")),
+            phones=phones,
             website=clean(row.get("Website")),
             email=clean(row.get("Email")),
             facebook=clean(row.get("Facebook")),
