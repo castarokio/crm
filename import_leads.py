@@ -106,13 +106,10 @@ def import_csv():
             email=clean(row.get("Email")),
             facebook=clean(row.get("Facebook")),
             instagram=clean(row.get("Instagram")),
-            youtube=clean(row.get("YouTube")),
-            twitter=clean(row.get("Twitter")),
             tiktok=clean(row.get("TikTok")),
             city=clean(row.get("City")),
             address=clean(row.get("Address")),
             maps_url=clean(row.get("Google Maps URL")),
-            place_id=clean(row.get("Place ID")),
             rating=to_float(row.get("Rating", "")),
             reviews_count=to_int(row.get("Reviews Count", "")),
         )
