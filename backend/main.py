@@ -9,6 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional
+import sys
+import os
+
+# Ensure backend directory is in path for Vercel serverless environment
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import models
 import schemas
